@@ -1,0 +1,59 @@
+opam-version: "2.0"
+name: "modelkit"
+version: "dev"
+synopsis: "Portable classical machine learning workflows for OCaml"
+description:
+  "ModelKit is a native OCaml library for cohesive classical machine learning workflows. It is designed around immutable estimator specifications, leakage-safe pipelines, deterministic evaluation, and portable fitted artifacts."
+maintainer: "Asara developers"
+authors: "Asara"
+license: "Apache-2.0"
+tags: ["data-science" "machine-learning"]
+homepage: "https://github.com/asara-io/ModelKit"
+bug-reports: "https://github.com/asara-io/ModelKit/issues"
+depends: [
+  "astring" {= "0.8.5" & with-doc}
+  "base-bigarray" {= "base"}
+  "base-domains" {= "base"}
+  "base-effects" {= "base"}
+  "base-nnp" {= "base"}
+  "base-threads" {= "base"}
+  "base-unix" {= "base"}
+  "camlp-streams" {= "5.0.1" & with-doc}
+  "cmdliner" {= "2.1.1" & with-doc}
+  "cppo" {= "1.8.0" & with-doc}
+  "crunch" {= "4.1.0" & with-doc}
+  "dune" {= "3.24.2"}
+  "fmt" {= "0.11.0" & with-doc}
+  "fpath" {= "0.7.3" & with-doc}
+  "ocaml" {= "5.3.0"}
+  "ocaml-base-compiler" {= "5.3.0"}
+  "ocaml-compiler" {= "5.3.0"}
+  "ocaml-config" {= "3"}
+  "ocaml-options-vanilla" {= "1"}
+  "ocamlbuild" {= "0.16.1" & with-doc}
+  "ocamlfind" {= "1.9.8" & with-doc}
+  "odoc" {= "3.2.1" & with-doc}
+  "odoc-parser" {= "3.2.1" & with-doc}
+  "ptime" {= "1.2.0" & with-doc}
+  "re" {= "1.14.0" & with-doc}
+  "seq" {= "base" & with-doc}
+  "topkg" {= "1.1.1" & with-doc}
+  "tyxml" {= "4.6.0" & with-doc}
+  "uutf" {= "1.0.4" & with-doc}
+]
+build: [
+  ["dune" "subst"] {dev}
+  [
+    "dune"
+    "build"
+    "-p"
+    name
+    "-j"
+    jobs
+    "@install"
+    "@runtest" {with-test}
+    "@doc" {with-doc}
+  ]
+]
+dev-repo: "git+https://github.com/asara-io/ModelKit.git"
+x-maintenance-intent: ["(latest)"]
