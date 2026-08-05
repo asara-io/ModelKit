@@ -1,11 +1,39 @@
 # ModelKit
 
-ModelKit (`modelkit`) is a native OCaml library for cohesive classical machine-learning
-workflows. It is designed around immutable estimator specifications,
-leakage-safe pipelines, deterministic evaluation, and portable fitted
-artifacts.
+ModelKit (`modelkit`) is a native OCaml library for cohesive classical machine learning workflows. It is designed around immutable estimator specifications, leakage-safe pipelines, deterministic evaluation, and portable fitted artifacts.
 
 Python users of `scikit-learn` will find this library familiar in serving the same needs.
+
+## Status
+
+ModelKit is in its starting engineering milestone. The repository currently contains a buildable, installable, and documented `Modelkit` library skeleton, but its public namespace does not yet contain machine learning APIs.
+
+The portable package lives under `lib/`. Optional ecosystem adapters and accelerated backends are reserved under `adapters/` and `backends/`; they will remain separate packages that depend on the portable core when implemented.
+
+## Development
+
+ModelKit requires OCaml 5.2 or newer. Install development dependencies in an  opam switch, then run the standard checks:
+
+```console
+opam install ocamlformat.0.29.0
+opam install . --deps-only --with-test --with-doc
+opam exec -- dune build @all @runtest @doc
+opam exec -- dune build @fmt
+```
+
+`@fmt` reports formatting differences without changing source files. Apply a
+reviewed formatting change with `opam exec -- dune promote`.
+
+The ordinary Dune workspace uses the active opam switch so compiler-matrix builds remain straightforward. Reproducible opam locks are platform-specific because compiler and system dependency packages differ by host. Refresh and consume the checked-in Windows x86-64 solution with:
+
+```console
+opam lock ./modelkit.opam --lock-suffix=locked.windows-x86_64
+opam install ocamlformat.0.29.0
+opam install . --deps-only --with-test --with-doc --locked --lock-suffix=locked.windows-x86_64
+opam exec -- dune build @all @runtest @doc @fmt
+```
+
+Each supported platform uses its own `modelkit.opam.locked.<platform>` file. Regenerating a lock is an intentional dependency update and its diff should be reviewed.
 
 ## Project Policies
 
@@ -13,7 +41,7 @@ Python users of `scikit-learn` will find this library familiar in serving the sa
 - [Support](SUPPORT.md) defines version, compiler, and platform support.
 - [License](LICENSE) contains the Apache License 2.0 terms.
 
-Development happens at [asara-io/ModelKit](https://github.com/asara-io/ModelKit). Please use the [Issues tracker](https://github.com/asara-io/ModelKit/issues) for bug reports and support requests.
+Development happens at [asara-io/ModelKit](https://github.com/asara-io/ModelKit). Please use the [issue tracker](https://github.com/asara-io/ModelKit/issues) for bug reports and support requests.
 
 ## License
 

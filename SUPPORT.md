@@ -43,7 +43,7 @@ capacity.
 
 Use the [Issues tracker](https://github.com/asara-io/ModelKit/issues) for bug
 reports, portability problems, usage questions, and more. Include the 
-ModelKit revision or version, OCaml and OPAM versions, operating system and
+ModelKit revision or version, OCaml and opam versions, operating system and
 architecture, the smallest reproducer possible (code snippets greatly 
 appreciated), and the complete error message.
 
