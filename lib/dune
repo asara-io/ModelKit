@@ -1,0 +1,3 @@
+(library
+ (name modelkit)
+ (public_name modelkit))
