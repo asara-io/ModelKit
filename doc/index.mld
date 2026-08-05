@@ -1,0 +1,8 @@
+{0 ModelKit}
+
+ModelKit is a portable OCaml library for cohesive classical machine learning
+workflows.
+
+The package currently provides its build and documentation skeleton. Public
+machine learning APIs will appear here as their engineering-foundation
+contracts are completed.

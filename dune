@@ -1,0 +1,6 @@
+(env
+ (_
+  (flags
+   (:standard -w @a -warn-error @a))
+  (odoc
+   (warnings fatal))))
