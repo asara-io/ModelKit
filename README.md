@@ -36,6 +36,7 @@ Each supported platform uses its own `modelkit.opam.locked.<platform>` file. Reg
 
 ## Project Policies
 
+- [Changes](CHANGES.md) records the contents of each published release.
 - [Governance](GOVERNANCE.md) describes roles and how project decisions are made.
 - [Support](SUPPORT.md) defines version, compiler, and platform support.
 - [License](LICENSE) contains the Apache License 2.0 terms.
