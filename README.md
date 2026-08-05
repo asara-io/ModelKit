@@ -2,7 +2,7 @@
 
 ModelKit (`modelkit`) is an in-development, portable OCaml library for classical machine-learning workflows. It is intended to provide immutable estimators, leakage-safe preprocessing pipelines, deterministic model selection, and versioned fitted artifacts in native OCaml. Python users of `scikit-learn` will find this library familiar in serving the same needs.
 
-## Project policies
+## Project Policies
 
 - [Governance](GOVERNANCE.md) describes roles and how project decisions are made.
 - [Support](SUPPORT.md) defines version, compiler, and platform support.
