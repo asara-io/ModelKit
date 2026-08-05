@@ -1,5 +1,6 @@
 (lang dune 3.23)
 (name modelkit)
+(version 0.1.0)
 (generate_opam_files true)
 (implicit_transitive_deps false)
 
@@ -7,7 +8,7 @@
  (github asara-io/ModelKit))
 
 (authors Asara)
-(maintainers "Asara developers")
+(maintainers "Asara developers <devs@asara.io>")
 (license Apache-2.0)
 (maintenance_intent "(latest)")
 

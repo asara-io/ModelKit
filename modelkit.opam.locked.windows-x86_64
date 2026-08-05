@@ -1,10 +1,10 @@
 opam-version: "2.0"
 name: "modelkit"
-version: "dev"
+version: "0.1.0"
 synopsis: "Portable classical machine learning workflows for OCaml"
 description:
   "ModelKit is a native OCaml library for cohesive classical machine learning workflows. It is designed around immutable estimator specifications, leakage-safe pipelines, deterministic evaluation, and portable fitted artifacts."
-maintainer: "Asara developers"
+maintainer: "Asara developers <devs@asara.io>"
 authors: "Asara"
 license: "Apache-2.0"
 tags: ["data-science" "machine-learning"]

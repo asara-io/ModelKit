@@ -6,13 +6,13 @@ Python users of `scikit-learn` will find this library familiar in serving the sa
 
 ## Status
 
-ModelKit is in its starting engineering milestone. The repository currently contains a buildable, installable, and documented `Modelkit` library skeleton, but its public namespace does not yet contain machine learning APIs.
+ModelKit 0.1.0 is a foundation release from the starting engineering milestone. It contains a buildable, installable, and documented `Modelkit` library skeleton, but its public namespace does not yet contain machine learning APIs.
 
 The portable package lives under `lib/`. Optional ecosystem adapters and accelerated backends are reserved under `adapters/` and `backends/`; they will remain separate packages that depend on the portable core when implemented.
 
 ## Development
 
-ModelKit requires OCaml 5.2 or newer. Install development dependencies in an  opam switch, then run the standard checks:
+ModelKit requires OCaml 5.2 or newer. Install development dependencies in an opam switch, then run the standard checks:
 
 ```console
 opam install ocamlformat.0.29.0
@@ -21,8 +21,7 @@ opam exec -- dune build @all @runtest @doc
 opam exec -- dune build @fmt
 ```
 
-`@fmt` reports formatting differences without changing source files. Apply a
-reviewed formatting change with `opam exec -- dune promote`.
+`@fmt` reports formatting differences without changing source files. Apply a reviewed formatting change with `opam exec -- dune promote`.
 
 The ordinary Dune workspace uses the active opam switch so compiler-matrix builds remain straightforward. Reproducible opam locks are platform-specific because compiler and system dependency packages differ by host. Refresh and consume the checked-in Windows x86-64 solution with:
 
