@@ -1,6 +1,6 @@
 (lang dune 3.23)
 (name modelkit)
-(version 0.1.0)
+(version 0.2.0-dev)
 (generate_opam_files true)
 (implicit_transitive_deps false)
 
