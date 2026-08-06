@@ -418,3 +418,125 @@ module Groups = struct
           (Array.init (Row_view.length view) (fun position ->
                get groups (Row_view.get view position)))
 end
+
+module type ESTIMATOR = sig
+  type t
+  type target
+  type prediction
+  type fitted
+  type error
+  type rng
+
+  val fit :
+    t ->
+    ?sample_weight:Sample_weight.t ->
+    rng:rng ->
+    x:Matrix.t ->
+    y:target ->
+    unit ->
+    (fitted, error) result
+
+  val predict : fitted -> Matrix.t -> (prediction, error) result
+end
+
+module type CLASSIFIER = sig
+  include
+    ESTIMATOR
+      with type target = Target.classification Target.t
+       and type prediction = Target.classification Target.t
+end
+
+module type REGRESSOR = sig
+  include
+    ESTIMATOR
+      with type target = Target.regression Target.t
+       and type prediction = Target.regression Target.t
+end
+
+module type TRANSFORMER = sig
+  type t
+  type target
+  type fitted
+  type error
+  type rng
+
+  val fit :
+    t ->
+    ?sample_weight:Sample_weight.t ->
+    rng:rng ->
+    x:Matrix.t ->
+    y:target option ->
+    unit ->
+    (fitted, error) result
+
+  val transform : fitted -> Matrix.t -> (Matrix.t, error) result
+end
+
+module type SCORER = sig
+  type t
+  type truth
+  type prediction
+  type error
+
+  val name : t -> string
+
+  val score :
+    t ->
+    ?sample_weight:Sample_weight.t ->
+    truth:truth ->
+    prediction:prediction ->
+    unit ->
+    (float, error) result
+end
+
+module type SPLITTER = sig
+  type t
+  type target
+  type rng
+  type error
+
+  val split :
+    t ->
+    rng:rng ->
+    ?groups:Groups.t ->
+    x:Matrix.t ->
+    y:target option ->
+    unit ->
+    ((Row_view.t * Row_view.t) array, error) result
+end
+
+module type EXECUTION = sig
+  type t
+
+  val concurrency : t -> int
+
+  val map :
+    t ->
+    f:(index:int -> 'input -> ('output, 'error) result) ->
+    'input array ->
+    ('output array, 'error) result
+end
+
+module type RNG = sig
+  type seed
+  type t
+
+  val create : seed -> t
+  val derive : seed -> operation:string -> index:int -> seed
+  val next_int64 : t -> int64 * t
+  val next_float : t -> float * t
+end
+
+module type NUMERICAL_BACKEND = sig
+  type error
+
+  val name : string
+  val sum : Vector.t -> float
+  val dot : Vector.t -> Vector.t -> (float, error) result
+
+  val matrix_vector_product :
+    Matrix.t -> Vector.t -> (Vector.t, error) result
+
+  val transposed_matrix_vector_product :
+    Matrix.t -> Vector.t -> (Vector.t, error) result
+end

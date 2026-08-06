@@ -49,7 +49,7 @@ module Vector : sig
   val get : t -> int -> float
   (** [get vector index] returns the value at [index].
 
-      @raise Invalid_argument if [index] is outside the vector. *)
+      Raises [Invalid_argument] if [index] is outside the vector. *)
 
   val to_array : t -> float array
   val to_bigarray : t -> bigarray
@@ -79,12 +79,12 @@ module Matrix : sig
   val get : t -> int -> int -> float
   (** [get matrix row column] returns one matrix element.
 
-      @raise Invalid_argument if either index is outside the matrix. *)
+      Raises [Invalid_argument] if either index is outside the matrix. *)
 
   val row : t -> int -> Vector.t
   (** [row matrix index] returns a zero-copy immutable view of one row.
 
-      @raise Invalid_argument if [index] is outside the matrix. *)
+      Raises [Invalid_argument] if [index] is outside the matrix. *)
 
   val to_arrays : t -> float array array
   val to_bigarray : t -> bigarray
@@ -105,7 +105,7 @@ module Row_view : sig
   val get : t -> int -> int
   (** [get view position] returns the source row at [position].
 
-      @raise Invalid_argument if [position] is outside the view. *)
+      Raises [Invalid_argument] if [position] is outside the view. *)
 
   val indices : t -> int array
 end
@@ -149,7 +149,7 @@ module Feature_names : sig
   val length : t -> int
 
   val get : t -> int -> Feature_name.t
-  (** @raise Invalid_argument if the index is outside the collection. *)
+  (** Raises [Invalid_argument] if the index is outside the collection. *)
 
   val to_array : t -> string array
 end
@@ -180,9 +180,155 @@ module Groups : sig
   val length : t -> int
 
   val get : t -> int -> int
-  (** @raise Invalid_argument if the index is outside the collection. *)
+  (** Raises [Invalid_argument] if the index is outside the collection. *)
 
   val to_array : t -> int array
   val distinct_count : t -> int
   val select : t -> Row_view.t -> (t, Data_error.t) result
+end
+
+(** Common contract for immutable estimator specifications.
+
+    [t] is a training specification and [fitted] is the value produced by
+    fitting it. Implementations receive RNG state explicitly. *)
+module type ESTIMATOR = sig
+  type t
+  type target
+  type prediction
+  type fitted
+  type error
+  type rng
+
+  val fit :
+    t ->
+    ?sample_weight:Sample_weight.t ->
+    rng:rng ->
+    x:Matrix.t ->
+    y:target ->
+    unit ->
+    (fitted, error) result
+
+  val predict : fitted -> Matrix.t -> (prediction, error) result
+end
+
+(** Estimator whose targets and predictions are integer class labels. *)
+module type CLASSIFIER = sig
+  include
+    ESTIMATOR
+      with type target = Target.classification Target.t
+       and type prediction = Target.classification Target.t
+end
+
+(** Estimator whose targets and predictions are float64 regression values. *)
+module type REGRESSOR = sig
+  include
+    ESTIMATOR
+      with type target = Target.regression Target.t
+       and type prediction = Target.regression Target.t
+end
+
+(** Contract for a learned matrix-to-matrix transformation.
+
+    [fit] receives only the training partition. [y] is optional because some
+    transformations are supervised while others depend only on features. *)
+module type TRANSFORMER = sig
+  type t
+  type target
+  type fitted
+  type error
+  type rng
+
+  val fit :
+    t ->
+    ?sample_weight:Sample_weight.t ->
+    rng:rng ->
+    x:Matrix.t ->
+    y:target option ->
+    unit ->
+    (fitted, error) result
+
+  val transform : fitted -> Matrix.t -> (Matrix.t, error) result
+end
+
+(** A named scoring rule over observed and predicted values. *)
+module type SCORER = sig
+  type t
+  type truth
+  type prediction
+  type error
+
+  val name : t -> string
+
+  val score :
+    t ->
+    ?sample_weight:Sample_weight.t ->
+    truth:truth ->
+    prediction:prediction ->
+    unit ->
+    (float, error) result
+end
+
+(** Contract for deterministic materialization of train/test row selections. *)
+module type SPLITTER = sig
+  type t
+  type target
+  type rng
+  type error
+
+  val split :
+    t ->
+    rng:rng ->
+    ?groups:Groups.t ->
+    x:Matrix.t ->
+    y:target option ->
+    unit ->
+    ((Row_view.t * Row_view.t) array, error) result
+end
+
+(** Bounded execution with output positions matching input positions.
+
+    [map] passes the logical input index to each task. When tasks fail, an
+    implementation cancels work that is no longer needed and returns the
+    error belonging to the lowest failing input index. *)
+module type EXECUTION = sig
+  type t
+
+  val concurrency : t -> int
+
+  val map :
+    t ->
+    f:(index:int -> 'input -> ('output, 'error) result) ->
+    'input array ->
+    ('output array, 'error) result
+end
+
+(** Functional random-number generation with schedule-independent child seeds. *)
+module type RNG = sig
+  type seed
+  type t
+
+  val create : seed -> t
+
+  val derive : seed -> operation:string -> index:int -> seed
+  (** [derive seed ~operation ~index] identifies a logical child operation;
+      callers must not use worker or completion order as [index]. *)
+
+  val next_int64 : t -> int64 * t
+  val next_float : t -> float * t
+  (** [next_float state] returns a value in [[0, 1)] and the successor state. *)
+end
+
+(** Portable numerical primitives shared by reference and accelerated backends. *)
+module type NUMERICAL_BACKEND = sig
+  type error
+
+  val name : string
+  val sum : Vector.t -> float
+  val dot : Vector.t -> Vector.t -> (float, error) result
+
+  val matrix_vector_product :
+    Matrix.t -> Vector.t -> (Vector.t, error) result
+
+  val transposed_matrix_vector_product :
+    Matrix.t -> Vector.t -> (Vector.t, error) result
 end

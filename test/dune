@@ -1,3 +1,7 @@
 (test
  (name data_test)
  (libraries modelkit))
+
+(test
+ (name protocol_test)
+ (libraries modelkit))
