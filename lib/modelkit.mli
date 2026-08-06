@@ -10,11 +10,7 @@ module Data_error : sig
         observed_columns : int;
       }
     | Length_mismatch of { name : string; expected : int; observed : int }
-    | Index_out_of_bounds of {
-        name : string;
-        index : int;
-        upper_bound : int;
-      }
+    | Index_out_of_bounds of { name : string; index : int; upper_bound : int }
     | Non_finite of { name : string; index : int; value : float }
     | Negative_weight of { index : int; value : float }
     | All_zero_weights
@@ -65,10 +61,7 @@ module Matrix : sig
   val create : rows:int -> columns:int -> float -> (t, Data_error.t) result
 
   val init :
-    rows:int ->
-    columns:int ->
-    (int -> int -> float) ->
-    (t, Data_error.t) result
+    rows:int -> columns:int -> (int -> int -> float) -> (t, Data_error.t) result
 
   val of_arrays : float array array -> (t, Data_error.t) result
   val of_bigarray : bigarray -> t
@@ -143,9 +136,7 @@ end
 module Feature_names : sig
   type t
 
-  val create :
-    expected_count:int -> string array -> (t, Data_error.t) result
-
+  val create : expected_count:int -> string array -> (t, Data_error.t) result
   val length : t -> int
 
   val get : t -> int -> Feature_name.t
@@ -160,12 +151,8 @@ end
 module Sample_weight : sig
   type t
 
-  val create :
-    expected_length:int -> Vector.t -> (t, Data_error.t) result
-
-  val of_array :
-    expected_length:int -> float array -> (t, Data_error.t) result
-
+  val create : expected_length:int -> Vector.t -> (t, Data_error.t) result
+  val of_array : expected_length:int -> float array -> (t, Data_error.t) result
   val length : t -> int
   val get : t -> int -> float
   val to_vector : t -> Vector.t
@@ -288,8 +275,8 @@ end
 (** Bounded execution with output positions matching input positions.
 
     [map] passes the logical input index to each task. When tasks fail, an
-    implementation cancels work that is no longer needed and returns the
-    error belonging to the lowest failing input index. *)
+    implementation cancels work that is no longer needed and returns the error
+    belonging to the lowest failing input index. *)
 module type EXECUTION = sig
   type t
 
@@ -302,7 +289,8 @@ module type EXECUTION = sig
     ('output array, 'error) result
 end
 
-(** Functional random-number generation with schedule-independent child seeds. *)
+(** Functional random-number generation with schedule-independent child seeds.
+*)
 module type RNG = sig
   type seed
   type t
@@ -314,20 +302,21 @@ module type RNG = sig
       callers must not use worker or completion order as [index]. *)
 
   val next_int64 : t -> int64 * t
+
   val next_float : t -> float * t
-  (** [next_float state] returns a value in [[0, 1)] and the successor state. *)
+  (** [next_float state] returns a value in the half-open interval from [0.]
+      inclusive to [1.] exclusive, together with the successor state. *)
 end
 
-(** Portable numerical primitives shared by reference and accelerated backends. *)
+(** Portable numerical primitives shared by reference and accelerated backends.
+*)
 module type NUMERICAL_BACKEND = sig
   type error
 
   val name : string
   val sum : Vector.t -> float
   val dot : Vector.t -> Vector.t -> (float, error) result
-
-  val matrix_vector_product :
-    Matrix.t -> Vector.t -> (Vector.t, error) result
+  val matrix_vector_product : Matrix.t -> Vector.t -> (Vector.t, error) result
 
   val transposed_matrix_vector_product :
     Matrix.t -> Vector.t -> (Vector.t, error) result

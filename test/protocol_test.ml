@@ -5,9 +5,9 @@ module Test_rng : RNG with type seed = int64 = struct
   type t = int64
 
   let create seed = seed
+
   let derive seed ~operation ~index =
-    Int64.logxor seed
-      (Int64.of_int (Hashtbl.seeded_hash index operation))
+    Int64.logxor seed (Int64.of_int (Hashtbl.seeded_hash index operation))
 
   let next_int64 state = (state, Int64.add state 1L)
 
@@ -21,8 +21,7 @@ module Test_regressor :
     with type t = unit
      and type fitted = float
      and type error = Data_error.t
-     and type rng = Test_rng.t =
-struct
+     and type rng = Test_rng.t = struct
   type t = unit
   type target = Target.regression Target.t
   type prediction = Target.regression Target.t
@@ -32,12 +31,13 @@ struct
 
   let fit () ?sample_weight:_ ~rng:_ ~x:_ ~y () =
     let values = Target.regression_values y in
-    let fitted = if Vector.length values = 0 then 0.0 else Vector.get values 0 in
+    let fitted =
+      if Vector.length values = 0 then 0.0 else Vector.get values 0
+    in
     Ok fitted
 
   let predict fitted x =
-    Target.regression
-      (Vector.of_array (Array.make (Matrix.rows x) fitted))
+    Target.regression (Vector.of_array (Array.make (Matrix.rows x) fitted))
 end
 
 module Test_classifier :
@@ -45,8 +45,7 @@ module Test_classifier :
     with type t = unit
      and type fitted = int
      and type error = Data_error.t
-     and type rng = Test_rng.t =
-struct
+     and type rng = Test_rng.t = struct
   type t = unit
   type target = Target.classification Target.t
   type prediction = Target.classification Target.t
@@ -68,8 +67,7 @@ module Test_transformer :
      and type target = Target.regression Target.t
      and type fitted = unit
      and type error = Data_error.t
-     and type rng = Test_rng.t =
-struct
+     and type rng = Test_rng.t = struct
   type t = unit
   type target = Target.regression Target.t
   type fitted = unit
@@ -85,8 +83,7 @@ module Test_scorer :
     with type t = unit
      and type truth = Target.regression Target.t
      and type prediction = Target.regression Target.t
-     and type error = Data_error.t =
-struct
+     and type error = Data_error.t = struct
   type t = unit
   type truth = Target.regression Target.t
   type prediction = Target.regression Target.t
@@ -101,8 +98,7 @@ module Test_splitter :
     with type t = unit
      and type target = Target.regression Target.t
      and type rng = Test_rng.t
-     and type error = Data_error.t =
-struct
+     and type error = Data_error.t = struct
   type t = unit
   type target = Target.regression Target.t
   type rng = Test_rng.t
@@ -169,7 +165,8 @@ module Test_backend : NUMERICAL_BACKEND with type error = Data_error.t = struct
           let total = ref 0.0 in
           for column = 0 to expected - 1 do
             total :=
-              !total +. (Matrix.get matrix row column *. Vector.get vector column)
+              !total
+              +. (Matrix.get matrix row column *. Vector.get vector column)
           done;
           !total)
 
@@ -196,11 +193,21 @@ let () =
   let y = Result.get_ok (Target.regression (Vector.of_array [| 1.0; 2.0 |])) in
   let classes = Target.classification [| 0; 1 |] in
   let fitted = Result.get_ok (Test_regressor.fit () ~rng ~x ~y ()) in
-  let classifier = Result.get_ok (Test_classifier.fit () ~rng ~x ~y:classes ()) in
+  let classifier =
+    Result.get_ok (Test_classifier.fit () ~rng ~x ~y:classes ())
+  in
   ignore (Result.get_ok (Test_regressor.predict fitted x));
   ignore (Result.get_ok (Test_classifier.predict classifier x));
   ignore (Result.get_ok (Test_transformer.fit () ~rng ~x ~y:(Some y) ()));
   ignore (Result.get_ok (Test_scorer.score () ~truth:y ~prediction:y ()));
   ignore (Result.get_ok (Test_splitter.split () ~rng ~x ~y:(Some y) ()));
-  ignore (Result.get_ok (Test_execution.map () ~f:(fun ~index value -> Ok (index, value)) [| 1; 2 |]));
-  ignore (Result.get_ok (Test_backend.dot (Vector.of_array [| 1.0 |]) (Vector.of_array [| 2.0 |])))
+  ignore
+    (Result.get_ok
+       (Test_execution.map ()
+          ~f:(fun ~index value -> Ok (index, value))
+          [| 1; 2 |]));
+  ignore
+    (Result.get_ok
+       (Test_backend.dot
+          (Vector.of_array [| 1.0 |])
+          (Vector.of_array [| 2.0 |])))

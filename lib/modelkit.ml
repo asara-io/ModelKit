@@ -7,11 +7,7 @@ module Data_error = struct
         observed_columns : int;
       }
     | Length_mismatch of { name : string; expected : int; observed : int }
-    | Index_out_of_bounds of {
-        name : string;
-        index : int;
-        upper_bound : int;
-      }
+    | Index_out_of_bounds of { name : string; index : int; upper_bound : int }
     | Non_finite of { name : string; index : int; value : float }
     | Negative_weight of { index : int; value : float }
     | All_zero_weights
@@ -60,8 +56,7 @@ let check_index ~name ~length index =
   if index < 0 || index >= length then
     invalid_arg
       (Format.asprintf "%a" Data_error.pp
-         (Data_error.Index_out_of_bounds
-            { name; index; upper_bound = length }))
+         (Data_error.Index_out_of_bounds { name; index; upper_bound = length }))
 
 module Vector = struct
   type bigarray =
@@ -87,7 +82,9 @@ module Vector = struct
 
   let init ~length f =
     if length < 0 then
-      Error (Data_error.Negative_dimension { name = "vector length"; value = length })
+      Error
+        (Data_error.Negative_dimension
+           { name = "vector length"; value = length })
     else Ok (unsafe_init length f)
 
   let of_array values = unsafe_init (Array.length values) (Array.get values)
@@ -113,7 +110,8 @@ module Matrix = struct
 
   let dimensions_error ~rows ~columns =
     if rows < 0 then
-      Some (Data_error.Negative_dimension { name = "matrix rows"; value = rows })
+      Some
+        (Data_error.Negative_dimension { name = "matrix rows"; value = rows })
     else if columns < 0 then
       Some
         (Data_error.Negative_dimension
@@ -136,8 +134,7 @@ module Matrix = struct
     | Some error -> Error error
     | None -> Ok (unsafe_init ~rows ~columns f)
 
-  let create ~rows ~columns value =
-    init ~rows ~columns (fun _ _ -> value)
+  let create ~rows ~columns value = init ~rows ~columns (fun _ _ -> value)
 
   let of_arrays values =
     let rows = Array.length values in
@@ -154,7 +151,9 @@ module Matrix = struct
     in
     match validate 0 with
     | Error _ as error -> error
-    | Ok () -> Ok (unsafe_init ~rows ~columns (fun row column -> values.(row).(column)))
+    | Ok () ->
+        Ok
+          (unsafe_init ~rows ~columns (fun row column -> values.(row).(column)))
 
   let of_bigarray values =
     let rows = Bigarray.Array2.dim1 values in
@@ -242,8 +241,7 @@ module Target = struct
         if Float.is_finite value then validate (index + 1)
         else
           Error
-            (Data_error.Non_finite
-               { name = "regression target"; index; value })
+            (Data_error.Non_finite { name = "regression target"; index; value })
     in
     validate 0
 
@@ -256,9 +254,12 @@ module Target = struct
   let regression_values (Regression_values values) = values
   let classification_values (Classification_values values) = Array.copy values
 
-  let select : type kind. kind t -> Row_view.t -> (kind t, Data_error.t) result =
+  let select : type kind. kind t -> Row_view.t -> (kind t, Data_error.t) result
+      =
    fun target view ->
-    match check_view_alignment ~name:"target row view" ~length:(length target) view with
+    match
+      check_view_alignment ~name:"target row view" ~length:(length target) view
+    with
     | Error _ as error -> error
     | Ok () -> (
         match target with
@@ -347,13 +348,13 @@ module Sample_weight = struct
       else
         let rec validate index has_positive =
           if index = observed then
-            if has_positive then Ok values else Error Data_error.All_zero_weights
+            if has_positive then Ok values
+            else Error Data_error.All_zero_weights
           else
             let value = Vector.get values index in
             if not (Float.is_finite value) then
               Error
-                (Data_error.Non_finite
-                   { name = "sample weights"; index; value })
+                (Data_error.Non_finite { name = "sample weights"; index; value })
             else if value < 0.0 then
               Error (Data_error.Negative_weight { index; value })
             else validate (index + 1) (has_positive || value > 0.0)
@@ -411,7 +412,9 @@ module Groups = struct
     Hashtbl.length distinct
 
   let select groups view =
-    match check_view_alignment ~name:"group row view" ~length:(length groups) view with
+    match
+      check_view_alignment ~name:"group row view" ~length:(length groups) view
+    with
     | Error _ as error -> error
     | Ok () ->
         Ok
@@ -533,9 +536,7 @@ module type NUMERICAL_BACKEND = sig
   val name : string
   val sum : Vector.t -> float
   val dot : Vector.t -> Vector.t -> (float, error) result
-
-  val matrix_vector_product :
-    Matrix.t -> Vector.t -> (Vector.t, error) result
+  val matrix_vector_product : Matrix.t -> Vector.t -> (Vector.t, error) result
 
   val transposed_matrix_vector_product :
     Matrix.t -> Vector.t -> (Vector.t, error) result

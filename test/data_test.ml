@@ -35,9 +35,7 @@ let expect_error expected = function
   | Ok _ -> fail "expected an error"
 
 let test_vector_ownership () =
-  let source =
-    Bigarray.Array1.create Bigarray.float64 Bigarray.c_layout 2
-  in
+  let source = Bigarray.Array1.create Bigarray.float64 Bigarray.c_layout 2 in
   Bigarray.Array1.set source 0 1.0;
   Bigarray.Array1.set source 1 2.0;
   let vector = Vector.of_bigarray source in
@@ -55,13 +53,10 @@ let test_matrix () =
   check (Float.is_nan (Matrix.get matrix 0 1)) "matrix did not preserve NaN";
   let second_row = Matrix.row matrix 1 in
   check (Vector.to_array second_row = [| 3.0; 4.0 |]) "matrix row is incorrect";
-  expect_error Ragged_matrix
-    (Matrix.of_arrays [| [| 1.0 |]; [| 2.0; 3.0 |] |])
+  expect_error Ragged_matrix (Matrix.of_arrays [| [| 1.0 |]; [| 2.0; 3.0 |] |])
 
 let test_matrix_ownership () =
-  let source =
-    Bigarray.Array2.create Bigarray.float64 Bigarray.c_layout 1 1
-  in
+  let source = Bigarray.Array2.create Bigarray.float64 Bigarray.c_layout 1 1 in
   Bigarray.Array2.set source 0 0 3.0;
   let matrix = Matrix.of_bigarray source in
   Bigarray.Array2.set source 0 0 9.0;
@@ -75,8 +70,7 @@ let test_row_view () =
   let view = get_ok (Row_view.create ~source_size:3 indices) in
   indices.(0) <- 1;
   check (Row_view.indices view = [| 2; 0; 2 |]) "row view did not copy indices";
-  expect_error Index_out_of_bounds
-    (Row_view.create ~source_size:3 [| 3 |])
+  expect_error Index_out_of_bounds (Row_view.create ~source_size:3 [| 3 |])
 
 let test_targets () =
   expect_error Non_finite
@@ -136,8 +130,7 @@ let test_groups () =
   let view = get_ok (Row_view.create ~source_size:3 [| 2; 0 |]) in
   let selected = get_ok (Groups.select groups view) in
   check (Groups.to_array selected = [| 20; 10 |]) "group selection is incorrect";
-  expect_error Length_mismatch
-    (Groups.create ~expected_length:3 [| 1; 2 |])
+  expect_error Length_mismatch (Groups.create ~expected_length:3 [| 1; 2 |])
 
 let test_negative_dimensions () =
   expect_error Negative_dimension (Vector.create ~length:(-1) 0.0);
