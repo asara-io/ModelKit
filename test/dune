@@ -1,0 +1,3 @@
+(test
+ (name data_test)
+ (libraries modelkit))
