@@ -23,13 +23,14 @@ depends: [
   "cmdliner" {= "2.1.1" & with-doc}
   "conf-mingw-w64-gcc-x86_64" {= "1"}
   "cppo" {= "1.8.0" & with-doc}
-  "crunch" {= "4.0.0" & with-doc}
-  "dune" {= "3.23.1"}
+  "crunch" {= "4.1.0" & with-doc}
+  "dune" {= "3.24.2"}
   "flexdll" {= "0.44"}
   "fmt" {= "0.11.0" & with-doc}
   "fpath" {= "0.7.3" & with-doc}
   "host-arch-x86_64" {= "1"}
   "host-system-mingw" {= "1"}
+  "mingw-w64-shims" {= "1.0.1"}
   "ocaml" {= "5.3.0"}
   "ocaml-base-compiler" {= "5.3.0"}
   "ocaml-compiler" {= "5.3.0"}
