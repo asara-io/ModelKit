@@ -6,9 +6,15 @@ Python users of `scikit-learn` will find this library familiar in serving the sa
 
 ## Status
 
-ModelKit 0.1.0 is a foundation release from the starting engineering milestone. It contains a buildable, installable, and documented `Modelkit` library skeleton, but its public namespace does not yet contain machine learning APIs.
+ModelKit 0.1.0 is a foundation release from the starting engineering milestone. Development after that release now includes the first public data contracts. Estimators and end-to-end machine learning workflows are not yet implemented.
 
 The portable package lives under `lib/`. Optional ecosystem adapters and accelerated backends are reserved under `adapters/` and `backends/`; they will remain separate packages that depend on the portable core when implemented.
+
+## Available Data Foundation
+
+The `Modelkit` namespace provides opaque, immutable `Vector` and `Matrix` values backed by float64 C-layout Bigarrays; bounded immutable `Row_view` selections; regression and classification `Target` values; unique aligned `Feature_names`; validated `Sample_weight` values; aligned integer `Groups`; and structured `Data_error` failures.
+
+Bigarrays and arrays are copied when admitted or exported so caller mutation cannot change accepted data. Matrix rows and row-index selections avoid copying feature buffers. Regression targets must be finite, sample weights must be finite and non-negative with at least one positive value, and feature names must be non-empty and unique.
 
 ## Development
 
