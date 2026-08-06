@@ -6,7 +6,7 @@ Python users of `scikit-learn` will find this library familiar in serving the sa
 
 ## Status
 
-ModelKit 0.1.0 is a foundation release from the starting engineering milestone. Development after that release now includes the first public data contracts and protocol module types. Concrete estimators and end-to-end machine learning workflows are not yet implemented.
+ModelKit 0.1.0 is the initial foundation release. Development after that release now includes the first public data contracts and protocol module types. Concrete estimators and end-to-end machine learning workflows are not yet implemented.
 
 The portable package lives under `lib/`. Optional ecosystem adapters and accelerated backends are reserved under `adapters/` and `backends/`; they will remain separate packages that depend on the portable core when implemented.
 
@@ -24,27 +24,41 @@ The `EXECUTION`, `RNG`, and `NUMERICAL_BACKEND` module types establish substitut
 
 ## Development
 
-ModelKit requires OCaml 5.2 or newer. Install development dependencies in an opam switch, then run the standard checks:
+ModelKit requires OCaml 5.2 or newer. The platform locks currently use OCaml 5.3.0. The following set of commands will assume that you have installed and configured `git` and `opam`. The generated documentation will be available at `_build/default/_doc/_html/index.html`.
 
-```console
+### Initial Setup
+
+```commandline
+opam update
+opam switch create . 5.3.0 --deps-only --with-test --with-doc  # If running for the first time.
 opam install ocamlformat.0.29.0
-opam install . --deps-only --with-test --with-doc
-opam exec -- dune build @all @runtest @doc
-opam exec -- dune build @fmt
+
+opam exec -- dune build @opam
+opam exec -- dune promote
+opam lint modelkit.opam
 ```
 
-`@fmt` reports formatting differences without changing source files. Apply a reviewed formatting change with `opam exec -- dune promote`.
+### Windows
 
-The ordinary Dune workspace uses the active opam switch so compiler-matrix builds remain straightforward. Reproducible opam locks are platform-specific because compiler and system dependency packages differ by host. Refresh and consume the checked-in Windows x86-64 solution with:
-
-```console
+```commandline
 opam lock ./modelkit.opam --lock-suffix=locked.windows-x86_64
-opam install ocamlformat.0.29.0
 opam install . --deps-only --with-test --with-doc --locked --lock-suffix=locked.windows-x86_64
-opam exec -- dune build @all @runtest @doc @fmt
+
+opam exec -- dune build @all @runtest @doc @fmt @opam @install
+opam lint modelkit.opam
 ```
 
-Each supported platform uses its own `modelkit.opam.locked.<platform>` file. Regenerating a lock is an intentional dependency update and its diff should be reviewed.
+### macOS (arm64)
+
+```sh
+opam lock ./modelkit.opam --lock-suffix=locked.macos-arm64
+opam install . --deps-only --with-test --with-doc --locked --lock-suffix=locked.macos-arm64
+
+opam exec -- dune build @all @runtest @doc @fmt @opam @install
+opam lint modelkit.opam
+```
+
+The ordinary Dune workspace uses the repository-local opam switch automatically. Reproducible locks are platform-specific because compiler and system dependency packages differ by host.
 
 ## Project Policies
 
