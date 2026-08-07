@@ -256,11 +256,7 @@ module Test_backend : NUMERICAL_BACKEND = struct
       Error
         (wrap_data_error
            (Data_error.Length_mismatch
-              {
-                name = "transposed-matrix-vector operand";
-                expected;
-                observed;
-              }))
+              { name = "transposed-matrix-vector operand"; expected; observed }))
     else
       wrap_data_result
         (Vector.init ~length:(Matrix.columns matrix) (fun column ->
@@ -292,8 +288,7 @@ let () =
   ignore (Test_regressor.fitted_params fitted);
   ignore (Test_regressor.feature_schema fitted);
   ignore (Result.get_ok (Test_regressor.predict fitted ~feature_schema ~x));
-  ignore
-    (Result.get_ok (Test_classifier.predict classifier ~feature_schema ~x));
+  ignore (Result.get_ok (Test_classifier.predict classifier ~feature_schema ~x));
   let transformed =
     Result.get_ok
       (Test_transformer.fit () ~rng ~feature_schema ~x ~y:(Some y) ())
@@ -309,14 +304,9 @@ let () =
   | Error error -> (
       match Error.kind error with
       | Error.Feature_schema_mismatch _ -> ()
-      | Error.Data _
-      | Error.Shape_mismatch _
-      | Error.Validation _
-      | Error.Numerical _
-      | Error.Convergence _
-      | Error.Compatibility _
-      | Error.Artifact _
-      | Error.Cancelled ->
+      | Error.Data _ | Error.Shape_mismatch _ | Error.Validation _
+      | Error.Numerical _ | Error.Convergence _ | Error.Compatibility _
+      | Error.Artifact _ | Error.Cancelled ->
           raise (Failure "unexpected prediction error"))
   | Ok _ -> raise (Failure "incompatible prediction schema was accepted"));
   ignore (Result.get_ok (Test_scorer.score () ~truth:y ~prediction:y ()));

@@ -183,10 +183,7 @@ module Feature_schema : sig
 
   val anonymous : feature_count:int -> (t, Data_error.t) result
   val named : Feature_names.t -> t
-
-  val of_matrix :
-    ?names:Feature_names.t -> Matrix.t -> (t, Data_error.t) result
-
+  val of_matrix : ?names:Feature_names.t -> Matrix.t -> (t, Data_error.t) result
   val feature_count : t -> int
   val names : t -> Feature_names.t option
   val equal : t -> t -> bool
@@ -245,8 +242,8 @@ end
 
 (** Shared convention for immutable configured components.
 
-    Concrete modules expose [params] as a public typed value. [clone] returns
-    an equivalent unfitted specification and may return the same value because
+    Concrete modules expose [params] as a public typed value. [clone] returns an
+    equivalent unfitted specification and may return the same value because
     specifications contain no mutable fitted state. *)
 module type SPECIFICATION = sig
   type t
@@ -413,9 +410,7 @@ module type NUMERICAL_BACKEND = sig
   val name : string
   val sum : Vector.t -> float
   val dot : Vector.t -> Vector.t -> (float, Error.t) result
-
-  val matrix_vector_product :
-    Matrix.t -> Vector.t -> (Vector.t, Error.t) result
+  val matrix_vector_product : Matrix.t -> Vector.t -> (Vector.t, Error.t) result
 
   val transposed_matrix_vector_product :
     Matrix.t -> Vector.t -> (Vector.t, Error.t) result

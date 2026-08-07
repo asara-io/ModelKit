@@ -12,12 +12,9 @@ type data_error_kind = Negative_dimension | Length_mismatch | Other
 let data_error_kind = function
   | Data_error.Negative_dimension _ -> Negative_dimension
   | Data_error.Length_mismatch _ -> Length_mismatch
-  | Data_error.Ragged_matrix _
-  | Data_error.Index_out_of_bounds _
-  | Data_error.Non_finite _
-  | Data_error.Negative_weight _
-  | Data_error.All_zero_weights
-  | Data_error.Empty_feature_name _
+  | Data_error.Ragged_matrix _ | Data_error.Index_out_of_bounds _
+  | Data_error.Non_finite _ | Data_error.Negative_weight _
+  | Data_error.All_zero_weights | Data_error.Empty_feature_name _
   | Data_error.Duplicate_feature_name _ ->
       Other
 
@@ -79,14 +76,9 @@ let test_error_convention () =
   let validation =
     match Error.kind error with
     | Error.Validation { name; reason } -> Some (name, reason)
-    | Error.Data _
-    | Error.Shape_mismatch _
-    | Error.Feature_schema_mismatch _
-    | Error.Numerical _
-    | Error.Convergence _
-    | Error.Compatibility _
-    | Error.Artifact _
-    | Error.Cancelled ->
+    | Error.Data _ | Error.Shape_mismatch _ | Error.Feature_schema_mismatch _
+    | Error.Numerical _ | Error.Convergence _ | Error.Compatibility _
+    | Error.Artifact _ | Error.Cancelled ->
         None
   in
   let name, reason =
@@ -105,14 +97,9 @@ let test_error_convention () =
   let wrapped =
     match Error.kind data_error with
     | Error.Data error -> Some error
-    | Error.Shape_mismatch _
-    | Error.Feature_schema_mismatch _
-    | Error.Validation _
-    | Error.Numerical _
-    | Error.Convergence _
-    | Error.Compatibility _
-    | Error.Artifact _
-    | Error.Cancelled ->
+    | Error.Shape_mismatch _ | Error.Feature_schema_mismatch _
+    | Error.Validation _ | Error.Numerical _ | Error.Convergence _
+    | Error.Compatibility _ | Error.Artifact _ | Error.Cancelled ->
         None
   in
   let dimensions =
@@ -120,10 +107,11 @@ let test_error_convention () =
     | Some (Data_error.Length_mismatch { expected; observed; _ }) ->
         Some (expected, observed)
     | Some
-        (Data_error.Negative_dimension _ | Data_error.Ragged_matrix _
+        ( Data_error.Negative_dimension _ | Data_error.Ragged_matrix _
         | Data_error.Index_out_of_bounds _ | Data_error.Non_finite _
         | Data_error.Negative_weight _ | Data_error.All_zero_weights
-        | Data_error.Empty_feature_name _ | Data_error.Duplicate_feature_name _)
+        | Data_error.Empty_feature_name _ | Data_error.Duplicate_feature_name _
+          )
     | None ->
         None
   in

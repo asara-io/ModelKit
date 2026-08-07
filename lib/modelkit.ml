@@ -441,7 +441,8 @@ module Feature_schema = struct
     | None -> Ok { feature_count; names = None }
     | Some names ->
         let observed = Feature_names.length names in
-        if observed = feature_count then Ok { feature_count; names = Some names }
+        if observed = feature_count then
+          Ok { feature_count; names = Some names }
         else
           Error
             (Data_error.Length_mismatch
@@ -456,10 +457,10 @@ module Feature_schema = struct
     else
       let rec loop index =
         index = length
-        || (String.equal
-              (Feature_name.to_string (Feature_names.get left index))
-              (Feature_name.to_string (Feature_names.get right index))
-           && loop (index + 1))
+        || String.equal
+             (Feature_name.to_string (Feature_names.get left index))
+             (Feature_name.to_string (Feature_names.get right index))
+           && loop (index + 1)
       in
       loop 0
 
@@ -534,9 +535,7 @@ module Error = struct
   let kind error = error.kind
   let context error = error.context
   let remediation error = error.remediation
-
-  let with_context outer error =
-    { error with context = outer :: error.context }
+  let with_context outer error = { error with context = outer :: error.context }
 
   let pp_dimensions formatter dimensions =
     Format.fprintf formatter "(";
@@ -550,11 +549,12 @@ module Error = struct
   let pp_kind formatter = function
     | Data error -> Data_error.pp formatter error
     | Shape_mismatch { name; expected; observed } ->
-        Format.fprintf formatter "%s has shape %a; expected %a" name pp_dimensions
-          observed pp_dimensions expected
+        Format.fprintf formatter "%s has shape %a; expected %a" name
+          pp_dimensions observed pp_dimensions expected
     | Feature_schema_mismatch { expected; observed } ->
-        Format.fprintf formatter "feature schema %a does not match fitted schema %a"
-          Feature_schema.pp observed Feature_schema.pp expected
+        Format.fprintf formatter
+          "feature schema %a does not match fitted schema %a" Feature_schema.pp
+          observed Feature_schema.pp expected
     | Validation { name; reason } ->
         Format.fprintf formatter "%s is invalid: %s" name reason
     | Numerical { operation; reason } ->
@@ -728,9 +728,7 @@ module type NUMERICAL_BACKEND = sig
   val name : string
   val sum : Vector.t -> float
   val dot : Vector.t -> Vector.t -> (float, Error.t) result
-
-  val matrix_vector_product :
-    Matrix.t -> Vector.t -> (Vector.t, Error.t) result
+  val matrix_vector_product : Matrix.t -> Vector.t -> (Vector.t, Error.t) result
 
   val transposed_matrix_vector_product :
     Matrix.t -> Vector.t -> (Vector.t, Error.t) result
