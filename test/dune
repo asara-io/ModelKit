@@ -5,3 +5,7 @@
 (test
  (name protocol_test)
  (libraries modelkit))
+
+(test
+ (name convention_test)
+ (libraries modelkit))
