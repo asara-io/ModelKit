@@ -6,7 +6,7 @@ Python users of `scikit-learn` will find this library familiar in serving the sa
 
 ## Status
 
-ModelKit 0.1.0 is the initial foundation release. Development after that release now includes the first public data contracts and protocol module types. Concrete estimators and end-to-end machine learning workflows are not yet implemented.
+ModelKit 0.1.0 is the initial foundation release. Development after that release now includes public data contracts, feature schemas, structured errors, and protocol module types. Concrete estimators and end-to-end machine learning workflows are not yet implemented.
 
 The portable package lives under `lib/`. Optional ecosystem adapters and accelerated backends are reserved under `adapters/` and `backends/`; they will remain separate packages that depend on the portable core when implemented.
 
@@ -16,9 +16,13 @@ The `Modelkit` namespace provides opaque, immutable `Vector` and `Matrix` values
 
 Bigarrays and arrays are copied when admitted or exported so caller mutation cannot change accepted data. Matrix rows and row-index selections avoid copying feature buffers. Regression targets must be finite, sample weights must be finite and non-negative with at least one positive value, and feature names must be non-empty and unique.
 
+Opaque `Feature_schema` values bind a matrix width to optional ordered feature names. Named schemas treat feature identity and order as compatibility requirements, while anonymous schemas validate width only.
+
 ## Available Protocol Foundation
 
-Public `ESTIMATOR`, `CLASSIFIER`, `REGRESSOR`, `TRANSFORMER`, `SCORER`, and `SPLITTER` module types define the boundaries that future implementations and optional adapters will share. Estimator specifications and fitted values have separate abstract types, classifiers and regressors carry their target kind at compile time, and operations that can fail return implementation-defined typed errors.
+Public `ESTIMATOR`, `CLASSIFIER`, `REGRESSOR`, `TRANSFORMER`, `SCORER`, and `SPLITTER` module types define the boundaries that future implementations and optional adapters will share. The common `SPECIFICATION` contract requires immutable unfitted values, explicit cloning, and typed parameter introspection. Estimator and transformer specifications cannot be used where their separate fitted types are required.
+
+Fitted estimators retain their training parameters and admitted feature schema. Fitted transformers publish both input and output schemas. Fit, predict, transform, score, split, and numerical-backend failures use `Error.t`, whose typed categories carry structured stage, fold, candidate, and feature context plus remediation text.
 
 The `EXECUTION`, `RNG`, and `NUMERICAL_BACKEND` module types establish substitutable boundaries for stable-order bounded work, functional random-number state with logically derived child seeds, and portable or accelerated numerical primitives. ModelKit does not yet provide concrete implementations of these protocols.
 
