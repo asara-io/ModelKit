@@ -5,7 +5,8 @@ workflows.
 
 The current engineering foundation provides opaque float64 {!Modelkit.Vector}
 and {!Modelkit.Matrix} values, immutable {!Modelkit.Row_view} selections,
-validated targets and aligned metadata. Public estimator, transformer, scorer,
+validated targets, aligned metadata, immutable feature schemas, and structured
+protocol errors. Public specification, estimator, transformer, scorer,
 splitter, execution, RNG, and numerical-backend module types define the
-extension boundaries. Concrete implementations and end-to-end workflows will
-arrive in later milestones.
+extension boundaries with separate unfitted and fitted states. Concrete
+implementations and end-to-end workflows will arrive in later releases.

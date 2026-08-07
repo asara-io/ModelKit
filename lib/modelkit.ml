@@ -422,24 +422,209 @@ module Groups = struct
                get groups (Row_view.get view position)))
 end
 
-module type ESTIMATOR = sig
+module Feature_schema = struct
+  type t = { feature_count : int; names : Feature_names.t option }
+
+  let anonymous ~feature_count =
+    if feature_count < 0 then
+      Error
+        (Data_error.Negative_dimension
+           { name = "feature-schema width"; value = feature_count })
+    else Ok { feature_count; names = None }
+
+  let named names =
+    { feature_count = Feature_names.length names; names = Some names }
+
+  let of_matrix ?names matrix =
+    let feature_count = Matrix.columns matrix in
+    match names with
+    | None -> Ok { feature_count; names = None }
+    | Some names ->
+        let observed = Feature_names.length names in
+        if observed = feature_count then Ok { feature_count; names = Some names }
+        else
+          Error
+            (Data_error.Length_mismatch
+               { name = "feature names"; expected = feature_count; observed })
+
+  let feature_count schema = schema.feature_count
+  let names schema = schema.names
+
+  let equal_names left right =
+    let length = Feature_names.length left in
+    if length <> Feature_names.length right then false
+    else
+      let rec loop index =
+        index = length
+        || (String.equal
+              (Feature_name.to_string (Feature_names.get left index))
+              (Feature_name.to_string (Feature_names.get right index))
+           && loop (index + 1))
+      in
+      loop 0
+
+  let equal left right =
+    left.feature_count = right.feature_count
+    &&
+    match (left.names, right.names) with
+    | None, None -> true
+    | Some left, Some right -> equal_names left right
+    | None, Some _ | Some _, None -> false
+
+  let validate_matrix schema matrix =
+    let observed = Matrix.columns matrix in
+    if observed = schema.feature_count then Ok ()
+    else
+      Error
+        (Data_error.Length_mismatch
+           {
+             name = "matrix feature count";
+             expected = schema.feature_count;
+             observed;
+           })
+
+  let pp formatter schema =
+    match schema.names with
+    | None ->
+        Format.fprintf formatter "%d anonymous features" schema.feature_count
+    | Some names ->
+        Format.fprintf formatter "@[<hov 1>[";
+        for index = 0 to Feature_names.length names - 1 do
+          if index > 0 then Format.fprintf formatter ";@ ";
+          Format.fprintf formatter "%S"
+            (Feature_name.to_string (Feature_names.get names index))
+        done;
+        Format.fprintf formatter "]@]"
+
+  let to_string schema = Format.asprintf "%a" pp schema
+end
+
+module Error = struct
+  type context =
+    | Stage of string
+    | Fold of int
+    | Candidate of int
+    | Feature of Feature_name.t
+
+  type kind =
+    | Data of Data_error.t
+    | Shape_mismatch of {
+        name : string;
+        expected : int list;
+        observed : int list;
+      }
+    | Feature_schema_mismatch of {
+        expected : Feature_schema.t;
+        observed : Feature_schema.t;
+      }
+    | Validation of { name : string; reason : string }
+    | Numerical of { operation : string; reason : string }
+    | Convergence of { algorithm : string; reason : string }
+    | Compatibility of { component : string; reason : string }
+    | Artifact of { operation : string; reason : string }
+    | Cancelled
+
+  type t = { kind : kind; context : context list; remediation : string }
+
+  let make ?(context = []) ~remediation kind = { kind; context; remediation }
+
+  let of_data_error ?context ~remediation error =
+    make ?context ~remediation (Data error)
+
+  let kind error = error.kind
+  let context error = error.context
+  let remediation error = error.remediation
+
+  let with_context outer error =
+    { error with context = outer :: error.context }
+
+  let pp_dimensions formatter dimensions =
+    Format.fprintf formatter "(";
+    List.iteri
+      (fun index dimension ->
+        if index > 0 then Format.fprintf formatter ", ";
+        Format.pp_print_int formatter dimension)
+      dimensions;
+    Format.fprintf formatter ")"
+
+  let pp_kind formatter = function
+    | Data error -> Data_error.pp formatter error
+    | Shape_mismatch { name; expected; observed } ->
+        Format.fprintf formatter "%s has shape %a; expected %a" name pp_dimensions
+          observed pp_dimensions expected
+    | Feature_schema_mismatch { expected; observed } ->
+        Format.fprintf formatter "feature schema %a does not match fitted schema %a"
+          Feature_schema.pp observed Feature_schema.pp expected
+    | Validation { name; reason } ->
+        Format.fprintf formatter "%s is invalid: %s" name reason
+    | Numerical { operation; reason } ->
+        Format.fprintf formatter "%s failed numerically: %s" operation reason
+    | Convergence { algorithm; reason } ->
+        Format.fprintf formatter "%s did not converge: %s" algorithm reason
+    | Compatibility { component; reason } ->
+        Format.fprintf formatter "%s is incompatible: %s" component reason
+    | Artifact { operation; reason } ->
+        Format.fprintf formatter "artifact %s failed: %s" operation reason
+    | Cancelled -> Format.pp_print_string formatter "operation was cancelled"
+
+  let pp_context formatter = function
+    | Stage stage -> Format.fprintf formatter "stage %S" stage
+    | Fold fold -> Format.fprintf formatter "fold %d" fold
+    | Candidate candidate -> Format.fprintf formatter "candidate %d" candidate
+    | Feature feature ->
+        Format.fprintf formatter "feature %S" (Feature_name.to_string feature)
+
+  let pp formatter error =
+    Format.fprintf formatter "%a" pp_kind error.kind;
+    (match error.context with
+    | [] -> ()
+    | context ->
+        Format.fprintf formatter " (@[<hov>";
+        List.iteri
+          (fun index item ->
+            if index > 0 then Format.fprintf formatter ",@ ";
+            pp_context formatter item)
+          context;
+        Format.fprintf formatter "@])");
+    Format.fprintf formatter ". Remediation: %s" error.remediation
+
+  let to_string error = Format.asprintf "%a" pp error
+end
+
+module type SPECIFICATION = sig
   type t
+  type params
+
+  val clone : t -> t
+  val params : t -> params
+end
+
+module type ESTIMATOR = sig
+  include SPECIFICATION
+
   type target
   type prediction
   type fitted
-  type error
   type rng
 
   val fit :
     t ->
     ?sample_weight:Sample_weight.t ->
     rng:rng ->
+    feature_schema:Feature_schema.t ->
     x:Matrix.t ->
     y:target ->
     unit ->
-    (fitted, error) result
+    (fitted, Error.t) result
 
-  val predict : fitted -> Matrix.t -> (prediction, error) result
+  val predict :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (prediction, Error.t) result
+
+  val fitted_params : fitted -> params
+  val feature_schema : fitted -> Feature_schema.t
 end
 
 module type CLASSIFIER = sig
@@ -457,29 +642,38 @@ module type REGRESSOR = sig
 end
 
 module type TRANSFORMER = sig
-  type t
+  include SPECIFICATION
+
   type target
   type fitted
-  type error
   type rng
 
   val fit :
     t ->
     ?sample_weight:Sample_weight.t ->
     rng:rng ->
+    feature_schema:Feature_schema.t ->
     x:Matrix.t ->
     y:target option ->
     unit ->
-    (fitted, error) result
+    (fitted, Error.t) result
 
-  val transform : fitted -> Matrix.t -> (Matrix.t, error) result
+  val transform :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val fitted_params : fitted -> params
+  val input_schema : fitted -> Feature_schema.t
+  val output_schema : fitted -> Feature_schema.t
 end
 
 module type SCORER = sig
-  type t
+  include SPECIFICATION
+
   type truth
   type prediction
-  type error
 
   val name : t -> string
 
@@ -489,14 +683,14 @@ module type SCORER = sig
     truth:truth ->
     prediction:prediction ->
     unit ->
-    (float, error) result
+    (float, Error.t) result
 end
 
 module type SPLITTER = sig
-  type t
+  include SPECIFICATION
+
   type target
   type rng
-  type error
 
   val split :
     t ->
@@ -505,7 +699,7 @@ module type SPLITTER = sig
     x:Matrix.t ->
     y:target option ->
     unit ->
-    ((Row_view.t * Row_view.t) array, error) result
+    ((Row_view.t * Row_view.t) array, Error.t) result
 end
 
 module type EXECUTION = sig
@@ -531,13 +725,13 @@ module type RNG = sig
 end
 
 module type NUMERICAL_BACKEND = sig
-  type error
-
   val name : string
   val sum : Vector.t -> float
-  val dot : Vector.t -> Vector.t -> (float, error) result
-  val matrix_vector_product : Matrix.t -> Vector.t -> (Vector.t, error) result
+  val dot : Vector.t -> Vector.t -> (float, Error.t) result
+
+  val matrix_vector_product :
+    Matrix.t -> Vector.t -> (Vector.t, Error.t) result
 
   val transposed_matrix_vector_product :
-    Matrix.t -> Vector.t -> (Vector.t, error) result
+    Matrix.t -> Vector.t -> (Vector.t, Error.t) result
 end
