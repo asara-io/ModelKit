@@ -174,28 +174,118 @@ module Groups : sig
   val select : t -> Row_view.t -> (t, Data_error.t) result
 end
 
+(** Immutable feature identity and width expected by a model boundary.
+
+    Anonymous schemas validate width only. Named schemas additionally make
+    feature presence and order compatibility requirements. *)
+module Feature_schema : sig
+  type t
+
+  val anonymous : feature_count:int -> (t, Data_error.t) result
+  val named : Feature_names.t -> t
+
+  val of_matrix :
+    ?names:Feature_names.t -> Matrix.t -> (t, Data_error.t) result
+
+  val feature_count : t -> int
+  val names : t -> Feature_names.t option
+  val equal : t -> t -> bool
+  val validate_matrix : t -> Matrix.t -> (unit, Data_error.t) result
+  val pp : Format.formatter -> t -> unit
+  val to_string : t -> string
+end
+
+(** Structured failures for public machine learning operations.
+
+    Routine data, validation, numerical, convergence, compatibility, and
+    artifact failures use this type. Exceptions are reserved for programmer
+    defects such as violating a documented bounds precondition. *)
+module Error : sig
+  type context =
+    | Stage of string
+    | Fold of int
+    | Candidate of int
+    | Feature of Feature_name.t
+
+  type kind =
+    | Data of Data_error.t
+    | Shape_mismatch of {
+        name : string;
+        expected : int list;
+        observed : int list;
+      }
+    | Feature_schema_mismatch of {
+        expected : Feature_schema.t;
+        observed : Feature_schema.t;
+      }
+    | Validation of { name : string; reason : string }
+    | Numerical of { operation : string; reason : string }
+    | Convergence of { algorithm : string; reason : string }
+    | Compatibility of { component : string; reason : string }
+    | Artifact of { operation : string; reason : string }
+    | Cancelled
+
+  type t
+
+  val make : ?context:context list -> remediation:string -> kind -> t
+
+  val of_data_error :
+    ?context:context list -> remediation:string -> Data_error.t -> t
+
+  val kind : t -> kind
+  val context : t -> context list
+  val remediation : t -> string
+
+  val with_context : context -> t -> t
+  (** [with_context outer error] records [outer] before existing context. *)
+
+  val pp : Format.formatter -> t -> unit
+  val to_string : t -> string
+end
+
+(** Shared convention for immutable configured components.
+
+    Concrete modules expose [params] as a public typed value. [clone] returns
+    an equivalent unfitted specification and may return the same value because
+    specifications contain no mutable fitted state. *)
+module type SPECIFICATION = sig
+  type t
+  type params
+
+  val clone : t -> t
+  val params : t -> params
+end
+
 (** Common contract for immutable estimator specifications.
 
     [t] is a training specification and [fitted] is the value produced by
     fitting it. Implementations receive RNG state explicitly. *)
 module type ESTIMATOR = sig
-  type t
+  include SPECIFICATION
+
   type target
   type prediction
   type fitted
-  type error
   type rng
 
   val fit :
     t ->
     ?sample_weight:Sample_weight.t ->
     rng:rng ->
+    feature_schema:Feature_schema.t ->
     x:Matrix.t ->
     y:target ->
     unit ->
-    (fitted, error) result
+    (fitted, Error.t) result
 
-  val predict : fitted -> Matrix.t -> (prediction, error) result
+  val predict :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (prediction, Error.t) result
+
+  val fitted_params : fitted -> params
+  val feature_schema : fitted -> Feature_schema.t
 end
 
 (** Estimator whose targets and predictions are integer class labels. *)
@@ -219,30 +309,39 @@ end
     [fit] receives only the training partition. [y] is optional because some
     transformations are supervised while others depend only on features. *)
 module type TRANSFORMER = sig
-  type t
+  include SPECIFICATION
+
   type target
   type fitted
-  type error
   type rng
 
   val fit :
     t ->
     ?sample_weight:Sample_weight.t ->
     rng:rng ->
+    feature_schema:Feature_schema.t ->
     x:Matrix.t ->
     y:target option ->
     unit ->
-    (fitted, error) result
+    (fitted, Error.t) result
 
-  val transform : fitted -> Matrix.t -> (Matrix.t, error) result
+  val transform :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val fitted_params : fitted -> params
+  val input_schema : fitted -> Feature_schema.t
+  val output_schema : fitted -> Feature_schema.t
 end
 
 (** A named scoring rule over observed and predicted values. *)
 module type SCORER = sig
-  type t
+  include SPECIFICATION
+
   type truth
   type prediction
-  type error
 
   val name : t -> string
 
@@ -252,15 +351,15 @@ module type SCORER = sig
     truth:truth ->
     prediction:prediction ->
     unit ->
-    (float, error) result
+    (float, Error.t) result
 end
 
 (** Contract for deterministic materialization of train/test row selections. *)
 module type SPLITTER = sig
-  type t
+  include SPECIFICATION
+
   type target
   type rng
-  type error
 
   val split :
     t ->
@@ -269,7 +368,7 @@ module type SPLITTER = sig
     x:Matrix.t ->
     y:target option ->
     unit ->
-    ((Row_view.t * Row_view.t) array, error) result
+    ((Row_view.t * Row_view.t) array, Error.t) result
 end
 
 (** Bounded execution with output positions matching input positions.
@@ -311,13 +410,13 @@ end
 (** Portable numerical primitives shared by reference and accelerated backends.
 *)
 module type NUMERICAL_BACKEND = sig
-  type error
-
   val name : string
   val sum : Vector.t -> float
-  val dot : Vector.t -> Vector.t -> (float, error) result
-  val matrix_vector_product : Matrix.t -> Vector.t -> (Vector.t, error) result
+  val dot : Vector.t -> Vector.t -> (float, Error.t) result
+
+  val matrix_vector_product :
+    Matrix.t -> Vector.t -> (Vector.t, Error.t) result
 
   val transposed_matrix_vector_product :
-    Matrix.t -> Vector.t -> (Vector.t, error) result
+    Matrix.t -> Vector.t -> (Vector.t, Error.t) result
 end
