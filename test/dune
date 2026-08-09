@@ -1,11 +1,19 @@
 (test
  (name data_test)
+ (modules data_test)
  (libraries modelkit))
 
 (test
  (name protocol_test)
+ (modules protocol_test)
  (libraries modelkit))
 
 (test
  (name convention_test)
+ (modules convention_test)
+ (libraries modelkit))
+
+(test
+ (name portable_test)
+ (modules portable_test)
  (libraries modelkit))

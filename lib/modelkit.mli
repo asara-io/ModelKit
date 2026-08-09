@@ -415,3 +415,36 @@ module type NUMERICAL_BACKEND = sig
   val transposed_matrix_vector_product :
     Matrix.t -> Vector.t -> (Vector.t, Error.t) result
 end
+
+(** Stable, platform-independent seed values.
+
+    Derivation hashes the bytes of [operation] and the logical [index] with a
+    fixed algorithm. It is independent of domain scheduling and OCaml's
+    runtime hash implementation, to ensure cross-platform and cross-runtime
+    version values are stable and reproducible. *)
+module Seed : sig
+  type t
+
+  val of_int : int -> t
+  val of_int64 : int64 -> t
+  val to_int64 : t -> int64
+  val equal : t -> t -> bool
+  val derive : t -> operation:string -> index:int -> t
+  val pp : Format.formatter -> t -> unit
+  val to_string : t -> string
+end
+
+(** Pure portable SplitMix64 random-number generation. *)
+module Rng : RNG with type seed = Seed.t
+
+(** Always-available sequential execution in ascending logical-index order. *)
+module Sequential_execution : sig
+  type t
+
+  val default : t
+
+  include EXECUTION with type t := t
+end
+
+(** Native OCaml float64 kernels with stable fixed-order reductions. *)
+module Reference_backend : NUMERICAL_BACKEND
