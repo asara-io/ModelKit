@@ -13,6 +13,9 @@ bug-reports: "https://github.com/asara-io/ModelKit/issues"
 depends: [
   "dune" {>= "3.23"}
   "ocaml" {>= "5.2"}
+  "alcotest" {with-test & >= "1.9.0"}
+  "mdx" {with-test & >= "2.4.0"}
+  "qcheck-core" {with-test & >= "0.27"}
   "odoc" {with-doc}
 ]
 build: [

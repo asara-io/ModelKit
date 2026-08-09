@@ -13,3 +13,14 @@ runtime includes fixed-order compensated numerical kernels, sequential
 stable-order execution, deterministic logical seed derivation, and a pure
 SplitMix64 random-number stream. Estimators and end-to-end workflows will
 arrive in later releases.
+
+{1 Executable example}
+
+The reference backend preserves small terms that ordinary floating-point
+summation can lose to cancellation:
+
+{@ocaml[
+# open Modelkit;;
+# Reference_backend.sum (Vector.of_array [| 1e16; 1.0; -1e16 |]);;
+- : float = 1.
+]}
