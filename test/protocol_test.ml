@@ -269,7 +269,7 @@ module Test_backend : NUMERICAL_BACKEND = struct
              !total))
 end
 
-let () =
+let test_public_api_compatibility () =
   let rng = Test_rng.create 42L in
   let x = Result.get_ok (Matrix.of_arrays [| [| 1.0 |]; [| 2.0 |] |]) in
   let feature_schema = Result.get_ok (Feature_schema.of_matrix x) in
@@ -321,3 +321,13 @@ let () =
        (Test_backend.dot
           (Vector.of_array [| 1.0 |])
           (Vector.of_array [| 2.0 |])))
+
+let () =
+  Alcotest.run "API compatibility"
+    [
+      ( "public module types",
+        [
+          Alcotest.test_case "external implementations compile and run" `Quick
+            test_public_api_compatibility;
+        ] );
+    ]
