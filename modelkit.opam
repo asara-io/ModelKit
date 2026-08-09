@@ -15,7 +15,7 @@ depends: [
   "ocaml" {>= "5.2"}
   "alcotest" {with-test & >= "1.9.0"}
   "mdx" {with-test & >= "2.4.0"}
-  "qcheck-core" {with-test & >= "0.27"}
+  "qcheck-core" {with-test & >= "0.90"}
   "odoc" {with-doc}
 ]
 build: [

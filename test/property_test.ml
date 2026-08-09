@@ -1,6 +1,6 @@
 open Modelkit
 
-let vector_values = QCheck.(array small_int)
+let vector_values = QCheck.(array nat_small)
 
 let vector_ownership =
   QCheck.Test.make ~count:500
@@ -31,7 +31,7 @@ let sequential_order =
 let seed_derivation =
   QCheck.Test.make ~count:500
     ~name:"logical seed derivation is a pure function of its inputs"
-    QCheck.(pair int64 small_int)
+    QCheck.(pair int64 nat_small)
     (fun (root, index) ->
       let root = Seed.of_int64 root in
       Seed.equal

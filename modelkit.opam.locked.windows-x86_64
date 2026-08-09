@@ -48,7 +48,7 @@ depends: [
   "odoc" {= "3.2.1" & with-doc}
   "odoc-parser" {= "3.2.1" & with-doc}
   "ptime" {= "1.2.0" & with-doc}
-  "qcheck-core" {= "0.27" & with-test}
+  "qcheck-core" {= "0.91" & with-test}
   "re" {= "1.14.0" & with-test}
   "result" {= "1.5" & with-test}
   "seq" {= "base" & with-doc}

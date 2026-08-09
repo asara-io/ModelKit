@@ -24,4 +24,4 @@
   (ocaml (>= 5.2))
   (alcotest (and :with-test (>= 1.9.0)))
   (mdx (and :with-test (>= 2.4.0)))
-  (qcheck-core (and :with-test (>= 0.27)))))
+  (qcheck-core (and :with-test (>= 0.90)))))
