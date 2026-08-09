@@ -1,19 +1,40 @@
+(library
+ (name modelkit_test_support)
+ (wrapped false)
+ (modules backend_conformance)
+ (libraries modelkit alcotest))
+
 (test
  (name data_test)
  (modules data_test)
- (libraries modelkit))
+ (libraries modelkit alcotest))
 
 (test
  (name protocol_test)
  (modules protocol_test)
- (libraries modelkit))
+ (libraries modelkit alcotest))
 
 (test
  (name convention_test)
  (modules convention_test)
- (libraries modelkit))
+ (libraries modelkit alcotest))
 
 (test
  (name portable_test)
  (modules portable_test)
- (libraries modelkit))
+ (libraries modelkit alcotest))
+
+(test
+ (name property_test)
+ (modules property_test)
+ (libraries modelkit qcheck-core qcheck-core.runner))
+
+(test
+ (name metamorphic_test)
+ (modules metamorphic_test)
+ (libraries modelkit alcotest))
+
+(test
+ (name backend_conformance_test)
+ (modules backend_conformance_test)
+ (libraries modelkit modelkit_test_support alcotest))
