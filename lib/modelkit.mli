@@ -419,9 +419,9 @@ end
 (** Stable, platform-independent seed values.
 
     Derivation hashes the bytes of [operation] and the logical [index] with a
-    fixed algorithm. It is independent of domain scheduling and OCaml's
-    runtime hash implementation, to ensure cross-platform and cross-runtime
-    version values are stable and reproducible. *)
+    fixed algorithm. It is independent of domain scheduling and OCaml's runtime
+    hash implementation, to ensure cross-platform and cross-runtime version
+    values are stable and reproducible. *)
 module Seed : sig
   type t
 
@@ -434,8 +434,8 @@ module Seed : sig
   val to_string : t -> string
 end
 
-(** Pure portable SplitMix64 random-number generation. *)
 module Rng : RNG with type seed = Seed.t
+(** Pure portable SplitMix64 random-number generation. *)
 
 (** Always-available sequential execution in ascending logical-index order. *)
 module Sequential_execution : sig
@@ -446,5 +446,5 @@ module Sequential_execution : sig
   include EXECUTION with type t := t
 end
 
-(** Native OCaml float64 kernels with stable fixed-order reductions. *)
 module Reference_backend : NUMERICAL_BACKEND
+(** Native OCaml float64 kernels with stable fixed-order reductions. *)

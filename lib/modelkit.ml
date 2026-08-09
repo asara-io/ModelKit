@@ -841,14 +841,14 @@ module Reference_backend = struct
         not
           (accumulator.nan || accumulator.positive_infinity
          || accumulator.negative_infinity)
-      then
+      then (
         let next = accumulator.total +. value in
         if not (Float.is_finite next) then record_non_finite accumulator next
-        else (
+        else
           let correction =
             if Float.abs accumulator.total >= Float.abs value then
-              (accumulator.total -. next) +. value
-            else (value -. next) +. accumulator.total
+              accumulator.total -. next +. value
+            else value -. next +. accumulator.total
           in
           let corrected = accumulator.correction +. correction in
           if Float.is_finite corrected then accumulator.correction <- corrected
@@ -916,7 +916,8 @@ module Reference_backend = struct
     let observed = Vector.length vector in
     if expected <> observed then
       Error
-        (length_error ~name:"transposed-matrix-vector operand" ~expected ~observed)
+        (length_error ~name:"transposed-matrix-vector operand" ~expected
+           ~observed)
     else
       vector_result
         (Vector.init ~length:(Matrix.columns matrix) (fun column ->

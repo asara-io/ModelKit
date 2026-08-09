@@ -35,8 +35,7 @@ opam update
 opam switch create . 5.3.0 --deps-only --with-test --with-doc  # If running for the first time.
 opam install ocamlformat.0.29.0
 
-opam exec -- dune build @opam
-opam exec -- dune promote
+opam exec -- dune build @all @runtest @doc @fmt @opam @install --auto-promote
 opam lint modelkit.opam
 ```
 
@@ -45,9 +44,6 @@ opam lint modelkit.opam
 ```commandline
 opam lock ./modelkit.opam --lock-suffix=locked.windows-x86_64
 opam install . --deps-only --with-test --with-doc --locked --lock-suffix=locked.windows-x86_64
-
-opam exec -- dune build @all @runtest @doc @fmt @opam @install
-opam lint modelkit.opam
 ```
 
 ### macOS (arm64)
@@ -55,9 +51,6 @@ opam lint modelkit.opam
 ```sh
 opam lock ./modelkit.opam --lock-suffix=locked.macos-arm64
 opam install . --deps-only --with-test --with-doc --locked --lock-suffix=locked.macos-arm64
-
-opam exec -- dune build @all @runtest @doc @fmt @opam @install
-opam lint modelkit.opam
 ```
 
 The ordinary Dune workspace uses the repository-local opam switch automatically. Reproducible locks are platform-specific because compiler and system dependency packages differ by host.
