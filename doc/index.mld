@@ -8,5 +8,8 @@ and {!Modelkit.Matrix} values, immutable {!Modelkit.Row_view} selections,
 validated targets, aligned metadata, immutable feature schemas, and structured
 protocol errors. Public specification, estimator, transformer, scorer,
 splitter, execution, RNG, and numerical-backend module types define the
-extension boundaries with separate unfitted and fitted states. Concrete
-implementations and end-to-end workflows will arrive in later releases.
+extension boundaries with separate unfitted and fitted states. The portable
+runtime includes fixed-order compensated numerical kernels, sequential
+stable-order execution, deterministic logical seed derivation, and a pure
+SplitMix64 random-number stream. Estimators and end-to-end workflows will
+arrive in later releases.
