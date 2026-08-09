@@ -172,7 +172,14 @@ let test_seed_derivation () =
   check (sample >= 0.0 && sample < 1.0) "floating RNG output is out of range"
 
 let () =
-  test_stable_reductions ();
-  test_matrix_kernels ();
-  test_sequential_execution ();
-  test_seed_derivation ()
+  Alcotest.run "unit"
+    [
+      ( "portable runtime",
+        [
+          Alcotest.test_case "stable reductions" `Quick test_stable_reductions;
+          Alcotest.test_case "matrix kernels" `Quick test_matrix_kernels;
+          Alcotest.test_case "sequential execution" `Quick
+            test_sequential_execution;
+          Alcotest.test_case "seed derivation" `Quick test_seed_derivation;
+        ] );
+    ]
