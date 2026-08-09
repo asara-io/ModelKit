@@ -121,5 +121,11 @@ let test_error_convention () =
   | None -> fail "data error was not preserved"
 
 let () =
-  test_feature_schema ();
-  test_error_convention ()
+  Alcotest.run "unit"
+    [
+      ( "public conventions",
+        [
+          Alcotest.test_case "feature schemas" `Quick test_feature_schema;
+          Alcotest.test_case "typed errors" `Quick test_error_convention;
+        ] );
+    ]
