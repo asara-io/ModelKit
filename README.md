@@ -55,6 +55,8 @@ opam install . --deps-only --with-test --with-doc --locked --lock-suffix=locked.
 
 The ordinary Dune workspace uses the repository-local opam switch automatically. Reproducible locks are platform-specific because compiler and system dependency packages differ by host.
 
+The full test suite combines named unit tests, deterministic generated properties, metamorphic invariants, executable documentation, a compile-time public API consumer, and a reusable numerical-backend conformance suite.
+
 ## Project Policies
 
 - [Changes](CHANGES.md) records the contents of each published release.
