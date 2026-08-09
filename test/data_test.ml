@@ -138,12 +138,19 @@ let test_negative_dimensions () =
   expect_error Negative_dimension (Row_view.all ~source_size:(-1))
 
 let () =
-  test_vector_ownership ();
-  test_matrix ();
-  test_matrix_ownership ();
-  test_row_view ();
-  test_targets ();
-  test_feature_names ();
-  test_sample_weights ();
-  test_groups ();
-  test_negative_dimensions ()
+  Alcotest.run "unit"
+    [
+      ( "data contracts",
+        [
+          Alcotest.test_case "vector ownership" `Quick test_vector_ownership;
+          Alcotest.test_case "matrix values" `Quick test_matrix;
+          Alcotest.test_case "matrix ownership" `Quick test_matrix_ownership;
+          Alcotest.test_case "row views" `Quick test_row_view;
+          Alcotest.test_case "targets" `Quick test_targets;
+          Alcotest.test_case "feature names" `Quick test_feature_names;
+          Alcotest.test_case "sample weights" `Quick test_sample_weights;
+          Alcotest.test_case "groups" `Quick test_groups;
+          Alcotest.test_case "negative dimensions" `Quick
+            test_negative_dimensions;
+        ] );
+    ]
