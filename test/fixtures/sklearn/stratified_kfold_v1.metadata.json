@@ -1,0 +1,24 @@
+{
+  "configuration": {
+    "n_splits": 3,
+    "random_state": 1729,
+    "shuffle": true
+  },
+  "environment": {
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "fixture": "stratified_kfold_v1",
+  "generator": "dev/fixtures/generate.py",
+  "license": "Apache-2.0",
+  "reference": "sklearn.model_selection.StratifiedKFold",
+  "schema_version": 1
+}

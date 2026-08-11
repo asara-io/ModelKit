@@ -1,0 +1,146 @@
+{
+  "claim_eligible": false,
+  "environment": {
+    "cpu_count": 20,
+    "machine": "AMD64",
+    "operating_system": "Windows-11-10.0.26200-SP0",
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "generated_at": "2026-08-11T04:32:31.837693+00:00",
+  "methodology": {
+    "measurement": "fresh process wall time and sampled resident set size",
+    "rss_sample_interval_seconds": 0.001,
+    "thread_limit": 1,
+    "warmup_runs": 1
+  },
+  "runs": [
+    {
+      "elapsed_ns": 1044650200,
+      "peak_rss_bytes": 123772928,
+      "worker": {
+        "checksum": "2154ded54756e47a2bc503d0a285fdaee6f6078be814048dad14c2643981f27d",
+        "folds": 5,
+        "threadpools": [
+          {
+            "architecture": "Haswell",
+            "internal_api": "openblas",
+            "num_threads": 1,
+            "prefix": "libscipy_openblas",
+            "user_api": "blas",
+            "version": "0.3.34.0.0"
+          },
+          {
+            "architecture": null,
+            "internal_api": "openmp",
+            "num_threads": 1,
+            "prefix": "vcomp",
+            "user_api": "openmp",
+            "version": null
+          },
+          {
+            "architecture": "Haswell",
+            "internal_api": "openblas",
+            "num_threads": 1,
+            "prefix": "libscipy_openblas",
+            "user_api": "blas",
+            "version": "0.3.31.dev"
+          }
+        ]
+      }
+    },
+    {
+      "elapsed_ns": 1058441200,
+      "peak_rss_bytes": 123580416,
+      "worker": {
+        "checksum": "2154ded54756e47a2bc503d0a285fdaee6f6078be814048dad14c2643981f27d",
+        "folds": 5,
+        "threadpools": [
+          {
+            "architecture": "Haswell",
+            "internal_api": "openblas",
+            "num_threads": 1,
+            "prefix": "libscipy_openblas",
+            "user_api": "blas",
+            "version": "0.3.34.0.0"
+          },
+          {
+            "architecture": null,
+            "internal_api": "openmp",
+            "num_threads": 1,
+            "prefix": "vcomp",
+            "user_api": "openmp",
+            "version": null
+          },
+          {
+            "architecture": "Haswell",
+            "internal_api": "openblas",
+            "num_threads": 1,
+            "prefix": "libscipy_openblas",
+            "user_api": "blas",
+            "version": "0.3.31.dev"
+          }
+        ]
+      }
+    },
+    {
+      "elapsed_ns": 1120184100,
+      "peak_rss_bytes": 123797504,
+      "worker": {
+        "checksum": "2154ded54756e47a2bc503d0a285fdaee6f6078be814048dad14c2643981f27d",
+        "folds": 5,
+        "threadpools": [
+          {
+            "architecture": "Haswell",
+            "internal_api": "openblas",
+            "num_threads": 1,
+            "prefix": "libscipy_openblas",
+            "user_api": "blas",
+            "version": "0.3.34.0.0"
+          },
+          {
+            "architecture": null,
+            "internal_api": "openmp",
+            "num_threads": 1,
+            "prefix": "vcomp",
+            "user_api": "openmp",
+            "version": null
+          },
+          {
+            "architecture": "Haswell",
+            "internal_api": "openblas",
+            "num_threads": 1,
+            "prefix": "libscipy_openblas",
+            "user_api": "blas",
+            "version": "0.3.31.dev"
+          }
+        ]
+      }
+    }
+  ],
+  "scenario": {
+    "claim_eligible": false,
+    "dataset": {
+      "features": 20,
+      "samples": 10000,
+      "seed": 1729
+    },
+    "measured_runs": 3,
+    "scenario": "sklearn_dummy_cv_smoke_v1",
+    "splitter": {
+      "folds": 5,
+      "seed": 1729
+    },
+    "thread_limit": 1,
+    "warmup_runs": 1
+  },
+  "schema_version": 1
+}

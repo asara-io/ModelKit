@@ -3,6 +3,25 @@
 ModelKit is a portable OCaml library for cohesive classical machine learning
 workflows.
 
-The package currently provides its build and documentation skeleton. Public
-machine learning APIs will appear here as their engineering-foundation
-contracts are completed.
+The current engineering foundation provides opaque float64 {!Modelkit.Vector}
+and {!Modelkit.Matrix} values, immutable {!Modelkit.Row_view} selections,
+validated targets, aligned metadata, immutable feature schemas, and structured
+protocol errors. Public specification, estimator, transformer, scorer,
+splitter, execution, RNG, and numerical-backend module types define the
+extension boundaries with separate unfitted and fitted states. The portable
+runtime includes fixed-order compensated numerical kernels, sequential
+stable-order execution, deterministic logical seed derivation, and a pure
+SplitMix64 random-number stream. Estimators and end-to-end workflows will
+arrive in later releases. Portable tests consume committed scikit-learn
+reference data without requiring Python during a normal build or test run.
+
+{1 Executable example}
+
+The reference backend preserves small terms that ordinary floating-point
+summation can lose to cancellation:
+
+{@ocaml[
+# open Modelkit;;
+# Reference_backend.sum (Vector.of_array [| 1e16; 1.0; -1e16 |]);;
+- : float = 1.
+]}

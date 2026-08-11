@@ -1,6 +1,7 @@
 (lang dune 3.23)
+(using mdx 0.4)
 (name modelkit)
-(version 0.1.0)
+(version 0.2.0)
 (generate_opam_files true)
 (implicit_transitive_deps false)
 
@@ -20,4 +21,7 @@
  (tags
   (data-science machine-learning))
  (depends
-  (ocaml (>= 5.2))))
+  (ocaml (>= 5.2))
+  (alcotest (and :with-test (>= 1.9.0)))
+  (mdx (and :with-test (>= 2.4.0)))
+  (qcheck-core (and :with-test (>= 0.90)))))

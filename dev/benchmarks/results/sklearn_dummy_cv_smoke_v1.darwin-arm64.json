@@ -1,0 +1,98 @@
+{
+  "claim_eligible": false,
+  "environment": {
+    "cpu_count": 8,
+    "machine": "arm64",
+    "operating_system": "macOS-15.5-arm64-arm-64bit-Mach-O",
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "generated_at": "2026-08-11T04:41:59.626162+00:00",
+  "methodology": {
+    "measurement": "fresh process wall time and sampled resident set size",
+    "rss_sample_interval_seconds": 0.001,
+    "thread_limit": 1,
+    "warmup_runs": 1
+  },
+  "runs": [
+    {
+      "elapsed_ns": 691747167,
+      "peak_rss_bytes": 119111680,
+      "worker": {
+        "checksum": "2154ded54756e47a2bc503d0a285fdaee6f6078be814048dad14c2643981f27d",
+        "folds": 5,
+        "threadpools": [
+          {
+            "architecture": null,
+            "internal_api": "openmp",
+            "num_threads": 1,
+            "prefix": "libomp",
+            "user_api": "openmp",
+            "version": null
+          }
+        ]
+      }
+    },
+    {
+      "elapsed_ns": 688670416,
+      "peak_rss_bytes": 120438784,
+      "worker": {
+        "checksum": "2154ded54756e47a2bc503d0a285fdaee6f6078be814048dad14c2643981f27d",
+        "folds": 5,
+        "threadpools": [
+          {
+            "architecture": null,
+            "internal_api": "openmp",
+            "num_threads": 1,
+            "prefix": "libomp",
+            "user_api": "openmp",
+            "version": null
+          }
+        ]
+      }
+    },
+    {
+      "elapsed_ns": 692365833,
+      "peak_rss_bytes": 119111680,
+      "worker": {
+        "checksum": "2154ded54756e47a2bc503d0a285fdaee6f6078be814048dad14c2643981f27d",
+        "folds": 5,
+        "threadpools": [
+          {
+            "architecture": null,
+            "internal_api": "openmp",
+            "num_threads": 1,
+            "prefix": "libomp",
+            "user_api": "openmp",
+            "version": null
+          }
+        ]
+      }
+    }
+  ],
+  "scenario": {
+    "claim_eligible": false,
+    "dataset": {
+      "features": 20,
+      "samples": 10000,
+      "seed": 1729
+    },
+    "measured_runs": 3,
+    "scenario": "sklearn_dummy_cv_smoke_v1",
+    "splitter": {
+      "folds": 5,
+      "seed": 1729
+    },
+    "thread_limit": 1,
+    "warmup_runs": 1
+  },
+  "schema_version": 1
+}

@@ -10,9 +10,8 @@ project may in the future add compatibility code for it, depending if developer
 interest substantially requires it. The package metadata enforces this 
 compiler floor.
 
-Until the first release, the exact tested OCaml 5 versions are recorded by the
-repository's continuous-integration configuration when that configuration is
-introduced. A release may raise the minimum compiler version only in a
+The continuous-integration matrix tests OCaml 5.2 and 5.3 on every supported 
+platform. A release may raise the minimum compiler version only in a
 documented compatibility change.
 
 ## Platform Support
@@ -22,10 +21,9 @@ and Windows, with an always-available sequential implementation. A platform is
 considered verified for a release only when that release's CI matrix passes on
 it.
 
-The architecture intends to preserve a realistic route to arm64 and Android.
-Android is a cross-compilation and runtime-smoke target until a release
-explicitly grants it full support. Optional adapters and accelerated backends
-publish their own dependency and platform matrices.
+The portable suite covers x86-64 Linux and Windows alongside arm64 macOS.
+Optional adapters and accelerated backends publish their own dependency and
+platform matrices.
 
 ## Version Support
 

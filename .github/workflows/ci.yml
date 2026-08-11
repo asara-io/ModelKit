@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portable:
+    name: ${{ matrix.platform }} / OCaml ${{ matrix.ocaml-compiler }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x86-64
+            runner: ubuntu-24.04
+            ocaml-compiler: "5.2"
+          - platform: Linux x86-64
+            runner: ubuntu-24.04
+            ocaml-compiler: "5.3"
+          - platform: macOS arm64
+            runner: macos-15
+            ocaml-compiler: "5.2"
+          - platform: macOS arm64
+            runner: macos-15
+            ocaml-compiler: "5.3"
+          - platform: Windows x86-64
+            runner: windows-2025
+            ocaml-compiler: "5.2"
+          - platform: Windows x86-64
+            runner: windows-2025
+            ocaml-compiler: "5.3"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ${{ matrix.ocaml-compiler }}
+          dune-cache: true
+
+      - name: Install dependencies
+        run: opam install . --deps-only --with-test --with-doc
+
+      - name: Build, test, and generate documentation
+        run: opam exec -- dune build @all @runtest @doc @install
+
+      - name: Verify package build
+        run: opam exec -- dune build -p modelkit @install @runtest @doc
