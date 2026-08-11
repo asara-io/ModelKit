@@ -45,5 +45,7 @@
  (libraries alcotest)
  (deps fixtures/sklearn/stratified_kfold_v1.tsv)
  (action
-  (setenv MODELKIT_SKLEARN_FIXTURE %{dep:fixtures/sklearn/stratified_kfold_v1.tsv}
+  (setenv
+   MODELKIT_SKLEARN_FIXTURE
+   %{dep:fixtures/sklearn/stratified_kfold_v1.tsv}
    (run %{test}))))

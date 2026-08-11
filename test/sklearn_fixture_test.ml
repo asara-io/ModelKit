@@ -3,15 +3,15 @@ type fold = { index : int; train : int array; test : int array }
 let parse_indices value =
   if String.equal value "" then [||]
   else
-    value |> String.split_on_char ',' |> List.map int_of_string
-    |> Array.of_list
+    value |> String.split_on_char ',' |> List.map int_of_string |> Array.of_list
 
 let read_fixture path =
   let target = ref None in
   let folds = Hashtbl.create 3 in
   let add_fold index kind indices =
     let existing =
-      Option.value (Hashtbl.find_opt folds index)
+      Option.value
+        (Hashtbl.find_opt folds index)
         ~default:{ index; train = [||]; test = [||] }
     in
     let fold =
@@ -25,17 +25,15 @@ let read_fixture path =
   In_channel.with_open_text path (fun input ->
       In_channel.input_lines input
       |> List.iter (fun line ->
-             if String.length line > 0 && line.[0] <> '#' then
-               match String.split_on_char '\t' line with
-               | [ "target"; values ] -> target := Some (parse_indices values)
-               | [ "fold"; index; kind; values ] ->
-                   add_fold (int_of_string index) kind (parse_indices values)
-               | fields ->
-                   Alcotest.failf "invalid fixture row with %d fields"
-                     (List.length fields)));
-  let target =
-    Option.value !target ~default:[||]
-  in
+          if String.length line > 0 && line.[0] <> '#' then
+            match String.split_on_char '\t' line with
+            | [ "target"; values ] -> target := Some (parse_indices values)
+            | [ "fold"; index; kind; values ] ->
+                add_fold (int_of_string index) kind (parse_indices values)
+            | fields ->
+                Alcotest.failf "invalid fixture row with %d fields"
+                  (List.length fields)));
+  let target = Option.value !target ~default:[||] in
   let folds = Hashtbl.to_seq_values folds |> Array.of_seq in
   Array.sort (fun left right -> Int.compare left.index right.index) folds;
   (target, folds)
@@ -56,9 +54,7 @@ let check_partition sample_count fold =
         (index >= 0 && index < sample_count);
       seen.(index) <- seen.(index) + 1)
     fold.test;
-  Array.iter
-    (Alcotest.(check int) "sample occurs once in a partition" 1)
-    seen
+  Array.iter (Alcotest.(check int) "sample occurs once in a partition" 1) seen
 
 let test_fixture path () =
   let target, folds = read_fixture path in
@@ -83,4 +79,7 @@ let () =
     | None -> Alcotest.fail "MODELKIT_SKLEARN_FIXTURE is not set"
   in
   Alcotest.run "sklearn fixtures"
-    [ ("stratified k-fold", [ Alcotest.test_case "v1" `Quick (test_fixture fixture_path) ]) ]
+    [
+      ( "stratified k-fold",
+        [ Alcotest.test_case "v1" `Quick (test_fixture fixture_path) ] );
+    ]
