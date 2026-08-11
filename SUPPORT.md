@@ -10,9 +10,9 @@ project may in the future add compatibility code for it, depending if developer
 interest substantially requires it. The package metadata enforces this 
 compiler floor.
 
-The continuous-integration matrix tests OCaml 5.2 and 5.3 on every supported 
-platform. A release may raise the minimum compiler version only in a
-documented compatibility change.
+The continuous-integration matrix tests OCaml 5.2, 5.3, and 5.5 on every
+supported platform. A release may raise the minimum compiler version only in
+a documented compatibility change.
 
 ## Platform Support
 

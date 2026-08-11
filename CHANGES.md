@@ -1,3 +1,8 @@
+# 0.2.1 (2026-08-11)
+
+- Restore package builds on OCaml 5.5 by making typed target accessor specializations explicit.
+- Test OCaml 5.5 on Linux, macOS, and Windows in addition to the existing OCaml 5.2 and 5.3 matrix.
+
 # 0.2.0 (2026-08-10)
 
 - Add immutable float64 vectors and matrices, row views, typed targets, feature schemas, sample weights, groups, and validation errors over portable Bigarray storage.
