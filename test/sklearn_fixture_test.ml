@@ -77,7 +77,10 @@ let test_fixture path () =
     test_occurrences
 
 let () =
-  if Array.length Sys.argv <> 2 then
-    Alcotest.fail "expected the fixture path as the only argument";
+  let fixture_path =
+    match Sys.getenv_opt "MODELKIT_SKLEARN_FIXTURE" with
+    | Some path -> path
+    | None -> Alcotest.fail "MODELKIT_SKLEARN_FIXTURE is not set"
+  in
   Alcotest.run "sklearn fixtures"
-    [ ("stratified k-fold", [ Alcotest.test_case "v1" `Quick (test_fixture Sys.argv.(1)) ]) ]
+    [ ("stratified k-fold", [ Alcotest.test_case "v1" `Quick (test_fixture fixture_path) ]) ]
