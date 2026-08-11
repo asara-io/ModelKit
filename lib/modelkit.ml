@@ -226,8 +226,9 @@ let check_view_alignment ~name ~length view =
   else Error (Data_error.Length_mismatch { name; expected = length; observed })
 
 module Target = struct
-  type regression
-  type classification
+  (* Closed markers make the GADT indices provably disjoint to exhaustiveness checking. *)
+  type regression = [ `Regression ]
+  type classification = [ `Classification ]
 
   type _ t =
     | Regression_values : Vector.t -> regression t
@@ -251,8 +252,11 @@ module Target = struct
     | Regression_values values -> Vector.length values
     | Classification_values values -> Array.length values
 
-  let regression_values (Regression_values values) = values
-  let classification_values (Classification_values values) = Array.copy values
+  let regression_values : regression t -> Vector.t = function
+    | Regression_values values -> values
+
+  let classification_values : classification t -> int array = function
+    | Classification_values values -> Array.copy values
 
   let select : type kind. kind t -> Row_view.t -> (kind t, Data_error.t) result
       =

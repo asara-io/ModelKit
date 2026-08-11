@@ -26,18 +26,27 @@ jobs:
           - platform: Linux x86-64
             runner: ubuntu-24.04
             ocaml-compiler: "5.3"
+          - platform: Linux x86-64
+            runner: ubuntu-24.04
+            ocaml-compiler: "5.5"
           - platform: macOS arm64
             runner: macos-15
             ocaml-compiler: "5.2"
           - platform: macOS arm64
             runner: macos-15
             ocaml-compiler: "5.3"
+          - platform: macOS arm64
+            runner: macos-15
+            ocaml-compiler: "5.5"
           - platform: Windows x86-64
             runner: windows-2025
             ocaml-compiler: "5.2"
           - platform: Windows x86-64
             runner: windows-2025
             ocaml-compiler: "5.3"
+          - platform: Windows x86-64
+            runner: windows-2025
+            ocaml-compiler: "5.5"
 
     steps:
       - name: Check out repository

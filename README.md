@@ -22,7 +22,7 @@ Anticipating performance benefits from existing work such as using Owl for a num
 
 ## Status
 
-ModelKit 0.2.0 is the current foundation release. It includes public data contracts, feature schemas, structured errors, protocol module types, and portable reference implementations for foundational numerical, random-number generation, and execution operations. Concrete estimators, fitted artifacts, and end-to-end machine learning workflows are not yet implemented.
+ModelKit 0.2.1 is the current foundation release. It includes public data contracts, feature schemas, structured errors, protocol module types, and portable reference implementations for foundational numerical, random-number generation, and execution operations. Concrete estimators, fitted artifacts, and end-to-end machine learning workflows are not yet implemented.
 
 The portable package lives under `lib/`. Optional ecosystem adapters and accelerated backends are reserved under `adapters/` and `backends/`; they will remain separate packages that depend on the portable core when implemented.
 
@@ -59,7 +59,7 @@ The ordinary Dune workspace uses the repository-local opam switch automatically.
 
 The full test suite combines named unit tests, deterministic generated properties, metamorphic invariants, executable documentation, a compile-time public API consumer, and a reusable numerical-backend conformance suite.
 
-GitHub Actions is configured to run the build, complete test suite, package build, and documentation generation on Linux x86-64, macOS arm64, and Windows x86-64 with both OCaml 5.2 and 5.3. These jobs use committed reference data and do not install or execute Python.
+GitHub Actions is configured to run the build, complete test suite, package build, and documentation generation on Linux x86-64, macOS arm64, and Windows x86-64 with OCaml 5.2, 5.3, and 5.5. These jobs use committed reference data and do not install or execute Python.
 
 ### Reference Fixtures and Benchmarks
 

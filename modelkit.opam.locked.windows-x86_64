@@ -1,6 +1,6 @@
 opam-version: "2.0"
 name: "modelkit"
-version: "0.2.0"
+version: "0.2.1"
 synopsis: "Portable classical machine learning workflows for OCaml"
 description:
   "ModelKit is a native OCaml library for cohesive classical machine learning workflows. It is designed around immutable estimator specifications, leakage-safe pipelines, deterministic evaluation, and portable fitted artifacts."
@@ -22,6 +22,7 @@ depends: [
   "base-unix" {= "base"}
   "camlp-streams" {= "5.0.1" & with-test}
   "cmdliner" {= "2.1.1" & with-test}
+  "conf-mingw-w64-gcc-i686" {= "1"}
   "conf-mingw-w64-gcc-x86_64" {= "1"}
   "cppo" {= "1.8.0" & with-test}
   "crunch" {= "4.1.0" & with-doc}
