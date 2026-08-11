@@ -8,14 +8,13 @@ Python users of `scikit-learn` will find this library familiar in serving the sa
 
 ## Feature Highlights
 
-- Reproducible by design, with stable numerical results and random behaviour across supported platforms, OCaml versions, and execution schedules.
-- Model development with immutable configurations, distinct fitted states, and actionable errors.
-- Immutable, validated tabular data types to catch shape, feature-order, and sample-alignment problems.
-- 
+- Reproducible foundations with deterministic random streams and stable reference numerical operations across supported platforms, OCaml versions, and execution schedules.
+- Typed extension contracts separate immutable estimator specifications from fitted models and return actionable errors.
+- Immutable, validated float64 data primitives catch shape, feature-order, and sample-alignment problems before model code runs.
 
 ## Motivation and Future Work
 
-The library is built with a strong focus first on correctness, portability, and reproducibility; performance is a secondary goal to follow. 
+The library is built with a strong focus first on correctness, portability, and reproducibility; performance is a secondary goal to follow.
 
 To this end, you will note that there is a significant amount of from-scratch implementation under ModelKit's hood. When implementation milestones are hit for being useful in real-world data science workflows, ModelKit will undergo benchmarking to gauge its performance against alternate implementations, such as `scikit-learn` itself.
 
@@ -23,7 +22,7 @@ Anticipating performance benefits from existing work such as using Owl for a num
 
 ## Status
 
-ModelKit 0.1.0 is the initial foundation release. Development after that release now includes public data contracts, feature schemas, structured errors, protocol module types, and portable reference implementations for foundational numerical and execution operations. Concrete estimators and end-to-end machine learning workflows are not yet implemented.
+ModelKit 0.2.0 is the current foundation release. It includes public data contracts, feature schemas, structured errors, protocol module types, and portable reference implementations for foundational numerical, random-number generation, and execution operations. Concrete estimators, fitted artifacts, and end-to-end machine learning workflows are not yet implemented.
 
 The portable package lives under `lib/`. Optional ecosystem adapters and accelerated backends are reserved under `adapters/` and `backends/`; they will remain separate packages that depend on the portable core when implemented.
 
