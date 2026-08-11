@@ -38,3 +38,11 @@
  (name backend_conformance_test)
  (modules backend_conformance_test)
  (libraries modelkit modelkit_test_support alcotest))
+
+(test
+ (name sklearn_fixture_test)
+ (modules sklearn_fixture_test)
+ (libraries alcotest)
+ (deps fixtures/sklearn/stratified_kfold_v1.tsv)
+ (action
+  (run %{test} %{dep:fixtures/sklearn/stratified_kfold_v1.tsv})))

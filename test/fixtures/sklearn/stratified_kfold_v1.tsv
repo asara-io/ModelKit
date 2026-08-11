@@ -1,0 +1,8 @@
+# ModelKit sklearn reference fixture v1
+target	0,0,0,0,0,0,1,1,1,1,1,1
+fold	0	train	0,2,4,5,7,8,9,11
+fold	0	test	1,3,6,10
+fold	1	train	1,2,3,5,6,8,9,10
+fold	1	test	0,4,7,11
+fold	2	train	0,1,3,4,6,7,10,11
+fold	2	test	2,5,8,9
