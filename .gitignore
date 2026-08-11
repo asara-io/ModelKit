@@ -37,3 +37,6 @@ _opam/
 
 .idea/*
 .env*
+env/
+__pycache__/
+*.pyc
