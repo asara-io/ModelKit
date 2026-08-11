@@ -1,5 +1,7 @@
 # ModelKit
 
+[![CI](https://github.com/asara-io/ModelKit/actions/workflows/ci.yml/badge.svg)](https://github.com/asara-io/ModelKit/actions/workflows/ci.yml)
+
 ModelKit (`modelkit`) is a native OCaml library for cohesive classical machine learning workflows. It is designed around immutable estimator specifications, leakage-safe pipelines, deterministic evaluation, and portable fitted artifacts.
 
 Python users of `scikit-learn` will find this library familiar in serving the same needs.
@@ -57,6 +59,8 @@ opam install . --deps-only --with-test --with-doc --locked --lock-suffix=locked.
 The ordinary Dune workspace uses the repository-local opam switch automatically. Reproducible locks are platform-specific because compiler and system dependency packages differ by host.
 
 The full test suite combines named unit tests, deterministic generated properties, metamorphic invariants, executable documentation, a compile-time public API consumer, and a reusable numerical-backend conformance suite.
+
+GitHub Actions is configured to run the build, complete test suite, package build, and documentation generation on Linux x86-64, macOS arm64, and Windows x86-64 with both OCaml 5.2 and 5.3. These jobs use committed reference data and do not install or execute Python.
 
 ### Reference Fixtures and Benchmarks
 
