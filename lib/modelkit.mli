@@ -523,3 +523,79 @@ end
 
 module Reference_backend : NUMERICAL_BACKEND
 (** Native OCaml float64 kernels with stable fixed-order reductions. *)
+
+(** Column-wise replacement of NaN missing values.
+
+    Mean and median fitting fail when a training feature contains no observed
+    value. Constant values must be finite. Transform rejects infinities and
+    preserves the input feature schema. Sample weights are rejected. Mean
+    fitting is [O(rows * columns)]; median fitting is
+    [O(columns * rows * log rows)] with one temporary column allocation. *)
+module Simple_imputer : sig
+  type strategy = Mean | Median | Constant of float
+  type params = { strategy : strategy }
+  type t
+  type fitted
+
+  val mean : unit -> t
+  val median : unit -> t
+  val constant : float -> (t, Error.t) result
+  val statistics : fitted -> Vector.t
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Column-wise centering and population-standard-deviation scaling.
+
+    Fitting and transformation require finite inputs. Constant features use a
+    scale of one, so centering maps them to zero without division by zero.
+    Sample weights are rejected. Fit and transform are [O(rows * columns)] and
+    transform allocates one dense output matrix. *)
+module Standard_scaler : sig
+  type params = { with_mean : bool; with_std : bool }
+  type t
+  type fitted
+
+  val create : ?with_mean:bool -> ?with_std:bool -> unit -> t
+  val mean : fitted -> Vector.t
+  val variance : fitted -> Vector.t
+  val scale : fitted -> Vector.t
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Removal of features whose population variance is not above a threshold.
+
+    The threshold must be finite and non-negative. Fitting fails when no feature
+    survives. Named schemas are filtered in original column order. Sample
+    weights are rejected. Fit is [O(rows * columns)]; transform allocates only
+    the selected dense columns. *)
+module Variance_threshold : sig
+  type params = { threshold : float }
+  type t
+  type fitted
+
+  val create : ?threshold:float -> unit -> (t, Error.t) result
+  val variances : fitted -> Vector.t
+  val selected_indices : fitted -> int array
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
