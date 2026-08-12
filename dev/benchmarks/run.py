@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import argparse
 import json
+import math
 import os
 import platform
 import subprocess
@@ -61,6 +62,31 @@ def platform_name() -> str:
     return f"{system}-{machine}"
 
 
+def worker_commands(scenario: dict[str, object], scenario_path: Path) -> dict[str, list[str]]:
+    sklearn_worker = ROOT / "dev" / "benchmarks" / "sklearn_worker.py"
+    commands = {"sklearn": [sys.executable, str(sklearn_worker), str(scenario_path)]}
+    if scenario.get("workload") == "preprocessing":
+        modelkit_worker = (
+            ROOT / "_build" / "default" / "bench" / "ocaml" / "preprocessing_worker.exe"
+        )
+        if not modelkit_worker.exists():
+            raise RuntimeError(
+                "ModelKit benchmark worker is missing; run "
+                "`opam exec -- dune build bench/ocaml/preprocessing_worker.exe`"
+            )
+        dataset = scenario["dataset"]
+        commands["modelkit"] = [
+            str(modelkit_worker),
+            str(dataset["samples"]),
+            str(dataset["features"]),
+            str(dataset["seed"]),
+            str(dataset["missing_modulus"]),
+            str(scenario["variance_threshold"]),
+            str(scenario["imputation_constant"]),
+        ]
+    return commands
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -85,8 +111,7 @@ def main() -> None:
         / "results"
         / f"{scenario['scenario']}.{platform_name()}.json"
     )
-    worker = ROOT / "dev" / "benchmarks" / "sklearn_worker.py"
-    command = [sys.executable, str(worker), str(scenario_path)]
+    commands = worker_commands(scenario, scenario_path)
     process_environment = os.environ.copy()
     thread_limit = str(scenario["thread_limit"])
     for variable in (
@@ -99,19 +124,40 @@ def main() -> None:
         process_environment[variable] = thread_limit
 
     for _ in range(scenario["warmup_runs"]):
-        measure(command, process_environment)
-    runs = [
-        measure(command, process_environment)
-        for _ in range(scenario["measured_runs"])
-    ]
-    checksums = {run["worker"]["checksum"] for run in runs}
-    if len(checksums) != 1:
-        raise RuntimeError("benchmark worker produced inconsistent results")
-    if any(run["peak_rss_bytes"] <= 0 for run in runs):
-        raise RuntimeError("benchmark harness did not observe resident memory")
+        for command in commands.values():
+            measure(command, process_environment)
+    runs = {implementation: [] for implementation in commands}
+    for _ in range(scenario["measured_runs"]):
+        for implementation, command in commands.items():
+            runs[implementation].append(measure(command, process_environment))
+    for implementation, implementation_runs in runs.items():
+        checksums = {run["worker"]["checksum"] for run in implementation_runs}
+        if len(checksums) != 1:
+            raise RuntimeError(
+                f"{implementation} benchmark worker produced inconsistent results"
+            )
+        if any(run["peak_rss_bytes"] <= 0 for run in implementation_runs):
+            raise RuntimeError(
+                f"benchmark harness did not observe {implementation} resident memory"
+            )
+    if scenario.get("workload") == "preprocessing":
+        signatures = {
+            implementation: implementation_runs[0]["worker"]["signature"]
+            for implementation, implementation_runs in runs.items()
+        }
+        reference = signatures["sklearn"]
+        for implementation, signature in signatures.items():
+            if len(signature) != len(reference) or any(
+                not math.isclose(expected, observed, rel_tol=1e-12, abs_tol=1e-12)
+                for expected, observed in zip(reference, signature, strict=True)
+            ):
+                raise RuntimeError(
+                    f"{implementation} output signature does not match sklearn"
+                )
     observed_thread_counts = {
         pool["num_threads"]
-        for run in runs
+        for implementation_runs in runs.values()
+        for run in implementation_runs
         for pool in run["worker"]["threadpools"]
     }
     if observed_thread_counts != {scenario["thread_limit"]}:
@@ -130,14 +176,21 @@ def main() -> None:
         },
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "methodology": {
-            "measurement": "fresh process wall time and sampled resident set size",
+            "measurement": (
+                "interleaved fresh-process wall time and sampled resident set size"
+            ),
             "rss_sample_interval_seconds": 0.001,
+            "signature_tolerance": (
+                {"absolute": 1e-12, "relative": 1e-12}
+                if scenario.get("workload") == "preprocessing"
+                else None
+            ),
             "thread_limit": scenario["thread_limit"],
             "warmup_runs": scenario["warmup_runs"],
         },
         "runs": runs,
         "scenario": scenario,
-        "schema_version": 1,
+        "schema_version": 2,
     }
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(

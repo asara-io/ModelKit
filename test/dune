@@ -10,6 +10,11 @@
  (libraries modelkit alcotest))
 
 (test
+ (name preprocessing_test)
+ (modules preprocessing_test)
+ (libraries modelkit alcotest))
+
+(test
  (name protocol_test)
  (modules protocol_test)
  (libraries modelkit alcotest))
@@ -48,4 +53,15 @@
   (setenv
    MODELKIT_SKLEARN_FIXTURE
    %{dep:fixtures/sklearn/stratified_kfold_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name sklearn_preprocessing_fixture_test)
+ (modules sklearn_preprocessing_fixture_test)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/preprocessing_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_SKLEARN_PREPROCESSING_FIXTURE
+   %{dep:fixtures/sklearn/preprocessing_v1.tsv}
    (run %{test}))))

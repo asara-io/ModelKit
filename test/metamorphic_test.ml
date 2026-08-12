@@ -62,6 +62,58 @@ let test_transpose_identity () =
   let right = get_ok (Reference_backend.dot x transposed_matrix_y) in
   check_float "<Xx,y> equals <x,X^T y>" left right
 
+let test_preprocessing_row_permutation () =
+  let original =
+    Result.get_ok
+      (Matrix.of_arrays
+         [| [| 1.0; Float.nan |]; [| 3.0; 8.0 |]; [| 5.0; 4.0 |] |])
+  in
+  let permuted =
+    Result.get_ok
+      (Matrix.of_arrays
+         [| [| 5.0; 4.0 |]; [| 1.0; Float.nan |]; [| 3.0; 8.0 |] |])
+  in
+  let schema = Result.get_ok (Feature_schema.of_matrix original) in
+  let fit_imputer x =
+    get_ok
+      (Simple_imputer.fit (Simple_imputer.mean ())
+         ~rng:(Rng.create (Seed.of_int 0))
+         ~feature_schema:schema ~x ~y:None ())
+  in
+  let original_imputer = fit_imputer original in
+  let permuted_imputer = fit_imputer permuted in
+  Array.iter2
+    (check_float "row permutation preserves imputation statistics")
+    (Vector.to_array (Simple_imputer.statistics original_imputer))
+    (Vector.to_array (Simple_imputer.statistics permuted_imputer));
+  let complete_original =
+    get_ok
+      (Simple_imputer.transform original_imputer ~feature_schema:schema
+         ~x:original)
+  in
+  let complete_permuted =
+    get_ok
+      (Simple_imputer.transform permuted_imputer ~feature_schema:schema
+         ~x:permuted)
+  in
+  let fit_scaler x =
+    get_ok
+      (Standard_scaler.fit
+         (Standard_scaler.create ())
+         ~rng:(Rng.create (Seed.of_int 0))
+         ~feature_schema:schema ~x ~y:None ())
+  in
+  let original_scaler = fit_scaler complete_original in
+  let permuted_scaler = fit_scaler complete_permuted in
+  Array.iter2
+    (check_float "row permutation preserves scaling means")
+    (Vector.to_array (Standard_scaler.mean original_scaler))
+    (Vector.to_array (Standard_scaler.mean permuted_scaler));
+  Array.iter2
+    (check_float "row permutation preserves scaling variances")
+    (Vector.to_array (Standard_scaler.variance original_scaler))
+    (Vector.to_array (Standard_scaler.variance permuted_scaler))
+
 let () =
   Alcotest.run "metamorphic invariants"
     [
@@ -71,5 +123,7 @@ let () =
           Alcotest.test_case "dot scaling" `Quick test_dot_scaling;
           Alcotest.test_case "row permutation" `Quick test_row_permutation;
           Alcotest.test_case "transpose identity" `Quick test_transpose_identity;
+          Alcotest.test_case "preprocessing row permutation" `Quick
+            test_preprocessing_row_permutation;
         ] );
     ]

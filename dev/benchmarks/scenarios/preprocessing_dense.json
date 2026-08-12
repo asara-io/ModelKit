@@ -1,0 +1,16 @@
+{
+  "claim_eligible": false,
+  "dataset": {
+    "features": 40,
+    "missing_modulus": 20,
+    "samples": 50000,
+    "seed": 1729
+  },
+  "measured_runs": 3,
+  "imputation_constant": -2.0,
+  "scenario": "preprocessing_dense_v1",
+  "thread_limit": 1,
+  "variance_threshold": 0.01,
+  "warmup_runs": 1,
+  "workload": "preprocessing"
+}

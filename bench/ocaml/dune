@@ -1,0 +1,3 @@
+(executable
+ (name preprocessing_worker)
+ (libraries modelkit))

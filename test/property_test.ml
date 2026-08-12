@@ -85,6 +85,105 @@ let dataset_view_order =
         in
         preserves_order 0)
 
+let preprocessing_rng () = Rng.create (Seed.of_int 17)
+
+let imputer_removes_missing_values =
+  QCheck.Test.make ~count:500
+    ~name:"mean imputation fills NaN and preserves observed values"
+    QCheck.(array nat_small)
+    (fun values ->
+      if Array.length values = 0 then true
+      else
+        let input =
+          Array.mapi
+            (fun row value ->
+              [|
+                (if row > 0 && row mod 2 = 1 then Float.nan
+                 else Float.of_int value);
+              |])
+            values
+        in
+        let x = Result.get_ok (Matrix.of_arrays input) in
+        let schema = Result.get_ok (Feature_schema.of_matrix x) in
+        match
+          Simple_imputer.fit (Simple_imputer.mean ())
+            ~rng:(preprocessing_rng ()) ~feature_schema:schema ~x ~y:None ()
+        with
+        | Error _ -> false
+        | Ok fitted -> (
+            match Simple_imputer.transform fitted ~feature_schema:schema ~x with
+            | Error _ -> false
+            | Ok transformed ->
+                let rec check row =
+                  row = Array.length values
+                  ||
+                  let observed = Matrix.get transformed row 0 in
+                  Float.is_finite observed
+                  && (Float.is_nan input.(row).(0) || observed = input.(row).(0))
+                  && check (row + 1)
+                in
+                check 0))
+
+let scaler_normalizes_nonconstant_columns =
+  QCheck.Test.make ~count:500
+    ~name:"standard scaling produces zero mean and unit population variance"
+    QCheck.(array nat_small)
+    (fun values ->
+      let values = Array.map Float.of_int values in
+      if Array.length values < 2 || Array.for_all (( = ) values.(0)) values then
+        true
+      else
+        let x =
+          Result.get_ok
+            (Matrix.of_arrays (Array.map (fun value -> [| value |]) values))
+        in
+        let schema = Result.get_ok (Feature_schema.of_matrix x) in
+        match
+          Standard_scaler.fit
+            (Standard_scaler.create ())
+            ~rng:(preprocessing_rng ()) ~feature_schema:schema ~x ~y:None ()
+        with
+        | Error _ -> false
+        | Ok fitted -> (
+            match
+              Standard_scaler.transform fitted ~feature_schema:schema ~x
+            with
+            | Error _ -> false
+            | Ok transformed ->
+                let rows = Matrix.rows transformed in
+                let mean = ref 0.0 in
+                for row = 0 to rows - 1 do
+                  mean := !mean +. Matrix.get transformed row 0
+                done;
+                mean := !mean /. Float.of_int rows;
+                let variance = ref 0.0 in
+                for row = 0 to rows - 1 do
+                  let delta = Matrix.get transformed row 0 -. !mean in
+                  variance := !variance +. (delta *. delta)
+                done;
+                variance := !variance /. Float.of_int rows;
+                Float.abs !mean <= 1e-10
+                && Float.abs (!variance -. 1.0) <= 1e-10))
+
+let variance_threshold_removes_constant_column =
+  QCheck.Test.make ~count:500
+    ~name:"variance threshold removes constant columns in stable order"
+    QCheck.nat_small (fun extra_rows ->
+      let rows = 2 + (extra_rows mod 32) in
+      let x =
+        Result.get_ok
+          (Matrix.init ~rows ~columns:2 (fun row column ->
+               if column = 0 then 7.0 else Float.of_int row))
+      in
+      let schema = Result.get_ok (Feature_schema.of_matrix x) in
+      let specification = Result.get_ok (Variance_threshold.create ()) in
+      match
+        Variance_threshold.fit specification ~rng:(preprocessing_rng ())
+          ~feature_schema:schema ~x ~y:None ()
+      with
+      | Error _ -> false
+      | Ok fitted -> Variance_threshold.selected_indices fitted = [| 1 |])
+
 let () =
   let random = Random.State.make [| 0x4d4f4445; 0x4c4b4954 |] in
   let failures =
@@ -95,6 +194,9 @@ let () =
         seed_derivation;
         rng_purity;
         dataset_view_order;
+        imputer_removes_missing_values;
+        scaler_normalizes_nonconstant_columns;
+        variance_threshold_removes_constant_column;
       ]
   in
   if failures <> 0 then exit failures
