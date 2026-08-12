@@ -174,6 +174,18 @@ module Groups : sig
   val select : t -> Row_view.t -> (t, Data_error.t) result
 end
 
+(** Stable, versioned identity for a feature schema.
+
+    Fingerprints are deterministic across supported platforms and OCaml
+    versions, and used to identify compatibility. *)
+module Schema_fingerprint : sig
+  type t
+
+  val equal : t -> t -> bool
+  val pp : Format.formatter -> t -> unit
+  val to_string : t -> string
+end
+
 (** Immutable feature identity and width expected by a model boundary.
 
     Anonymous schemas validate width only. Named schemas additionally make
@@ -187,9 +199,72 @@ module Feature_schema : sig
   val feature_count : t -> int
   val names : t -> Feature_names.t option
   val equal : t -> t -> bool
+  val fingerprint : t -> Schema_fingerprint.t
   val validate_matrix : t -> Matrix.t -> (unit, Data_error.t) result
   val pp : Format.formatter -> t -> unit
   val to_string : t -> string
+end
+
+(** An admitted immutable dense dataset and its zero-copy row selections.
+
+    Admission validates alignment and the declared feature finiteness policy.
+    [create] reuses already-immutable ModelKit values. [view] stores only row
+    indices; [materialize] packs a view into new row-aligned buffers. *)
+module Dataset : sig
+  type finiteness = Require_finite | Allow_nan
+  type data_access = Copy | View
+
+  type access_report = {
+    feature_access : data_access;
+    target_access : data_access;
+    sample_weight_access : data_access option;
+    group_access : data_access option;
+  }
+
+  type 'kind t
+  type 'kind view
+
+  val create :
+    finiteness:finiteness ->
+    ?feature_names:Feature_names.t ->
+    ?sample_weight:Sample_weight.t ->
+    ?groups:Groups.t ->
+    x:Matrix.t ->
+    y:'kind Target.t ->
+    unit ->
+    ('kind t, Data_error.t) result
+
+  val sample_count : _ t -> int
+  val feature_count : _ t -> int
+  val features : _ t -> Matrix.t
+  val target : 'kind t -> 'kind Target.t
+  val sample_weight : _ t -> Sample_weight.t option
+  val groups : _ t -> Groups.t option
+  val feature_schema : _ t -> Feature_schema.t
+  val schema_fingerprint : _ t -> Schema_fingerprint.t
+  val finiteness : _ t -> finiteness
+  val access_report : _ t -> access_report
+  val all : 'kind t -> 'kind view
+  val view : 'kind t -> Row_view.t -> ('kind view, Data_error.t) result
+  val view_sample_count : _ view -> int
+  val row_view : _ view -> Row_view.t
+  val view_access_report : _ view -> access_report
+
+  val source_row : _ view -> int -> int
+  (** Raises [Invalid_argument] if the view position is out of bounds. *)
+
+  val feature : _ view -> row:int -> column:int -> float
+  (** [feature view ~row ~column] addresses logical rows in the view. Raises
+      [Invalid_argument] if either index is out of bounds. *)
+
+  val regression_target : Target.regression view -> int -> float
+  val classification_target : Target.classification view -> int -> int
+  val sample_weight_value : _ view -> int -> float option
+  val group : _ view -> int -> int option
+
+  val materialize : 'kind view -> ('kind t, Data_error.t) result
+  (** [materialize view] copies selected row-aligned buffers. Feature names and
+      the immutable schema are reused. *)
 end
 
 (** Structured failures for public machine learning operations.
