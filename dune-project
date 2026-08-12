@@ -1,7 +1,7 @@
 (lang dune 3.23)
 (using mdx 0.4)
 (name modelkit)
-(version 0.2.1)
+(version 0.3.0-dev)
 (generate_opam_files true)
 (implicit_transitive_deps false)
 
