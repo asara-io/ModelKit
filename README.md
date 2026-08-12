@@ -12,6 +12,7 @@ Python users of `scikit-learn` will find this library familiar in serving the sa
 - Typed extension contracts separate immutable estimator specifications from fitted models and return actionable errors.
 - Immutable, validated float64 data primitives catch shape, feature-order, and sample-alignment problems before model code runs.
 - Dense datasets admit aligned features, targets, weights, groups, and names under an explicit finiteness policy; stable schema fingerprints and copy/view reports make compatibility and allocation behavior observable.
+- Immutable preprocessing specifications fit mean, median, or constant imputation, population standardization, and variance-based feature filtering without changing or losing feature identities.
 
 ## Motivation and Future Work
 
@@ -25,7 +26,11 @@ Anticipating performance benefits from existing work such as using Owl for a num
 
 ModelKit 0.2.1 is the current foundation release and adds OCaml 5.5 build support to the 0.2.0 capabilities. The `0.3.x` development branch now includes immutable dense dataset admission, explicit `Require_finite` and `Allow_nan` feature policies, aligned zero-copy row views, stable versioned schema fingerprints, and explicit copy/view reporting. `Allow_nan` treats NaN as a missing-value marker but still rejects positive and negative infinity.
 
-Dataset row views preserve ordering and duplicates without packing feature or metadata buffers. Use `Dataset.materialize` when an algorithm requires contiguous selected rows; its access report identifies the resulting copies. Concrete transformers, estimators, fitted artifacts, and end-to-end machine learning workflows are not yet implemented.
+Dataset row views preserve ordering and duplicates without packing feature or metadata buffers. Use `Dataset.materialize` when an algorithm requires contiguous selected rows; its access report identifies the resulting copies.
+
+The development API also provides `Simple_imputer`, `Standard_scaler`, and `Variance_threshold`. Imputation learns only from the supplied training matrix and treats NaN as the missing-value marker. Scaling uses population variance and maps constant centered features to zero with a scale of one. Variance filtering keeps columns whose variance is strictly greater than its threshold and preserves selected names in input order. These transformers reject infinities and unsupported sample weights with typed errors rather than silently continuing.
+
+Leakage-safe pipeline orchestration, concrete estimators, fitted artifacts, and end-to-end machine learning workflows are not yet implemented. Until the pipeline item lands, callers must fit preprocessing on their training partition explicitly and reuse the fitted value for validation or production matrices.
 
 The portable package lives under `lib/`. Optional ecosystem adapters and accelerated backends are reserved under `adapters/` and `backends/`; they will remain separate packages that depend on the portable core when implemented.
 
@@ -86,7 +91,7 @@ python dev/fixtures/generate.py
 python dev/benchmarks/run.py
 ```
 
-The committed smoke benchmark validates the measurement workflow only and is explicitly ineligible to support performance claims in the current build. Algorithm-specific comparative reports will use the release benchmark contract once equivalent ModelKit estimators exist.
+The committed smoke benchmark validates the measurement workflow only. The development preprocessing benchmark compares the current native transformers with their pinned scikit-learn references on a deterministic dense workload; build its OCaml worker and pass `--scenario dev/benchmarks/scenarios/preprocessing_dense.json` to the benchmark runner. Both reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for scope, raw-result links, and limitations. Release comparisons will use the product plan's independent-CI benchmark contract.
 
 ## Project Policies
 

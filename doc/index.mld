@@ -12,9 +12,12 @@ splitter, execution, RNG, and numerical-backend module types define the
 extension boundaries with separate unfitted and fitted states. The portable
 runtime includes fixed-order compensated numerical kernels, sequential
 stable-order execution, deterministic logical seed derivation, and a pure
-SplitMix64 random-number stream. Estimators and end-to-end workflows will
-arrive in later releases. Portable tests consume committed scikit-learn
-reference data without requiring Python during a normal build or test run.
+SplitMix64 random-number stream. Mean, median, and constant imputation,
+population standardization, and variance-threshold feature filtering are
+available as immutable specifications with distinct fitted states. Estimators,
+pipelines, and end-to-end workflows will arrive in later checklist items.
+Portable tests consume committed scikit-learn reference data without requiring
+Python during a normal build or test run.
 
 {1 Executable example}
 
@@ -30,6 +33,24 @@ val y : Target.classification Target.t = <abstr>
 val dataset : Target.classification Dataset.t = <abstr>
 # Dataset.sample_count dataset, Dataset.feature_count dataset;;
 - : int * int = (2, 2)
+]}
+
+Preprocessing is fitted on a training matrix and then reused:
+
+{@ocaml[
+# let schema = Dataset.feature_schema dataset;;
+val schema : Feature_schema.t = <abstr>
+# let fitted_imputer =
+    Simple_imputer.fit (Simple_imputer.mean ())
+      ~rng:(Rng.create (Seed.of_int 42)) ~feature_schema:schema ~x ~y:None ()
+    |> Result.get_ok;;
+val fitted_imputer : Simple_imputer.fitted = <abstr>
+# Simple_imputer.statistics fitted_imputer |> Vector.to_array;;
+- : float array = [|2.; 4.|]
+# let complete = Simple_imputer.transform fitted_imputer ~feature_schema:schema ~x |> Result.get_ok;;
+val complete : Matrix.t = <abstr>
+# Matrix.to_arrays complete;;
+- : float array array = [|[|1.; 4.|]; [|3.; 4.|]|]
 ]}
 
 The reference backend preserves small terms that ordinary floating-point
