@@ -11,6 +11,7 @@ Python users of `scikit-learn` will find this library familiar in serving the sa
 - Reproducible foundations with deterministic random streams and stable reference numerical operations across supported platforms, OCaml versions, and execution schedules.
 - Typed extension contracts separate immutable estimator specifications from fitted models and return actionable errors.
 - Immutable, validated float64 data primitives catch shape, feature-order, and sample-alignment problems before model code runs.
+- Dense datasets admit aligned features, targets, weights, groups, and names under an explicit finiteness policy; stable schema fingerprints and copy/view reports make compatibility and allocation behavior observable.
 
 ## Motivation and Future Work
 
@@ -22,7 +23,9 @@ Anticipating performance benefits from existing work such as using Owl for a num
 
 ## Status
 
-ModelKit 0.2.1 is the current foundation release. It includes public data contracts, feature schemas, structured errors, protocol module types, and portable reference implementations for foundational numerical, random-number generation, and execution operations. Concrete estimators, fitted artifacts, and end-to-end machine learning workflows are not yet implemented.
+ModelKit 0.2.1 is the current foundation release and adds OCaml 5.5 build support to the 0.2.0 capabilities. The `0.3.x` development branch now includes immutable dense dataset admission, explicit `Require_finite` and `Allow_nan` feature policies, aligned zero-copy row views, stable versioned schema fingerprints, and explicit copy/view reporting. `Allow_nan` treats NaN as a missing-value marker but still rejects positive and negative infinity.
+
+Dataset row views preserve ordering and duplicates without packing feature or metadata buffers. Use `Dataset.materialize` when an algorithm requires contiguous selected rows; its access report identifies the resulting copies. Concrete transformers, estimators, fitted artifacts, and end-to-end machine learning workflows are not yet implemented.
 
 The portable package lives under `lib/`. Optional ecosystem adapters and accelerated backends are reserved under `adapters/` and `backends/`; they will remain separate packages that depend on the portable core when implemented.
 

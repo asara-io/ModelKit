@@ -3,10 +3,11 @@
 ModelKit is a portable OCaml library for cohesive classical machine learning
 workflows.
 
-The current engineering foundation provides opaque float64 {!Modelkit.Vector}
-and {!Modelkit.Matrix} values, immutable {!Modelkit.Row_view} selections,
-validated targets, aligned metadata, immutable feature schemas, and structured
-protocol errors. Public specification, estimator, transformer, scorer,
+The current development version adds immutable dense {!Modelkit.Dataset}
+admission, explicit feature-finiteness policies, stable schema fingerprints,
+zero-copy row-index views, and copy/view reports to the existing opaque
+float64 {!Modelkit.Vector} and {!Modelkit.Matrix} values. Public specification,
+estimator, transformer, scorer,
 splitter, execution, RNG, and numerical-backend module types define the
 extension boundaries with separate unfitted and fitted states. The portable
 runtime includes fixed-order compensated numerical kernels, sequential
@@ -16,6 +17,20 @@ arrive in later releases. Portable tests consume committed scikit-learn
 reference data without requiring Python during a normal build or test run.
 
 {1 Executable example}
+
+Dataset admission permits NaN missing markers only when explicitly requested:
+
+{@ocaml[
+# open Modelkit;;
+# let x = Matrix.of_arrays [| [| 1.; Float.nan |]; [| 3.; 4. |] |] |> Result.get_ok;;
+val x : Matrix.t = <abstr>
+# let y = Target.classification [| 0; 1 |];;
+val y : Target.classification Target.t = <abstr>
+# let dataset = Dataset.create ~finiteness:Dataset.Allow_nan ~x ~y () |> Result.get_ok;;
+val dataset : Target.classification Dataset.t = <abstr>
+# Dataset.sample_count dataset, Dataset.feature_count dataset;;
+- : int * int = (2, 2)
+]}
 
 The reference backend preserves small terms that ordinary floating-point
 summation can lose to cancellation:
