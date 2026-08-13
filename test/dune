@@ -15,6 +15,11 @@
  (libraries modelkit alcotest))
 
 (test
+ (name pipeline_test)
+ (modules pipeline_test)
+ (libraries modelkit alcotest))
+
+(test
  (name protocol_test)
  (modules protocol_test)
  (libraries modelkit alcotest))

@@ -99,6 +99,85 @@ let check_matrix label expected observed =
 
 let rng () = Rng.create (Seed.of_int 1729)
 
+type passthrough_fitted = { schema : Feature_schema.t }
+
+module Passthrough_estimator :
+  ESTIMATOR
+    with type t = unit
+     and type params = unit
+     and type target = unit
+     and type prediction = Matrix.t
+     and type fitted = passthrough_fitted
+     and type rng = Rng.t = struct
+  type t = unit
+  type params = unit
+  type target = unit
+  type prediction = Matrix.t
+  type fitted = passthrough_fitted
+  type rng = Rng.t
+
+  let clone () = ()
+  let params () = ()
+
+  let fit () ?sample_weight:_ ~rng:_ ~feature_schema ~x ~y:() () =
+    match Feature_schema.validate_matrix feature_schema x with
+    | Ok () -> Ok { schema = feature_schema }
+    | Error error ->
+        Error
+          (Error.of_data_error ~remediation:"provide aligned fixture data" error)
+
+  let predict fitted ~feature_schema ~x =
+    if not (Feature_schema.equal fitted.schema feature_schema) then
+      Error
+        (Error.make ~remediation:"provide the fitted fixture schema"
+           (Error.Feature_schema_mismatch
+              { expected = fitted.schema; observed = feature_schema }))
+    else
+      match Feature_schema.validate_matrix feature_schema x with
+      | Ok () -> Ok x
+      | Error error ->
+          Error
+            (Error.of_data_error ~remediation:"provide aligned fixture data"
+               error)
+
+  let fitted_params _ = ()
+  let feature_schema fitted = fitted.schema
+end
+
+let test_pipeline_fixture path () =
+  let fixture = read_fixture path in
+  let input = matrix fixture "input" |> Matrix.of_arrays |> get_data in
+  let schema = Feature_schema.of_matrix input |> get_data in
+  let imputer =
+    Pipeline.transformer ~name:"impute"
+      (module Simple_imputer)
+      (Simple_imputer.mean ())
+    |> get
+  in
+  let scaler =
+    Pipeline.transformer ~name:"scale"
+      (module Standard_scaler)
+      (Standard_scaler.create ())
+    |> get
+  in
+  let builder = Pipeline.add_transformer Pipeline.empty imputer |> get in
+  let builder = Pipeline.add_transformer builder scaler |> get in
+  let estimator =
+    Pipeline.estimator ~name:"passthrough" (module Passthrough_estimator) ()
+    |> get
+  in
+  let specification = Pipeline.set_estimator builder estimator |> get in
+  let fitted =
+    Pipeline.fit specification ~rng:(rng ()) ~feature_schema:schema ~x:input
+      ~y:() ()
+    |> get
+  in
+  let expected = matrix fixture "scaled_output" in
+  check_matrix "pipeline transformed output" expected
+    (Pipeline.transform fitted ~feature_schema:schema ~x:input |> get);
+  check_matrix "pipeline prediction input" expected
+    (Pipeline.predict fitted ~feature_schema:schema ~x:input |> get)
+
 let test_fixture path () =
   let fixture = read_fixture path in
   let input = matrix fixture "input" |> Matrix.of_arrays |> get_data in
@@ -175,5 +254,9 @@ let () =
   Alcotest.run "sklearn preprocessing fixtures"
     [
       ( "preprocessing",
-        [ Alcotest.test_case "v1" `Quick (test_fixture fixture_path) ] );
+        [
+          Alcotest.test_case "v1" `Quick (test_fixture fixture_path);
+          Alcotest.test_case "pipeline v1" `Quick
+            (test_pipeline_fixture fixture_path);
+        ] );
     ]

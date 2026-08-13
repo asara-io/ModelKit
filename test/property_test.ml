@@ -184,6 +184,127 @@ let variance_threshold_removes_constant_column =
       | Error _ -> false
       | Ok fitted -> Variance_threshold.selected_indices fitted = [| 1 |])
 
+type property_passthrough_fitted = { property_schema : Feature_schema.t }
+
+module Property_passthrough :
+  ESTIMATOR
+    with type t = unit
+     and type params = unit
+     and type target = unit
+     and type prediction = Matrix.t
+     and type fitted = property_passthrough_fitted
+     and type rng = Rng.t = struct
+  type t = unit
+  type params = unit
+  type target = unit
+  type prediction = Matrix.t
+  type fitted = property_passthrough_fitted
+  type rng = Rng.t
+
+  let clone () = ()
+  let params () = ()
+
+  let fit () ?sample_weight:_ ~rng:_ ~feature_schema ~x ~y:() () =
+    match Feature_schema.validate_matrix feature_schema x with
+    | Ok () -> Ok { property_schema = feature_schema }
+    | Error data_error ->
+        Error
+          (Error.of_data_error ~remediation:"provide aligned property data"
+             data_error)
+
+  let predict fitted ~feature_schema ~x =
+    if Feature_schema.equal fitted.property_schema feature_schema then Ok x
+    else
+      Error
+        (Error.make ~remediation:"provide the fitted property schema"
+           (Error.Feature_schema_mismatch
+              { expected = fitted.property_schema; observed = feature_schema }))
+
+  let fitted_params _ = ()
+  let feature_schema fitted = fitted.property_schema
+end
+
+let pipeline_matches_manual_preprocessing =
+  QCheck.Test.make ~count:500
+    ~name:"pipeline preprocessing equals the same manually fitted stages"
+    QCheck.(array nat_small)
+    (fun generated ->
+      if Array.length generated = 0 then true
+      else
+        let values = Array.map Float.of_int generated in
+        let x =
+          Array.mapi
+            (fun row value ->
+              [| (if row > 0 && row mod 3 = 0 then Float.nan else value) |])
+            values
+          |> Matrix.of_arrays |> Result.get_ok
+        in
+        let schema = Feature_schema.of_matrix x |> Result.get_ok in
+        let imputer_specification = Simple_imputer.mean () in
+        let scaler_specification = Standard_scaler.create () in
+        let manual =
+          match
+            Simple_imputer.fit imputer_specification ~rng:(preprocessing_rng ())
+              ~feature_schema:schema ~x ~y:None ()
+          with
+          | Error _ -> None
+          | Ok imputer -> (
+              match
+                Simple_imputer.transform imputer ~feature_schema:schema ~x
+              with
+              | Error _ -> None
+              | Ok complete -> (
+                  match
+                    Standard_scaler.fit scaler_specification
+                      ~rng:(preprocessing_rng ()) ~feature_schema:schema
+                      ~x:complete ~y:None ()
+                  with
+                  | Error _ -> None
+                  | Ok scaler ->
+                      Standard_scaler.transform scaler ~feature_schema:schema
+                        ~x:complete
+                      |> Result.to_option))
+        in
+        let pipeline =
+          let imputer =
+            Pipeline.transformer ~name:"impute"
+              (module Simple_imputer)
+              imputer_specification
+            |> Result.get_ok
+          in
+          let scaler =
+            Pipeline.transformer ~name:"scale"
+              (module Standard_scaler)
+              scaler_specification
+            |> Result.get_ok
+          in
+          let builder =
+            Pipeline.add_transformer Pipeline.empty imputer |> Result.get_ok
+          in
+          let builder =
+            Pipeline.add_transformer builder scaler |> Result.get_ok
+          in
+          let estimator =
+            Pipeline.estimator ~name:"passthrough"
+              (module Property_passthrough)
+              ()
+            |> Result.get_ok
+          in
+          Pipeline.set_estimator builder estimator |> Result.get_ok
+        in
+        let pipelined =
+          Result.bind
+            (Pipeline.fit pipeline ~rng:(preprocessing_rng ())
+               ~feature_schema:schema ~x ~y:() ())
+            (fun fitted -> Pipeline.predict fitted ~feature_schema:schema ~x)
+          |> Result.to_option
+        in
+        match (manual, pipelined) with
+        | Some manual, Some pipelined ->
+            Matrix.to_arrays manual = Matrix.to_arrays pipelined
+        | None, None -> true
+        | Some _, None | None, Some _ -> false)
+
 let () =
   let random = Random.State.make [| 0x4d4f4445; 0x4c4b4954 |] in
   let failures =
@@ -197,6 +318,7 @@ let () =
         imputer_removes_missing_values;
         scaler_normalizes_nonconstant_columns;
         variance_threshold_removes_constant_column;
+        pipeline_matches_manual_preprocessing;
       ]
   in
   if failures <> 0 then exit failures
