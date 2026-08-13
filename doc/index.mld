@@ -14,8 +14,11 @@ runtime includes fixed-order compensated numerical kernels, sequential
 stable-order execution, deterministic logical seed derivation, and a pure
 SplitMix64 random-number stream. Mean, median, and constant imputation,
 population standardization, and variance-threshold feature filtering are
-available as immutable specifications with distinct fitted states. Estimators,
-pipelines, and end-to-end workflows will arrive in later checklist items.
+available as immutable specifications with distinct fitted states. Sequential
+{!Modelkit.Pipeline} values fit those stages only on their training input,
+preserve feature schemas, derive stage-local random streams, and dispatch
+terminal prediction capabilities. Concrete estimators and end-to-end evaluation
+will arrive in later checklist items.
 Portable tests consume committed scikit-learn reference data without requiring
 Python during a normal build or test run.
 
@@ -52,6 +55,32 @@ val complete : Matrix.t = <abstr>
 # Matrix.to_arrays complete;;
 - : float array array = [|[|1.; 4.|]; [|3.; 4.|]|]
 ]}
+
+Preprocessing stages can be assembled before selecting a protocol-compatible
+terminal estimator:
+
+{@ocaml[
+# let impute_stage =
+    Pipeline.transformer ~name:"impute" (module Simple_imputer)
+      (Simple_imputer.mean ())
+    |> Result.get_ok;;
+val impute_stage : Pipeline.transformer = <abstr>
+# let scale_stage =
+    Pipeline.transformer ~name:"scale" (module Standard_scaler)
+      (Standard_scaler.create ())
+    |> Result.get_ok;;
+val scale_stage : Pipeline.transformer = <abstr>
+# let pipeline_steps =
+    Result.bind (Pipeline.add_transformer Pipeline.empty impute_stage)
+      (fun builder -> Pipeline.add_transformer builder scale_stage)
+    |> Result.get_ok;;
+val pipeline_steps : Pipeline.builder = <abstr>
+]}
+
+The current pipeline routes targets and sample weights to its terminal
+estimator. Its unsupervised preprocessing stages receive neither. Built-in
+linear estimators arrive in the next checklist item; external estimators can
+already participate by implementing {!Modelkit.ESTIMATOR}.
 
 The reference backend preserves small terms that ordinary floating-point
 summation can lose to cancellation:
