@@ -509,8 +509,14 @@ module Seed : sig
   val to_string : t -> string
 end
 
-module Rng : RNG with type seed = Seed.t
 (** Pure portable SplitMix64 random-number generation. *)
+module Rng : sig
+  include RNG with type seed = Seed.t
+
+  val to_seed : t -> Seed.t
+  (** [to_seed rng] identifies the current stream state so composite operations
+      can derive child streams. *)
+end
 
 (** Always-available sequential execution in ascending logical-index order. *)
 module Sequential_execution : sig
@@ -598,4 +604,109 @@ module Variance_threshold : sig
        and type target = unit
        and type fitted := fitted
        and type rng = Rng.t
+end
+
+(** Immutable sequential composition of fitted preprocessing and an estimator.
+
+    Transformer stages are fitted only from the matrix supplied to [fit]. Their
+    fitted values are then reused by [transform], [predict],
+    [decision_function], and [predict_proba]. Stage names are non-empty and
+    unique across the whole pipeline, and failures carry the responsible
+    [Error.Stage] context.
+
+    Current transformers are unsupervised and do not receive targets or sample
+    weights. Sample weights route to the terminal estimator. Each stage receives
+    a child RNG derived from its logical name and position. Fit and inference
+    are sequential and allocate one dense matrix per transformer stage. *)
+module Pipeline : sig
+  type transformer
+  type builder
+  type ('target, 'prediction) estimator
+  type ('target, 'prediction) t
+  type ('target, 'prediction) fitted
+  type capabilities = { decision_function : bool; predict_proba : bool }
+
+  val transformer :
+    name:string ->
+    (module TRANSFORMER
+       with type t = 'specification
+        and type target = unit
+        and type fitted = 'fitted
+        and type rng = Rng.t) ->
+    'specification ->
+    (transformer, Error.t) result
+  (** Packages an unsupervised transformer specification as a named stage. *)
+
+  val estimator :
+    name:string ->
+    (module ESTIMATOR
+       with type t = 'specification
+        and type target = 'target
+        and type prediction = 'prediction
+        and type fitted = 'fitted
+        and type rng = Rng.t) ->
+    ?decision_function:
+      ('fitted ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      (Vector.t, Error.t) result) ->
+    ?predict_proba:
+      ('fitted ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      (Matrix.t, Error.t) result) ->
+    'specification ->
+    (('target, 'prediction) estimator, Error.t) result
+  (** Packages a terminal estimator and its explicitly supported capabilities.
+  *)
+
+  val empty : builder
+  val add_transformer : builder -> transformer -> (builder, Error.t) result
+
+  val set_estimator :
+    builder ->
+    ('target, 'prediction) estimator ->
+    (('target, 'prediction) t, Error.t) result
+
+  val clone : ('target, 'prediction) t -> ('target, 'prediction) t
+  val transformer_names : ('target, 'prediction) t -> string array
+  val estimator_name : ('target, 'prediction) t -> string
+  val capabilities : ('target, 'prediction) t -> capabilities
+
+  val fit :
+    ('target, 'prediction) t ->
+    ?sample_weight:Sample_weight.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:'target ->
+    unit ->
+    (('target, 'prediction) fitted, Error.t) result
+
+  val transform :
+    ('target, 'prediction) fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val predict :
+    ('target, 'prediction) fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    ('prediction, Error.t) result
+
+  val decision_function :
+    ('target, 'prediction) fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Vector.t, Error.t) result
+
+  val predict_proba :
+    ('target, 'prediction) fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val input_schema : ('target, 'prediction) fitted -> Feature_schema.t
+  val output_schema : ('target, 'prediction) fitted -> Feature_schema.t
 end
