@@ -107,6 +107,70 @@ def preprocessing(scenario: dict[str, object]) -> dict[str, object]:
     }
 
 
+def linear_models(scenario: dict[str, object]) -> dict[str, object]:
+    import numpy as np
+    from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge
+
+    dataset = scenario["dataset"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    x = (
+        (rows * (17 + columns * 12) + columns * 31 + dataset["seed"]) % 1000
+    ).astype(np.float64)
+    x = (x / 100.0) - 5.0
+    coefficients = ((columns[0] % 5) - 2).astype(np.float64) * 0.2
+    noise = (((rows[:, 0] * 13 + 1729) % 11) - 5).astype(np.float64) * 0.01
+    regression_target = 1.25 + x @ coefficients + noise
+    score = x[:, 0] + 0.25 * x[:, 1] - 0.1 * x[:, 2]
+    classification_target = np.where(score > 0.0, 7, -3)
+    sample_weight = 1.0 + (rows[:, 0] % 5).astype(np.float64) * 0.25
+
+    linear = LinearRegression().fit(
+        x, regression_target, sample_weight=sample_weight
+    )
+    linear_prediction = linear.predict(x)
+    ridge = Ridge(alpha=scenario["ridge_alpha"], solver="svd").fit(
+        x, regression_target, sample_weight=sample_weight
+    )
+    ridge_prediction = ridge.predict(x)
+    logistic = LogisticRegression(
+        C=scenario["logistic_c"],
+        solver=scenario["logistic_solver"],
+        tol=scenario["logistic_tolerance"],
+        max_iter=scenario["logistic_max_iterations"],
+    ).fit(x, classification_target, sample_weight=sample_weight)
+    probabilities = logistic.predict_proba(x)
+    prediction = logistic.predict(x)
+    boundary = int(np.argmin(np.abs(score)))
+    next_boundary = min(x.shape[0] - 1, boundary + 1)
+    signature = np.array(
+        [
+            linear_prediction[0],
+            linear_prediction[-1],
+            ridge_prediction[0],
+            ridge_prediction[-1],
+            probabilities[boundary, 1],
+            probabilities[next_boundary, 1],
+            prediction[boundary],
+            prediction[next_boundary],
+        ],
+        dtype="<f8",
+    )
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "features": x.shape[1],
+        "operations": [
+            "ordinary_least_squares",
+            "ridge_regression",
+            "binary_logistic_regression",
+        ],
+        "samples": x.shape[0],
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("scenario", type=Path)
@@ -117,6 +181,8 @@ def main() -> None:
         result = dummy_cv(scenario)
     elif workload == "preprocessing":
         result = preprocessing(scenario)
+    elif workload == "linear_models":
+        result = linear_models(scenario)
     else:
         raise ValueError(f"unknown workload {workload!r}")
     print(json.dumps(result))

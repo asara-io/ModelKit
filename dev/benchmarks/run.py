@@ -65,7 +65,8 @@ def platform_name() -> str:
 def worker_commands(scenario: dict[str, object], scenario_path: Path) -> dict[str, list[str]]:
     sklearn_worker = ROOT / "dev" / "benchmarks" / "sklearn_worker.py"
     commands = {"sklearn": [sys.executable, str(sklearn_worker), str(scenario_path)]}
-    if scenario.get("workload") == "preprocessing":
+    workload = scenario.get("workload")
+    if workload == "preprocessing":
         modelkit_worker = (
             ROOT / "_build" / "default" / "bench" / "ocaml" / "preprocessing_worker.exe"
         )
@@ -83,6 +84,26 @@ def worker_commands(scenario: dict[str, object], scenario_path: Path) -> dict[st
             str(dataset["missing_modulus"]),
             str(scenario["variance_threshold"]),
             str(scenario["imputation_constant"]),
+        ]
+    elif workload == "linear_models":
+        modelkit_worker = (
+            ROOT / "_build" / "default" / "bench" / "ocaml" / "linear_models_worker.exe"
+        )
+        if not modelkit_worker.exists():
+            raise RuntimeError(
+                "ModelKit benchmark worker is missing; run "
+                "`opam exec -- dune build bench/ocaml/linear_models_worker.exe`"
+            )
+        dataset = scenario["dataset"]
+        commands["modelkit"] = [
+            str(modelkit_worker),
+            str(dataset["samples"]),
+            str(dataset["features"]),
+            str(dataset["seed"]),
+            str(scenario["ridge_alpha"]),
+            str(scenario["logistic_c"]),
+            str(scenario["logistic_tolerance"]),
+            str(scenario["logistic_max_iterations"]),
         ]
     return commands
 
@@ -140,7 +161,11 @@ def main() -> None:
             raise RuntimeError(
                 f"benchmark harness did not observe {implementation} resident memory"
             )
-    if scenario.get("workload") == "preprocessing":
+    signature_tolerance = {
+        "preprocessing": 1e-12,
+        "linear_models": 1e-7,
+    }.get(scenario.get("workload"))
+    if signature_tolerance is not None:
         signatures = {
             implementation: implementation_runs[0]["worker"]["signature"]
             for implementation, implementation_runs in runs.items()
@@ -148,7 +173,12 @@ def main() -> None:
         reference = signatures["sklearn"]
         for implementation, signature in signatures.items():
             if len(signature) != len(reference) or any(
-                not math.isclose(expected, observed, rel_tol=1e-12, abs_tol=1e-12)
+                not math.isclose(
+                    expected,
+                    observed,
+                    rel_tol=signature_tolerance,
+                    abs_tol=signature_tolerance,
+                )
                 for expected, observed in zip(reference, signature, strict=True)
             ):
                 raise RuntimeError(
@@ -181,8 +211,8 @@ def main() -> None:
             ),
             "rss_sample_interval_seconds": 0.001,
             "signature_tolerance": (
-                {"absolute": 1e-12, "relative": 1e-12}
-                if scenario.get("workload") == "preprocessing"
+                {"absolute": signature_tolerance, "relative": signature_tolerance}
+                if signature_tolerance is not None
                 else None
             ),
             "thread_limit": scenario["thread_limit"],

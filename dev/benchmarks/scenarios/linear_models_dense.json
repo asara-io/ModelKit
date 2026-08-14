@@ -1,0 +1,18 @@
+{
+  "claim_eligible": false,
+  "dataset": {
+    "features": 12,
+    "samples": 10000,
+    "seed": 1729
+  },
+  "logistic_c": 1.7,
+  "logistic_max_iterations": 1000,
+  "logistic_solver": "newton-cholesky",
+  "logistic_tolerance": 1e-12,
+  "measured_runs": 3,
+  "ridge_alpha": 2.5,
+  "scenario": "linear_models_dense_v1",
+  "thread_limit": 1,
+  "warmup_runs": 1,
+  "workload": "linear_models"
+}

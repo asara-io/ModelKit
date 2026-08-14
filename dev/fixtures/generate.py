@@ -143,12 +143,125 @@ def generate_preprocessing_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_linear_model_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge
+
+    x_train = np.array(
+        [
+            [-2.0, 0.5, 1.0],
+            [-1.0, -1.5, 0.0],
+            [0.0, 2.0, -0.5],
+            [1.0, -0.5, 2.0],
+            [2.0, 1.5, 1.0],
+            [3.0, -2.0, -1.0],
+            [4.0, 0.25, 0.5],
+            [5.0, 2.5, -2.0],
+        ],
+        dtype=np.float64,
+    )
+    x_predict = np.array(
+        [
+            [-1.5, 0.0, 0.5],
+            [0.5, 1.0, -1.0],
+            [2.5, -1.0, 1.5],
+            [6.0, 0.75, -0.25],
+        ],
+        dtype=np.float64,
+    )
+    regression_target = np.array(
+        [-1.15, 0.4, -2.25, 2.6, 2.85, 8.3, 7.175, 4.0], dtype=np.float64
+    )
+    classification_target = np.array([-3, -3, -3, 7, 7, -3, 7, 7], dtype=np.int64)
+    sample_weight = np.array(
+        [1.0, 2.0, 0.5, 3.0, 1.5, 0.75, 2.5, 1.25], dtype=np.float64
+    )
+    ridge_alpha = 2.5
+    logistic_c = 1.7
+
+    linear = LinearRegression().fit(
+        x_train, regression_target, sample_weight=sample_weight
+    )
+    ridge = Ridge(alpha=ridge_alpha, solver="svd").fit(
+        x_train, regression_target, sample_weight=sample_weight
+    )
+    logistic = LogisticRegression(
+        C=logistic_c,
+        fit_intercept=True,
+        solver="lbfgs",
+        tol=1e-12,
+        max_iter=1000,
+    ).fit(x_train, classification_target, sample_weight=sample_weight)
+
+    rows = ["# ModelKit sklearn linear-model reference fixture v1"]
+
+    def add_matrix(name: str, matrix) -> None:
+        for index, row in enumerate(matrix):
+            rows.append(f"{name}\t{index}\t{float_values(row)}")
+
+    def add_vector(name: str, values) -> None:
+        rows.append(f"{name}\t{float_values(values)}")
+
+    add_matrix("x_train", x_train)
+    add_matrix("x_predict", x_predict)
+    add_vector("regression_target", regression_target)
+    add_vector("classification_target", classification_target)
+    add_vector("sample_weight", sample_weight)
+    add_vector("ridge_alpha", [ridge_alpha])
+    add_vector("logistic_c", [logistic_c])
+    add_vector("linear_coefficients", linear.coef_)
+    add_vector("linear_intercept", [linear.intercept_])
+    add_vector("linear_prediction", linear.predict(x_predict))
+    add_vector("ridge_coefficients", ridge.coef_)
+    add_vector("ridge_intercept", [ridge.intercept_])
+    add_vector("ridge_prediction", ridge.predict(x_predict))
+    add_vector("logistic_classes", logistic.classes_)
+    add_vector("logistic_coefficients", logistic.coef_[0])
+    add_vector("logistic_intercept", logistic.intercept_)
+    add_vector("logistic_decision", logistic.decision_function(x_predict))
+    add_matrix("logistic_probabilities", logistic.predict_proba(x_predict))
+    add_vector("logistic_prediction", logistic.predict(x_predict))
+
+    data_path = fixture_dir / "linear_models_v1.tsv"
+    metadata_path = fixture_dir / "linear_models_v1.metadata.json"
+    data_path.write_text("\n".join(rows) + "\n", encoding="utf-8", newline="\n")
+    metadata = {
+        "configuration": {
+            "features": x_train.shape[1],
+            "logistic_c": logistic_c,
+            "logistic_max_iter": 1000,
+            "logistic_solver": "lbfgs",
+            "logistic_tol": 1e-12,
+            "prediction_samples": x_predict.shape[0],
+            "ridge_alpha": ridge_alpha,
+            "samples": x_train.shape[0],
+            "weighted": True,
+        },
+        "environment": environment.metadata(),
+        "fixture": "linear_models_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.linear_model.LinearRegression",
+            "sklearn.linear_model.Ridge",
+            "sklearn.linear_model.LogisticRegression",
+        ],
+        "schema_version": 1,
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
     fixture_dir.mkdir(parents=True, exist_ok=True)
     generate_split_fixture(fixture_dir)
     generate_preprocessing_fixture(fixture_dir)
+    generate_linear_model_fixture(fixture_dir)
 
 
 if __name__ == "__main__":

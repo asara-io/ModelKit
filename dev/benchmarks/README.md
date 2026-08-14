@@ -43,3 +43,45 @@ The raw report is
 `results/preprocessing_dense_v1.darwin-arm64.json`. The scenario, toolchain
 versions, raw measurements, thread configuration, checksums, output signatures,
 and methodology are embedded in that file.
+
+## Dense linear models v1
+
+`linear_models_dense_v1` fits weighted ordinary least squares, weighted ridge,
+and weighted binary logistic regression, then predicts on the same deterministic
+10,000 by 12 float64 matrix in ModelKit and scikit-learn. ModelKit uses its
+portable column-pivoted Householder QR and damped Newton solvers; scikit-learn
+uses its default OLS implementation, SVD ridge solver, and Newton-Cholesky
+logistic solver. Both workers are sequential. Selected regression predictions,
+binary probabilities near the decision boundary, and predicted classes must
+agree within `1e-7` absolute and relative tolerance before a report is written.
+
+The harness performs one warmup and three interleaved measured runs in fresh
+processes, so timings include runtime startup, deterministic data generation,
+all three fits, and predictions. Peak RSS is sampled every millisecond, and the
+ModelKit worker reports OCaml heap allocation words.
+
+The committed macOS arm64 report recorded these medians:
+
+| Implementation | Wall time | Peak RSS |
+| --- | ---: | ---: |
+| ModelKit 0.3.0-dev / OCaml 5.3.0 | 0.286 s | 12,271,616 bytes |
+| scikit-learn 1.9.0 / Python 3.14.3 | 0.737 s | 131,121,152 bytes |
+
+This scenario is `claim_eligible: false`. It combines three algorithms and
+includes process startup and data generation, so it does not isolate solver
+throughput. It is local development evidence for correctness, deterministic
+output, allocations, and gross regressions—not support for a comparative
+performance claim.
+
+Build and run it from the repository root:
+
+```sh
+opam exec -- dune build bench/ocaml/linear_models_worker.exe
+env/bin/python dev/benchmarks/run.py \
+  --scenario dev/benchmarks/scenarios/linear_models_dense.json
+```
+
+The raw report is
+`results/linear_models_dense_v1.darwin-arm64.json`; it records every raw run,
+toolchain versions, thread limits, output signatures, allocations, and the full
+scenario.

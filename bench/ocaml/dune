@@ -1,3 +1,7 @@
 (executable
  (name preprocessing_worker)
  (libraries modelkit))
+
+(executable
+ (name linear_models_worker)
+ (libraries modelkit))
