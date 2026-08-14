@@ -165,6 +165,35 @@ let test_linear_row_duplication () =
     (Linear_regression.intercept original)
     (Linear_regression.intercept duplicated)
 
+let test_stratified_label_renaming () =
+  let x =
+    Result.get_ok
+      (Matrix.init ~rows:18 ~columns:1 (fun row _ -> Float.of_int row))
+  in
+  let original = Array.init 18 (fun row -> row mod 3) in
+  let renamed = Array.map (function 0 -> 70 | 1 -> -4 | _ -> 900) original in
+  let specification =
+    Stratified_k_fold.create ~folds:3 ~shuffle:true () |> get_ok
+  in
+  let split labels =
+    Stratified_k_fold.split specification
+      ~rng:(Rng.create (Seed.of_int 19))
+      ~x
+      ~y:(Some (Target.classification labels))
+      ()
+    |> get_ok
+    |> Array.map (fun (train, test) ->
+        (Row_view.indices train, Row_view.indices test))
+  in
+  let original = split original in
+  let renamed = split renamed in
+  Alcotest.check
+    (Alcotest.array
+       (Alcotest.pair
+          (Alcotest.array Alcotest.int)
+          (Alcotest.array Alcotest.int)))
+    "one-to-one label renaming preserves stratified membership" original renamed
+
 let () =
   Alcotest.run "metamorphic invariants"
     [
@@ -180,5 +209,7 @@ let () =
             test_linear_target_translation;
           Alcotest.test_case "linear row duplication" `Quick
             test_linear_row_duplication;
+          Alcotest.test_case "stratified label renaming" `Quick
+            test_stratified_label_renaming;
         ] );
     ]

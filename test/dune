@@ -25,6 +25,11 @@
  (libraries modelkit alcotest))
 
 (test
+ (name splitter_test)
+ (modules splitter_test)
+ (libraries modelkit alcotest))
+
+(test
  (name protocol_test)
  (modules protocol_test)
  (libraries modelkit alcotest))
@@ -63,6 +68,17 @@
   (setenv
    MODELKIT_SKLEARN_FIXTURE
    %{dep:fixtures/sklearn/stratified_kfold_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name sklearn_splitter_fixture_test)
+ (modules sklearn_splitter_fixture_test)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/splitters_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_SKLEARN_SPLITTER_FIXTURE
+   %{dep:fixtures/sklearn/splitters_v1.tsv}
    (run %{test}))))
 
 (test

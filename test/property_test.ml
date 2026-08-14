@@ -380,6 +380,112 @@ let logistic_probabilities_are_complementary =
               in
               valid 0))
 
+let splitter_rng () = Rng.create (Seed.of_int 37)
+
+let k_fold_partitions_every_sample_once =
+  QCheck.Test.make ~count:500
+    ~name:"K-fold partitions every row and tests each row exactly once"
+    QCheck.(pair nat_small nat_small)
+    (fun (extra_samples, raw_folds) ->
+      let samples = 2 + (extra_samples mod 64) in
+      let folds = 2 + (raw_folds mod (samples - 1)) in
+      let x =
+        Result.get_ok
+          (Matrix.init ~rows:samples ~columns:1 (fun row _ -> Float.of_int row))
+      in
+      match K_fold.create ~folds ~shuffle:true () with
+      | Error _ -> false
+      | Ok specification -> (
+          match
+            K_fold.split specification ~rng:(splitter_rng ()) ~x ~y:None ()
+          with
+          | Error _ -> false
+          | Ok splits ->
+              let test_occurrences = Array.make samples 0 in
+              let valid_partition (train, test) =
+                let occurrences = Array.make samples 0 in
+                Array.iter
+                  (fun row -> occurrences.(row) <- occurrences.(row) + 1)
+                  (Row_view.indices train);
+                Array.iter
+                  (fun row ->
+                    occurrences.(row) <- occurrences.(row) + 1;
+                    test_occurrences.(row) <- test_occurrences.(row) + 1)
+                  (Row_view.indices test);
+                Array.for_all (( = ) 1) occurrences
+              in
+              Array.length splits = folds
+              && Array.for_all valid_partition splits
+              && Array.for_all (( = ) 1) test_occurrences))
+
+let stratified_folds_balance_each_class =
+  QCheck.Test.make ~count:500
+    ~name:"stratified K-fold balances every class independently"
+    QCheck.(pair nat_small nat_small)
+    (fun (raw_per_class, raw_folds) ->
+      let per_class = 2 + (raw_per_class mod 32) in
+      let folds = 2 + (raw_folds mod (per_class - 1)) in
+      let samples = per_class * 3 in
+      let labels = Array.init samples (fun row -> row mod 3) in
+      let x =
+        Result.get_ok
+          (Matrix.init ~rows:samples ~columns:1 (fun row _ -> Float.of_int row))
+      in
+      let specification =
+        Stratified_k_fold.create ~folds ~shuffle:true () |> Result.get_ok
+      in
+      match
+        Stratified_k_fold.split specification ~rng:(splitter_rng ()) ~x
+          ~y:(Some (Target.classification labels))
+          ()
+      with
+      | Error _ -> false
+      | Ok splits ->
+          let counts = Array.make_matrix 3 folds 0 in
+          Array.iteri
+            (fun fold (_, test) ->
+              Array.iter
+                (fun row ->
+                  let label = labels.(row) in
+                  counts.(label).(fold) <- counts.(label).(fold) + 1)
+                (Row_view.indices test))
+            splits;
+          Array.for_all
+            (fun class_counts ->
+              let minimum = Array.fold_left Int.min max_int class_counts in
+              let maximum = Array.fold_left Int.max min_int class_counts in
+              maximum - minimum <= 1)
+            counts)
+
+let time_series_folds_never_train_on_the_future =
+  QCheck.Test.make ~count:500
+    ~name:"time-series split keeps every training row before its test window"
+    QCheck.(pair nat_small nat_small)
+    (fun (raw_test_size, raw_gap) ->
+      let test_size = 1 + (raw_test_size mod 8) in
+      let gap = raw_gap mod 5 in
+      let folds = 3 in
+      let samples = 1 + gap + (folds * test_size) + 7 in
+      let x =
+        Result.get_ok
+          (Matrix.init ~rows:samples ~columns:1 (fun row _ -> Float.of_int row))
+      in
+      let specification =
+        Time_series_split.create ~folds ~test_size ~gap () |> Result.get_ok
+      in
+      match
+        Time_series_split.split specification ~rng:(splitter_rng ()) ~x ~y:None
+          ()
+      with
+      | Error _ -> false
+      | Ok splits ->
+          Array.for_all
+            (fun (train, test) ->
+              let last_train = Row_view.get train (Row_view.length train - 1) in
+              let first_test = Row_view.get test 0 in
+              last_train + gap < first_test)
+            splits)
+
 let () =
   let random = Random.State.make [| 0x4d4f4445; 0x4c4b4954 |] in
   let failures =
@@ -396,6 +502,9 @@ let () =
         pipeline_matches_manual_preprocessing;
         ordinary_least_squares_recovers_exact_lines;
         logistic_probabilities_are_complementary;
+        k_fold_partitions_every_sample_once;
+        stratified_folds_balance_each_class;
+        time_series_folds_never_train_on_the_future;
       ]
   in
   if failures <> 0 then exit failures
