@@ -114,6 +114,57 @@ let test_preprocessing_row_permutation () =
     (Vector.to_array (Standard_scaler.variance original_scaler))
     (Vector.to_array (Standard_scaler.variance permuted_scaler))
 
+let fit_linear x target =
+  let schema = Result.get_ok (Feature_schema.of_matrix x) in
+  let target =
+    Target.regression (Vector.of_array target) |> function
+    | Ok target -> target
+    | Error error -> Alcotest.fail (Data_error.to_string error)
+  in
+  get_ok
+    (Linear_regression.fit
+       (Linear_regression.create ())
+       ~rng:(Rng.create (Seed.of_int 0))
+       ~feature_schema:schema ~x ~y:target ())
+
+let test_linear_target_translation () =
+  let x =
+    Result.get_ok
+      (Matrix.of_arrays
+         [| [| -2.0; 1.0 |]; [| -1.0; 0.0 |]; [| 1.0; 0.0 |]; [| 2.0; 1.0 |] |])
+  in
+  let original = fit_linear x [| -4.0; -1.0; 5.0; 8.0 |] in
+  let translated = fit_linear x [| 6.0; 9.0; 15.0; 18.0 |] in
+  Array.iter2
+    (check_float "target translation preserves coefficients")
+    (Linear_regression.coefficients original |> Vector.to_array)
+    (Linear_regression.coefficients translated |> Vector.to_array);
+  check_float "target translation shifts the intercept" 10.0
+    (Linear_regression.intercept translated
+    -. Linear_regression.intercept original)
+
+let test_linear_row_duplication () =
+  let original_x =
+    Result.get_ok (Matrix.of_arrays [| [| -1.0 |]; [| 0.0 |]; [| 2.0 |] |])
+  in
+  let duplicated_x =
+    Result.get_ok
+      (Matrix.of_arrays
+         [|
+           [| -1.0 |]; [| 0.0 |]; [| 2.0 |]; [| -1.0 |]; [| 0.0 |]; [| 2.0 |];
+         |])
+  in
+  let original = fit_linear original_x [| -1.0; 1.0; 5.0 |] in
+  let duplicated =
+    fit_linear duplicated_x [| -1.0; 1.0; 5.0; -1.0; 1.0; 5.0 |]
+  in
+  check_float "duplicating every row preserves the coefficient"
+    (Vector.get (Linear_regression.coefficients original) 0)
+    (Vector.get (Linear_regression.coefficients duplicated) 0);
+  check_float "duplicating every row preserves the intercept"
+    (Linear_regression.intercept original)
+    (Linear_regression.intercept duplicated)
+
 let () =
   Alcotest.run "metamorphic invariants"
     [
@@ -125,5 +176,9 @@ let () =
           Alcotest.test_case "transpose identity" `Quick test_transpose_identity;
           Alcotest.test_case "preprocessing row permutation" `Quick
             test_preprocessing_row_permutation;
+          Alcotest.test_case "linear target translation" `Quick
+            test_linear_target_translation;
+          Alcotest.test_case "linear row duplication" `Quick
+            test_linear_row_duplication;
         ] );
     ]

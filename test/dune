@@ -20,6 +20,11 @@
  (libraries modelkit alcotest))
 
 (test
+ (name linear_model_test)
+ (modules linear_model_test)
+ (libraries modelkit alcotest))
+
+(test
  (name protocol_test)
  (modules protocol_test)
  (libraries modelkit alcotest))
@@ -69,4 +74,15 @@
   (setenv
    MODELKIT_SKLEARN_PREPROCESSING_FIXTURE
    %{dep:fixtures/sklearn/preprocessing_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name sklearn_linear_model_fixture_test)
+ (modules sklearn_linear_model_fixture_test)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/linear_models_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_SKLEARN_LINEAR_MODEL_FIXTURE
+   %{dep:fixtures/sklearn/linear_models_v1.tsv}
    (run %{test}))))

@@ -305,6 +305,81 @@ let pipeline_matches_manual_preprocessing =
         | None, None -> true
         | Some _, None | None, Some _ -> false)
 
+let linear_model_rng () = Rng.create (Seed.of_int 29)
+
+let ordinary_least_squares_recovers_exact_lines =
+  QCheck.Test.make ~count:500
+    ~name:"ordinary least squares recovers finite exact one-dimensional lines"
+    QCheck.(triple (int_range (-100) 100) (int_range (-100) 100) nat_small)
+    (fun (slope, intercept, extra_rows) ->
+      let rows = 2 + (extra_rows mod 30) in
+      let slope = Float.of_int slope in
+      let intercept = Float.of_int intercept in
+      let x =
+        Result.get_ok
+          (Matrix.init ~rows ~columns:1 (fun row _ -> Float.of_int row))
+      in
+      let feature_schema = Result.get_ok (Feature_schema.of_matrix x) in
+      let target =
+        Vector.init ~length:rows (fun row ->
+            (slope *. Float.of_int row) +. intercept)
+        |> Result.get_ok |> Target.regression |> Result.get_ok
+      in
+      match
+        Linear_regression.fit
+          (Linear_regression.create ())
+          ~rng:(linear_model_rng ()) ~feature_schema ~x ~y:target ()
+      with
+      | Error _ -> false
+      | Ok fitted ->
+          Float.abs
+            (Vector.get (Linear_regression.coefficients fitted) 0 -. slope)
+          <= 1e-9
+          && Float.abs (Linear_regression.intercept fitted -. intercept) <= 1e-9)
+
+let logistic_probabilities_are_complementary =
+  QCheck.Test.make ~count:200
+    ~name:"binary logistic probabilities are finite complements"
+    QCheck.(pair int_pos nat_small)
+    (fun (raw_c, extra_rows) ->
+      let pairs = 1 + (extra_rows mod 12) in
+      let rows = pairs * 2 in
+      let x =
+        Result.get_ok
+          (Matrix.init ~rows ~columns:1 (fun row _ ->
+               if row < pairs then -.Float.of_int (pairs - row)
+               else Float.of_int (row - pairs + 1)))
+      in
+      let feature_schema = Result.get_ok (Feature_schema.of_matrix x) in
+      let specification =
+        Logistic_regression.create ~c:(0.1 +. Float.of_int (raw_c mod 20)) ()
+        |> Result.get_ok
+      in
+      let target =
+        Target.classification
+          (Array.init rows (fun row -> if row < pairs then 0 else 1))
+      in
+      match
+        Logistic_regression.fit specification ~rng:(linear_model_rng ())
+          ~feature_schema ~x ~y:target ()
+      with
+      | Error _ -> false
+      | Ok fitted -> (
+          match Logistic_regression.predict_proba fitted ~feature_schema ~x with
+          | Error _ -> false
+          | Ok probabilities ->
+              let rec valid row =
+                row = rows
+                ||
+                let left = Matrix.get probabilities row 0 in
+                let right = Matrix.get probabilities row 1 in
+                Float.is_finite left && Float.is_finite right && left >= 0.0
+                && left <= 1.0 && right >= 0.0 && right <= 1.0
+                && Float.abs (left +. right -. 1.0) <= 1e-15
+                && valid (row + 1)
+              in
+              valid 0))
+
 let () =
   let random = Random.State.make [| 0x4d4f4445; 0x4c4b4954 |] in
   let failures =
@@ -319,6 +394,8 @@ let () =
         scaler_normalizes_nonconstant_columns;
         variance_threshold_removes_constant_column;
         pipeline_matches_manual_preprocessing;
+        ordinary_least_squares_recovers_exact_lines;
+        logistic_probabilities_are_complementary;
       ]
   in
   if failures <> 0 then exit failures
