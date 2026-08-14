@@ -105,6 +105,25 @@ def worker_commands(scenario: dict[str, object], scenario_path: Path) -> dict[st
             str(scenario["logistic_tolerance"]),
             str(scenario["logistic_max_iterations"]),
         ]
+    elif workload == "splitters":
+        modelkit_worker = (
+            ROOT / "_build" / "default" / "bench" / "ocaml" / "splitters_worker.exe"
+        )
+        if not modelkit_worker.exists():
+            raise RuntimeError(
+                "ModelKit benchmark worker is missing; run "
+                "`opam exec -- dune build bench/ocaml/splitters_worker.exe`"
+            )
+        dataset = scenario["dataset"]
+        commands["modelkit"] = [
+            str(modelkit_worker),
+            str(dataset["samples"]),
+            str(scenario["folds"]),
+            str(dataset["classes"]),
+            str(dataset["group_size"]),
+            str(scenario["time_test_size"]),
+            str(scenario["time_gap"]),
+        ]
     return commands
 
 
@@ -164,6 +183,7 @@ def main() -> None:
     signature_tolerance = {
         "preprocessing": 1e-12,
         "linear_models": 1e-7,
+        "splitters": 0.0,
     }.get(scenario.get("workload"))
     if signature_tolerance is not None:
         signatures = {

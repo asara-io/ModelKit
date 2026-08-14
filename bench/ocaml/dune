@@ -5,3 +5,7 @@
 (executable
  (name linear_models_worker)
  (libraries modelkit))
+
+(executable
+ (name splitters_worker)
+ (libraries modelkit))

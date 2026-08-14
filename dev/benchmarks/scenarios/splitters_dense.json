@@ -1,0 +1,16 @@
+{
+  "claim_eligible": false,
+  "dataset": {
+    "classes": 3,
+    "group_size": 20,
+    "samples": 100000
+  },
+  "folds": 5,
+  "measured_runs": 3,
+  "scenario": "splitters_dense_v1",
+  "thread_limit": 1,
+  "time_gap": 100,
+  "time_test_size": 10000,
+  "warmup_runs": 1,
+  "workload": "splitters"
+}

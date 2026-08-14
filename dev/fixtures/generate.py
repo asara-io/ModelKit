@@ -62,6 +62,94 @@ def generate_split_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_splitter_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.model_selection import (
+        GroupKFold,
+        KFold,
+        StratifiedKFold,
+        TimeSeriesSplit,
+    )
+
+    k_fold_samples = 11
+    stratified_target = np.array(
+        [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2],
+        dtype=np.int64,
+    )
+    group_values = np.array(
+        [10] * 6 + [20] * 5 + [30] * 4 + [40] * 3 + [50] * 2 + [60] * 2,
+        dtype=np.int64,
+    )
+    time_samples = 12
+    folds = 3
+
+    k_fold = list(KFold(n_splits=folds, shuffle=False).split(np.zeros(k_fold_samples)))
+    stratified = list(
+        StratifiedKFold(n_splits=folds, shuffle=False).split(
+            np.zeros(len(stratified_target)), stratified_target
+        )
+    )
+    grouped = list(
+        GroupKFold(n_splits=folds).split(
+            np.zeros(len(group_values)), groups=group_values
+        )
+    )
+    time_series = list(
+        TimeSeriesSplit(n_splits=folds, test_size=2, gap=1).split(
+            np.zeros(time_samples)
+        )
+    )
+
+    rows = ["# ModelKit sklearn splitter reference fixture v1"]
+
+    def add_vector(name: str, values) -> None:
+        rows.append(f"{name}\t{comma_separated(values)}")
+
+    def add_splits(name: str, splits) -> None:
+        for index, (train, test) in enumerate(splits):
+            rows.append(f"{name}_train\t{index}\t{comma_separated(train)}")
+            rows.append(f"{name}_test\t{index}\t{comma_separated(test)}")
+
+    add_vector("k_fold_sample_count", [k_fold_samples])
+    add_splits("k_fold", k_fold)
+    add_vector("stratified_target", stratified_target)
+    add_splits("stratified", stratified)
+    add_vector("group_values", group_values)
+    add_splits("group", grouped)
+    add_vector("time_sample_count", [time_samples])
+    add_splits("time", time_series)
+
+    data_path = fixture_dir / "splitters_v1.tsv"
+    metadata_path = fixture_dir / "splitters_v1.metadata.json"
+    data_path.write_text("\n".join(rows) + "\n", encoding="utf-8", newline="\n")
+    metadata = {
+        "configuration": {
+            "folds": folds,
+            "group_shuffle": False,
+            "k_fold_shuffle": False,
+            "stratified_shuffle": False,
+            "time_gap": 1,
+            "time_test_size": 2,
+        },
+        "environment": environment.metadata(),
+        "fixture": "splitters_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.model_selection.KFold",
+            "sklearn.model_selection.StratifiedKFold",
+            "sklearn.model_selection.GroupKFold",
+            "sklearn.model_selection.TimeSeriesSplit",
+        ],
+        "schema_version": 1,
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def generate_preprocessing_fixture(fixture_dir: Path) -> None:
     import numpy as np
     from sklearn.feature_selection import VarianceThreshold
@@ -260,6 +348,7 @@ def main() -> None:
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
     fixture_dir.mkdir(parents=True, exist_ok=True)
     generate_split_fixture(fixture_dir)
+    generate_splitter_fixture(fixture_dir)
     generate_preprocessing_fixture(fixture_dir)
     generate_linear_model_fixture(fixture_dir)
 

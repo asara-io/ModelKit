@@ -171,6 +171,64 @@ def linear_models(scenario: dict[str, object]) -> dict[str, object]:
     }
 
 
+def splitters(scenario: dict[str, object]) -> dict[str, object]:
+    import numpy as np
+    from sklearn.model_selection import (
+        GroupKFold,
+        KFold,
+        StratifiedKFold,
+        TimeSeriesSplit,
+    )
+
+    dataset = scenario["dataset"]
+    samples = dataset["samples"]
+    folds = scenario["folds"]
+    x = np.zeros((samples, 1), dtype=np.float64)
+    target = np.arange(samples, dtype=np.int64) % dataset["classes"]
+    groups = np.arange(samples, dtype=np.int64) // dataset["group_size"]
+    split_values = [
+        list(KFold(n_splits=folds, shuffle=False).split(x)),
+        list(StratifiedKFold(n_splits=folds, shuffle=False).split(x, target)),
+        list(GroupKFold(n_splits=folds).split(x, groups=groups)),
+        list(
+            TimeSeriesSplit(
+                n_splits=folds,
+                test_size=scenario["time_test_size"],
+                gap=scenario["time_gap"],
+            ).split(x)
+        ),
+    ]
+
+    def statistics(splits) -> list[int]:
+        train_sizes = [len(train) for train, _ in splits]
+        test_sizes = [len(test) for _, test in splits]
+        return [
+            len(splits),
+            sum(train_sizes),
+            sum(test_sizes),
+            min(test_sizes),
+            max(test_sizes),
+        ]
+
+    signature = [value for splits in split_values for value in statistics(splits)]
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(
+            np.asarray(signature, dtype="<i8").tobytes()
+        ).hexdigest(),
+        "folds": folds,
+        "operations": [
+            "k_fold",
+            "stratified_k_fold",
+            "group_k_fold",
+            "time_series_split",
+        ],
+        "samples": samples,
+        "signature": signature,
+        "threadpools": threadpools(),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("scenario", type=Path)
@@ -183,6 +241,8 @@ def main() -> None:
         result = preprocessing(scenario)
     elif workload == "linear_models":
         result = linear_models(scenario)
+    elif workload == "splitters":
+        result = splitters(scenario)
     else:
         raise ValueError(f"unknown workload {workload!r}")
     print(json.dumps(result))

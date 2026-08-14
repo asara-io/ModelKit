@@ -85,3 +85,41 @@ The raw report is
 `results/linear_models_dense_v1.darwin-arm64.json`; it records every raw run,
 toolchain versions, thread limits, output signatures, allocations, and the full
 scenario.
+
+## Dense splitters v1
+
+`splitters_dense_v1` generates five folds from the same deterministic 100,000
+row input using K-fold, stratified K-fold, group K-fold, and expanding-window
+time-series splitting in ModelKit and scikit-learn. Both workers are sequential.
+Fold counts, total train/test membership, and minimum/maximum test sizes must
+agree exactly before a report is written.
+
+The harness performs one warmup and three interleaved measured runs in fresh
+processes. Timings include runtime startup, input and metadata allocation, and
+all four splitter calls. Peak RSS is sampled every millisecond, and the ModelKit
+worker reports OCaml heap allocation words.
+
+The committed macOS arm64 report recorded these medians:
+
+| Implementation | Wall time | Peak RSS |
+| --- | ---: | ---: |
+| ModelKit 0.3.0-dev / OCaml 5.3.0 | 0.057 s | 38,633,472 bytes |
+| scikit-learn 1.9.0 / Python 3.14.3 | 0.708 s | 136,773,632 bytes |
+
+This scenario is `claim_eligible: false`. It combines four splitters and
+includes process startup and input generation. It records correctness,
+determinism, allocation, and gross regression evidence only; it cannot support
+a comparative performance claim.
+
+Build and run it from the repository root:
+
+```sh
+opam exec -- dune build bench/ocaml/splitters_worker.exe
+env/bin/python dev/benchmarks/run.py \
+  --scenario dev/benchmarks/scenarios/splitters_dense.json
+```
+
+The raw report is
+`results/splitters_dense_v1.darwin-arm64.json`; it includes every raw run,
+toolchain versions, the exact signature, thread limits, allocations, and the
+full scenario.
