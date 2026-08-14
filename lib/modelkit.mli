@@ -710,3 +710,123 @@ module Pipeline : sig
   val input_schema : ('target, 'prediction) fitted -> Feature_schema.t
   val output_schema : ('target, 'prediction) fitted -> Feature_schema.t
 end
+
+(** Diagnostics retained by fitted numerical estimators.
+
+    [rank] is present when the solver computes a meaningful numerical rank;
+    iterative solvers return [None]. *)
+module Solver_report : sig
+  type stopping_reason = Direct_solution | Gradient_tolerance | Step_tolerance
+  type t
+
+  val converged : t -> bool
+  val iterations : t -> int
+  val objective : t -> float
+  val stopping_reason : t -> stopping_reason
+  val rank : t -> int option
+end
+
+(** Weighted ordinary least squares using column-pivoted Householder QR.
+
+    The solver never forms normal equations. It reports numerical rank and
+    returns a deterministic basic least-squares solution for rank-deficient
+    inputs. The optional intercept is fitted without regularization. Fit costs
+    [O(samples * features squared)] and prediction costs
+    [O(samples * features)]. *)
+module Linear_regression : sig
+  type params = { fit_intercept : bool }
+  type t
+  type fitted
+
+  val create : ?fit_intercept:bool -> unit -> t
+  val coefficients : fitted -> Vector.t
+  val intercept : fitted -> float
+  val report : fitted -> Solver_report.t
+
+  include
+    REGRESSOR
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Weighted L2-regularized least squares.
+
+    [alpha] must be finite and non-negative. Coefficients, but not the optional
+    intercept, receive the penalty. The portable solver uses an augmented
+    least-squares system and column-pivoted Householder QR rather than normal
+    equations. Fit costs [O(samples * features squared)] and prediction costs
+    [O(samples * features)]. *)
+module Ridge_regression : sig
+  type params = { alpha : float; fit_intercept : bool }
+  type t
+  type fitted
+
+  val create :
+    ?alpha:float -> ?fit_intercept:bool -> unit -> (t, Error.t) result
+
+  val coefficients : fitted -> Vector.t
+  val intercept : fitted -> float
+  val report : fitted -> Solver_report.t
+
+  include
+    REGRESSOR
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Weighted binary logistic regression with an L2 coefficient penalty.
+
+    Exactly two positively weighted integer classes are supported and stored in
+    ascending order. [c] is the positive inverse regularization strength. Stable
+    sigmoid and softplus formulas avoid overflow. Deterministic damped Newton
+    iterations stop on gradient or step tolerance; exhausting [max_iterations]
+    is a typed convergence failure. Fit costs
+    [O(iterations * samples * features squared)] and prediction costs
+    [O(samples * features)]. *)
+module Logistic_regression : sig
+  type params = {
+    c : float;
+    fit_intercept : bool;
+    tolerance : float;
+    max_iterations : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?c:float ->
+    ?fit_intercept:bool ->
+    ?tolerance:float ->
+    ?max_iterations:int ->
+    unit ->
+    (t, Error.t) result
+
+  val coefficients : fitted -> Vector.t
+  val intercept : fitted -> float
+  val classes : fitted -> int array
+  val report : fitted -> Solver_report.t
+
+  val decision_function :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Vector.t, Error.t) result
+
+  val predict_proba :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  include
+    CLASSIFIER
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end
