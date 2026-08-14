@@ -830,3 +830,107 @@ module Logistic_regression : sig
        and type fitted := fitted
        and type rng = Rng.t
 end
+
+(** A validated train/test selection over one aligned source.
+
+    Train and test rows must be non-empty, unique within each partition,
+    disjoint, and aligned to the same source size. [materialize] explicitly
+    copies both selections into independent aligned datasets; constructing or
+    inspecting a split does not copy dataset buffers. *)
+module Split : sig
+  type t
+
+  val create :
+    source_size:int -> train:int array -> test:int array -> (t, Error.t) result
+
+  val of_views : train:Row_view.t -> test:Row_view.t -> (t, Error.t) result
+  val train : t -> Row_view.t
+  val test : t -> Row_view.t
+
+  val materialize :
+    'kind Dataset.t -> t -> ('kind Dataset.t * 'kind Dataset.t, Error.t) result
+end
+
+(** Deterministic K-fold partitions.
+
+    Every sample occurs in exactly one test fold. Fold sizes differ by at most
+    one, with larger folds first. Optional shuffling changes membership using
+    the supplied immutable random stream; emitted train and test views retain
+    source-row order. Materializing all views requires [O(folds * samples)]
+    indices. *)
+module K_fold : sig
+  type params = { folds : int; shuffle : bool }
+  type t
+
+  val create : ?folds:int -> ?shuffle:bool -> unit -> (t, Error.t) result
+
+  include
+    SPLITTER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type rng = Rng.t
+end
+
+(** Deterministic class-stratified K-fold partitions.
+
+    Per-class test counts differ by at most one across folds. Optional shuffling
+    occurs independently within each class from the supplied random stream;
+    emitted row views retain source order. The classification target is required
+    and must align with the feature rows. *)
+module Stratified_k_fold : sig
+  type params = { folds : int; shuffle : bool }
+  type t
+
+  val create : ?folds:int -> ?shuffle:bool -> unit -> (t, Error.t) result
+
+  include
+    SPLITTER
+      with type t := t
+       and type params := params
+       and type target = Target.classification Target.t
+       and type rng = Rng.t
+end
+
+(** Deterministic non-overlapping group K-fold partitions.
+
+    Each distinct group occurs in one test fold. Groups are assigned in
+    descending sample-count order to the currently smallest fold. Equal-sized
+    groups use descending integer-label order and fold ties select the lowest
+    fold, matching unshuffled scikit-learn membership. The group vector is
+    required and must align with the feature rows. *)
+module Group_k_fold : sig
+  type params = { folds : int }
+  type t
+
+  val create : ?folds:int -> unit -> (t, Error.t) result
+
+  include
+    SPLITTER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type rng = Rng.t
+end
+
+(** Expanding-window time-series partitions.
+
+    Training rows are an expanding prefix and test rows are the following
+    fixed-size contiguous window. [gap] rows immediately before each test window
+    belong to neither partition. When [test_size] is omitted, it is
+    [samples / (folds + 1)]. Split generation is chronological and does not use
+    the supplied random stream. *)
+module Time_series_split : sig
+  type params = { folds : int; test_size : int option; gap : int }
+  type t
+
+  val create :
+    ?folds:int -> ?test_size:int -> ?gap:int -> unit -> (t, Error.t) result
+
+  include
+    SPLITTER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type rng = Rng.t
+end
