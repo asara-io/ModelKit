@@ -17,8 +17,11 @@ population standardization, and variance-threshold feature filtering are
 available as immutable specifications with distinct fitted states. Sequential
 {!Modelkit.Pipeline} values fit those stages only on their training input,
 preserve feature schemas, derive stage-local random streams, and dispatch
-terminal prediction capabilities. Concrete estimators and end-to-end evaluation
-will arrive in later checklist items.
+terminal prediction capabilities. Weighted ordinary least squares and ridge
+regression use the portable rank-revealing QR solver. Weighted binary logistic
+regression uses stable sigmoid and softplus formulas with deterministic damped
+Newton iterations. Each fitted estimator exposes coefficients, an intercept,
+and a {!Modelkit.Solver_report}; end-to-end evaluation remains future work.
 Portable tests consume committed scikit-learn reference data without requiring
 Python during a normal build or test run.
 
@@ -75,12 +78,35 @@ val scale_stage : Pipeline.transformer = <abstr>
       (fun builder -> Pipeline.add_transformer builder scale_stage)
     |> Result.get_ok;;
 val pipeline_steps : Pipeline.builder = <abstr>
+# let logistic = Logistic_regression.create () |> Result.get_ok;;
+val logistic : Logistic_regression.t = <abstr>
+# let terminal =
+    Pipeline.estimator ~name:"logistic" (module Logistic_regression)
+      ~decision_function:Logistic_regression.decision_function
+      ~predict_proba:Logistic_regression.predict_proba logistic
+    |> Result.get_ok;;
+val terminal :
+  (Logistic_regression.target, Logistic_regression.prediction)
+  Pipeline.estimator = <abstr>
+# let pipeline = Pipeline.set_estimator pipeline_steps terminal |> Result.get_ok;;
+val pipeline :
+  (Logistic_regression.target, Logistic_regression.prediction) Pipeline.t =
+  <abstr>
+# let fitted =
+    Pipeline.fit pipeline ~rng:(Rng.create (Seed.of_int 42))
+      ~feature_schema:schema ~x ~y ()
+    |> Result.get_ok;;
+val fitted :
+  (Logistic_regression.target, Logistic_regression.prediction)
+  Pipeline.fitted = <abstr>
+# Pipeline.predict fitted ~feature_schema:schema ~x
+  |> Result.get_ok |> Target.classification_values;;
+- : int array = [|0; 1|]
 ]}
 
 The current pipeline routes targets and sample weights to its terminal
-estimator. Its unsupervised preprocessing stages receive neither. Built-in
-linear estimators arrive in the next checklist item; external estimators can
-already participate by implementing {!Modelkit.ESTIMATOR}.
+estimator. Its unsupervised preprocessing stages receive neither. External
+estimators can also participate by implementing {!Modelkit.ESTIMATOR}.
 
 The reference backend preserves small terms that ordinary floating-point
 summation can lose to cancellation:

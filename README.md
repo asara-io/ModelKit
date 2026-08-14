@@ -14,6 +14,7 @@ Python users of `scikit-learn` will find this library familiar in serving the sa
 - Dense datasets admit aligned features, targets, weights, groups, and names under an explicit finiteness policy; stable schema fingerprints and copy/view reports make compatibility and allocation behavior observable.
 - Immutable preprocessing specifications fit mean, median, or constant imputation, population standardization, and variance-based feature filtering without changing or losing feature identities.
 - Sequential pipelines fit preprocessing only on their training input, preserve schemas through ordered stages, and dispatch prediction, decision, and probability operations through an explicitly capable terminal estimator.
+- Portable weighted ordinary least squares, ridge regression, and binary logistic regression keep immutable specifications separate from fitted coefficients and solver diagnostics.
 
 ## Motivation and Future Work
 
@@ -25,7 +26,7 @@ Anticipating performance benefits from existing work such as using Owl for a num
 
 ## Status
 
-ModelKit 0.2.1 is the current foundation release and adds OCaml 5.5 build support to the 0.2.0 capabilities. The `0.3.x` development branch now includes immutable dense dataset admission, explicit `Require_finite` and `Allow_nan` feature policies, aligned zero-copy row views, stable versioned schema fingerprints, and explicit copy/view reporting. `Allow_nan` treats NaN as a missing-value marker but still rejects positive and negative infinity.
+ModelKit 0.2.1 is the current foundation release and adds OCaml 5.5 build support. The `0.3.x` development branch now includes immutable dense dataset admission, explicit `Require_finite` and `Allow_nan` feature policies, aligned zero-copy row views, stable versioned schema fingerprints, and explicit copy/view reporting. `Allow_nan` treats NaN as a missing-value marker but still rejects positive and negative infinity.
 
 Dataset row views preserve ordering and duplicates without packing feature or metadata buffers. Use `Dataset.materialize` when an algorithm requires contiguous selected rows; its access report identifies the resulting copies.
 
@@ -33,7 +34,27 @@ The development API also provides `Simple_imputer`, `Standard_scaler`, and `Vari
 
 `Pipeline` now packages these unsupervised transformers with any implementation of ModelKit's public `ESTIMATOR` protocol. Fitting learns every preprocessing stage exclusively from the supplied training matrix, then fits the terminal estimator on the transformed training output. The fitted pipeline reuses those exact stage values for `transform`, `predict`, `decision_function`, and `predict_proba`; unavailable terminal capabilities and named-stage failures are typed errors. Feature schemas are checked at the pipeline boundary and propagated after every transformation. Fixed root RNG state produces stage-local streams derived from stable logical names and positions.
 
-In the current pipeline contract, sample weights route to the terminal estimator and are not passed to the current unsupervised transformers. General transformer metadata routing remains planned for a later milestone. Concrete OLS, ridge, and logistic-regression terminals are the next implementation item, so current users must supply a protocol-compatible estimator module. Cross-validation, fitted artifacts, and the finished end-to-end workflow are not yet implemented.
+`Linear_regression` fits weighted ordinary least squares with column-pivoted Householder QR and reports numerical rank, including for rank-deficient input. `Ridge_regression` solves an augmented least-squares system without forming normal equations and applies its non-negative `alpha` penalty only to coefficients. Both expose fitted coefficients, intercepts, and direct-solver reports.
+
+`Logistic_regression` supports exactly two integer classes, optional sample weights, an L2 coefficient penalty controlled by positive inverse strength `c`, and stable decision/probability calculations for extreme logits. Its deterministic damped Newton fit reports objective, iteration count, and stopping reason; iteration exhaustion and invalid training data are typed errors. All three estimators accept only finite feature values, so missing values must be handled by an imputer or before fitting.
+
+Built-in logistic regression can be installed as a pipeline terminal with its optional capabilities:
+
+```ocaml
+let logistic = Logistic_regression.create () |> Result.get_ok
+
+let terminal =
+  Pipeline.estimator ~name:"logistic"
+    (module Logistic_regression)
+    ~decision_function:Logistic_regression.decision_function
+    ~predict_proba:Logistic_regression.predict_proba logistic
+  |> Result.get_ok
+
+let specification =
+  Pipeline.set_estimator Pipeline.empty terminal |> Result.get_ok
+```
+
+In the current pipeline contract, sample weights route to the terminal estimator and are not passed to the current unsupervised transformers. General transformer metadata routing remains planned for a later milestone. Cross-validation, fitted artifacts, and the finished end-to-end workflow are not yet implemented.
 
 The portable package lives under `lib/`. Optional ecosystem adapters and accelerated backends are reserved under `adapters/` and `backends/`; they will remain separate packages that depend on the portable core when implemented.
 
@@ -94,7 +115,7 @@ python dev/fixtures/generate.py
 python dev/benchmarks/run.py
 ```
 
-The committed smoke benchmark validates the measurement workflow only. The development preprocessing benchmark compares the current native transformers with their pinned scikit-learn references on a deterministic dense workload; build its OCaml worker and pass `--scenario dev/benchmarks/scenarios/preprocessing_dense.json` to the benchmark runner. Both reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for scope, raw-result links, and limitations. Release comparisons will use the product plan's independent-CI benchmark contract.
+The committed smoke benchmark validates the measurement workflow only. The development preprocessing and dense-linear-model benchmarks compare portable ModelKit operations with pinned scikit-learn references on deterministic workloads. Build the corresponding OCaml worker and select either `dev/benchmarks/scenarios/preprocessing_dense.json` or `dev/benchmarks/scenarios/linear_models_dense.json`. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for scope, raw-result links, and limitations. Release comparisons will use the product plan's independent-CI benchmark contract.
 
 ## Project Policies
 
