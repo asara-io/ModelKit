@@ -21,7 +21,11 @@ terminal prediction capabilities. Weighted ordinary least squares and ridge
 regression use the portable rank-revealing QR solver. Weighted binary logistic
 regression uses stable sigmoid and softplus formulas with deterministic damped
 Newton iterations. Each fitted estimator exposes coefficients, an intercept,
-and a {!Modelkit.Solver_report}; end-to-end evaluation remains future work.
+and a {!Modelkit.Solver_report}. K-fold, stratified K-fold, group K-fold, and
+expanding-window time-series splitters produce validated source-row views;
+{!Modelkit.Split.materialize} is the explicit boundary for copying train and
+test selections into aligned datasets. End-to-end evaluation remains future
+work.
 Portable tests consume committed scikit-learn reference data without requiring
 Python during a normal build or test run.
 
@@ -102,6 +106,16 @@ val fitted :
 # Pipeline.predict fitted ~feature_schema:schema ~x
   |> Result.get_ok |> Target.classification_values;;
 - : int array = [|0; 1|]
+# let splitter = Stratified_k_fold.create ~folds:2 () |> Result.get_ok;;
+val splitter : Stratified_k_fold.t = <abstr>
+# let splits =
+    Stratified_k_fold.split splitter ~rng:(Rng.create (Seed.of_int 42))
+      ~x ~y:(Some y) ()
+    |> Result.get_ok;;
+val splits : (Row_view.t * Row_view.t) array =
+  [|(<abstr>, <abstr>); (<abstr>, <abstr>)|]
+# Array.map (fun (_, test) -> Row_view.indices test) splits;;
+- : int array array = [|[|0|]; [|1|]|]
 ]}
 
 The current pipeline routes targets and sample weights to its terminal

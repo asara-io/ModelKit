@@ -15,6 +15,7 @@ Python users of `scikit-learn` will find this library familiar in serving the sa
 - Immutable preprocessing specifications fit mean, median, or constant imputation, population standardization, and variance-based feature filtering without changing or losing feature identities.
 - Sequential pipelines fit preprocessing only on their training input, preserve schemas through ordered stages, and dispatch prediction, decision, and probability operations through an explicitly capable terminal estimator.
 - Portable weighted ordinary least squares, ridge regression, and binary logistic regression keep immutable specifications separate from fitted coefficients and solver diagnostics.
+- Deterministic K-fold, stratified K-fold, group K-fold, and expanding-window time-series splitters produce validated row views that can be explicitly materialized as aligned datasets.
 
 ## Motivation and Future Work
 
@@ -55,6 +56,10 @@ let specification =
 ```
 
 In the current pipeline contract, sample weights route to the terminal estimator and are not passed to the current unsupervised transformers. General transformer metadata routing remains planned for a later milestone. Cross-validation, fitted artifacts, and the finished end-to-end workflow are not yet implemented.
+
+`K_fold`, `Stratified_k_fold`, `Group_k_fold`, and `Time_series_split` now provide the portable splitting primitives needed by evaluation workflows. K-fold variants balance test sizes; stratification balances each integer class; group splitting prevents a group from crossing train/test boundaries; and time-series splitting uses expanding chronological training prefixes with optional gaps. Shuffled variants use ModelKit’s immutable deterministic RNG and retain source-row order in emitted views.
+
+`Split.create` and `Split.of_views` validate non-empty, unique, disjoint train/test selections over one source. `Split.materialize` is the explicit allocation boundary that copies those selections into independent datasets while retaining targets, feature names, sample weights, groups, and schema identity. Cross-validation orchestration and scoring remain subsequent work.
 
 The portable package lives under `lib/`. Optional ecosystem adapters and accelerated backends are reserved under `adapters/` and `backends/`; they will remain separate packages that depend on the portable core when implemented.
 
@@ -115,7 +120,7 @@ python dev/fixtures/generate.py
 python dev/benchmarks/run.py
 ```
 
-The committed smoke benchmark validates the measurement workflow only. The development preprocessing and dense-linear-model benchmarks compare portable ModelKit operations with pinned scikit-learn references on deterministic workloads. Build the corresponding OCaml worker and select either `dev/benchmarks/scenarios/preprocessing_dense.json` or `dev/benchmarks/scenarios/linear_models_dense.json`. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for scope, raw-result links, and limitations. Release comparisons will use the product plan's independent-CI benchmark contract.
+The committed smoke benchmark validates the measurement workflow only. The development preprocessing, dense-linear-model, and splitter benchmarks compare portable ModelKit operations with pinned scikit-learn references on deterministic workloads. Build the corresponding OCaml worker and select `dev/benchmarks/scenarios/preprocessing_dense.json`, `dev/benchmarks/scenarios/linear_models_dense.json`, or `dev/benchmarks/scenarios/splitters_dense.json`. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for scope, raw-result links, and limitations. Release comparisons will use the product plan's independent-CI benchmark contract.
 
 ## Project Policies
 
