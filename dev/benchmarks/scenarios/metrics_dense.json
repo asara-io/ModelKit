@@ -1,0 +1,11 @@
+{
+  "claim_eligible": false,
+  "dataset": {
+    "samples": 100000
+  },
+  "measured_runs": 3,
+  "scenario": "metrics_dense_v1",
+  "thread_limit": 1,
+  "warmup_runs": 1,
+  "workload": "metrics"
+}

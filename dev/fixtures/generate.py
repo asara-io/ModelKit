@@ -150,6 +150,169 @@ def generate_splitter_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_metrics_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.metrics import (
+        accuracy_score,
+        balanced_accuracy_score,
+        f1_score,
+        log_loss,
+        mean_absolute_error,
+        mean_squared_error,
+        precision_recall_curve,
+        precision_score,
+        r2_score,
+        recall_score,
+        roc_auc_score,
+        roc_curve,
+        root_mean_squared_error,
+    )
+
+    regression_truth = np.array([1.0, 2.0, 4.0, 8.0, 16.0])
+    regression_prediction = np.array([1.5, 1.0, 5.0, 7.0, 18.0])
+    regression_weight = np.array([1.0, 2.0, 0.5, 3.0, 1.5])
+    classification_truth = np.array([0, 1, 0, 1, 1, 0, 1, 0])
+    classification_prediction = np.array([0, 1, 1, 1, 0, 0, 1, 0])
+    positive_probability = np.array([0.05, 0.8, 0.7, 0.6, 0.4, 0.2, 0.9, 0.3])
+    classification_weight = np.array([1.0, 2.0, 0.5, 1.5, 1.0, 2.5, 0.75, 1.25])
+
+    false_positive_rate, true_positive_rate, roc_thresholds = roc_curve(
+        classification_truth,
+        positive_probability,
+        sample_weight=classification_weight,
+        drop_intermediate=False,
+    )
+    precision_values, recall_values, precision_recall_thresholds = (
+        precision_recall_curve(
+            classification_truth,
+            positive_probability,
+            sample_weight=classification_weight,
+        )
+    )
+    values = {
+        "regression_truth": regression_truth,
+        "regression_prediction": regression_prediction,
+        "regression_weight": regression_weight,
+        "mean_absolute_error": [
+            mean_absolute_error(
+                regression_truth,
+                regression_prediction,
+                sample_weight=regression_weight,
+            )
+        ],
+        "mean_squared_error": [
+            mean_squared_error(
+                regression_truth,
+                regression_prediction,
+                sample_weight=regression_weight,
+            )
+        ],
+        "root_mean_squared_error": [
+            root_mean_squared_error(
+                regression_truth,
+                regression_prediction,
+                sample_weight=regression_weight,
+            )
+        ],
+        "r2": [
+            r2_score(
+                regression_truth,
+                regression_prediction,
+                sample_weight=regression_weight,
+            )
+        ],
+        "classification_truth": classification_truth,
+        "classification_prediction": classification_prediction,
+        "positive_probability": positive_probability,
+        "classification_weight": classification_weight,
+        "accuracy": [
+            accuracy_score(
+                classification_truth,
+                classification_prediction,
+                sample_weight=classification_weight,
+            )
+        ],
+        "balanced_accuracy": [
+            balanced_accuracy_score(
+                classification_truth,
+                classification_prediction,
+                sample_weight=classification_weight,
+            )
+        ],
+        "precision": [
+            precision_score(
+                classification_truth,
+                classification_prediction,
+                sample_weight=classification_weight,
+            )
+        ],
+        "recall": [
+            recall_score(
+                classification_truth,
+                classification_prediction,
+                sample_weight=classification_weight,
+            )
+        ],
+        "f1": [
+            f1_score(
+                classification_truth,
+                classification_prediction,
+                sample_weight=classification_weight,
+            )
+        ],
+        "log_loss": [
+            log_loss(
+                classification_truth,
+                positive_probability,
+                sample_weight=classification_weight,
+                labels=[0, 1],
+            )
+        ],
+        "roc_auc": [
+            roc_auc_score(
+                classification_truth,
+                positive_probability,
+                sample_weight=classification_weight,
+            )
+        ],
+        "roc_thresholds": roc_thresholds,
+        "false_positive_rates": false_positive_rate,
+        "true_positive_rates": true_positive_rate,
+        "precision_recall_thresholds": precision_recall_thresholds,
+        "precision_curve": precision_values,
+        "recall_curve": recall_values,
+    }
+    rows = ["# ModelKit sklearn metric reference fixture v1"]
+    rows.extend(f"{name}\t{float_values(value)}" for name, value in values.items())
+    data_path = fixture_dir / "metrics_v1.tsv"
+    metadata_path = fixture_dir / "metrics_v1.metadata.json"
+    data_path.write_text("\n".join(rows) + "\n", encoding="utf-8", newline="\n")
+    metadata = {
+        "configuration": {
+            "positive_label": 1,
+            "precision_recall_drop_intermediate": False,
+            "roc_drop_intermediate": False,
+            "weighted": True,
+        },
+        "environment": environment.metadata(),
+        "fixture": "metrics_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.metrics regression metrics",
+            "sklearn.metrics binary classification metrics",
+            "sklearn.metrics.roc_curve",
+            "sklearn.metrics.precision_recall_curve",
+        ],
+        "schema_version": 1,
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def generate_preprocessing_fixture(fixture_dir: Path) -> None:
     import numpy as np
     from sklearn.feature_selection import VarianceThreshold
@@ -349,6 +512,7 @@ def main() -> None:
     fixture_dir.mkdir(parents=True, exist_ok=True)
     generate_split_fixture(fixture_dir)
     generate_splitter_fixture(fixture_dir)
+    generate_metrics_fixture(fixture_dir)
     generate_preprocessing_fixture(fixture_dir)
     generate_linear_model_fixture(fixture_dir)
 

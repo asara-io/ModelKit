@@ -229,6 +229,133 @@ def splitters(scenario: dict[str, object]) -> dict[str, object]:
     }
 
 
+def metrics(scenario: dict[str, object]) -> dict[str, object]:
+    import numpy as np
+    from sklearn.metrics import (
+        accuracy_score,
+        balanced_accuracy_score,
+        f1_score,
+        log_loss,
+        mean_absolute_error,
+        mean_squared_error,
+        precision_recall_curve,
+        precision_score,
+        r2_score,
+        recall_score,
+        roc_auc_score,
+        roc_curve,
+        root_mean_squared_error,
+    )
+
+    samples = scenario["dataset"]["samples"]
+    index = np.arange(samples, dtype=np.int64)
+    regression_truth = (index % 1000).astype(np.float64) / 10.0
+    regression_prediction = regression_truth + ((index % 7) - 3) * 0.01
+    classification_truth = index % 2
+    classification_prediction = np.where(
+        index % 11 == 0, 1 - classification_truth, classification_truth
+    )
+    adjustment = (index % 17) * 0.02
+    positive_probability = np.where(
+        classification_truth == 1, 0.55 + adjustment, 0.45 - adjustment
+    )
+    sample_weight = 1.0 + ((index % 5) * 0.25)
+    false_positive_rate, _, roc_thresholds = roc_curve(
+        classification_truth,
+        positive_probability,
+        sample_weight=sample_weight,
+        drop_intermediate=False,
+    )
+    _, _, precision_recall_thresholds = precision_recall_curve(
+        classification_truth,
+        positive_probability,
+        sample_weight=sample_weight,
+    )
+    scalar = np.array(
+        [
+            mean_absolute_error(
+                regression_truth,
+                regression_prediction,
+                sample_weight=sample_weight,
+            ),
+            mean_squared_error(
+                regression_truth,
+                regression_prediction,
+                sample_weight=sample_weight,
+            ),
+            root_mean_squared_error(
+                regression_truth,
+                regression_prediction,
+                sample_weight=sample_weight,
+            ),
+            r2_score(
+                regression_truth,
+                regression_prediction,
+                sample_weight=sample_weight,
+            ),
+            accuracy_score(
+                classification_truth,
+                classification_prediction,
+                sample_weight=sample_weight,
+            ),
+            balanced_accuracy_score(
+                classification_truth,
+                classification_prediction,
+                sample_weight=sample_weight,
+            ),
+            precision_score(
+                classification_truth,
+                classification_prediction,
+                sample_weight=sample_weight,
+            ),
+            recall_score(
+                classification_truth,
+                classification_prediction,
+                sample_weight=sample_weight,
+            ),
+            f1_score(
+                classification_truth,
+                classification_prediction,
+                sample_weight=sample_weight,
+            ),
+            log_loss(
+                classification_truth,
+                positive_probability,
+                sample_weight=sample_weight,
+                labels=[0, 1],
+            ),
+            roc_auc_score(
+                classification_truth,
+                positive_probability,
+                sample_weight=sample_weight,
+            ),
+        ],
+        dtype=np.float64,
+    )
+    signature = [
+        *scalar.tolist(),
+        float(len(roc_thresholds)),
+        float(len(precision_recall_thresholds)),
+        float(np.mean(scalar)),
+        float(np.std(scalar)),
+    ]
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(
+            np.asarray(signature, dtype="<f8").tobytes()
+        ).hexdigest(),
+        "operations": [
+            "regression_metrics",
+            "classification_metrics",
+            "ranking_curves",
+            "score_aggregation",
+        ],
+        "samples": samples,
+        "signature": signature,
+        "threadpools": threadpools(),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("scenario", type=Path)
@@ -243,6 +370,8 @@ def main() -> None:
         result = linear_models(scenario)
     elif workload == "splitters":
         result = splitters(scenario)
+    elif workload == "metrics":
+        result = metrics(scenario)
     else:
         raise ValueError(f"unknown workload {workload!r}")
     print(json.dumps(result))

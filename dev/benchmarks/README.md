@@ -123,3 +123,41 @@ The raw report is
 `results/splitters_dense_v1.darwin-arm64.json`; it includes every raw run,
 toolchain versions, the exact signature, thread limits, allocations, and the
 full scenario.
+
+## Dense metrics v1
+
+`metrics_dense_v1` evaluates weighted regression and binary classification
+metrics, full ROC and precision-recall curves, and scalar score aggregation on
+100,000 deterministic samples in ModelKit and scikit-learn. Both workers are
+sequential. Eleven scalar metrics, curve lengths, and aggregation results must
+agree within `1e-7` absolute and relative tolerance before a report is written.
+
+The harness performs one warmup and three interleaved measured runs in fresh
+processes. Timings include runtime startup, deterministic input allocation, all
+metrics, both curve sorts, and aggregation. Peak RSS is sampled every
+millisecond, and the ModelKit worker reports OCaml heap allocation words.
+
+The committed macOS arm64 report recorded these medians:
+
+| Implementation | Wall time | Peak RSS |
+| --- | ---: | ---: |
+| ModelKit 0.3.0-dev / OCaml 5.3.0 | 0.157 s | 49,283,072 bytes |
+| scikit-learn 1.9.0 / Python 3.14.3 | 0.738 s | 136,904,704 bytes |
+
+This scenario is `claim_eligible: false`. It combines multiple metric families,
+process startup, data generation, and sorting-based curves. It records parity,
+allocation, and gross regression evidence only and cannot support a comparative
+performance claim.
+
+Build and run it from the repository root:
+
+```sh
+opam exec -- dune build bench/ocaml/metrics_worker.exe
+env/bin/python dev/benchmarks/run.py \
+  --scenario dev/benchmarks/scenarios/metrics_dense.json
+```
+
+The raw report is
+`results/metrics_dense_v1.darwin-arm64.json`; it records every raw run,
+toolchain versions, thread limits, output signatures, allocations, and the full
+scenario.

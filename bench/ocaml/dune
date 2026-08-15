@@ -9,3 +9,7 @@
 (executable
  (name splitters_worker)
  (libraries modelkit))
+
+(executable
+ (name metrics_worker)
+ (libraries modelkit))

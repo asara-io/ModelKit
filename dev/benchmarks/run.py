@@ -124,6 +124,19 @@ def worker_commands(scenario: dict[str, object], scenario_path: Path) -> dict[st
             str(scenario["time_test_size"]),
             str(scenario["time_gap"]),
         ]
+    elif workload == "metrics":
+        modelkit_worker = (
+            ROOT / "_build" / "default" / "bench" / "ocaml" / "metrics_worker.exe"
+        )
+        if not modelkit_worker.exists():
+            raise RuntimeError(
+                "ModelKit benchmark worker is missing; run "
+                "`opam exec -- dune build bench/ocaml/metrics_worker.exe`"
+            )
+        commands["modelkit"] = [
+            str(modelkit_worker),
+            str(scenario["dataset"]["samples"]),
+        ]
     return commands
 
 
@@ -184,6 +197,7 @@ def main() -> None:
         "preprocessing": 1e-12,
         "linear_models": 1e-7,
         "splitters": 0.0,
+        "metrics": 1e-7,
     }.get(scenario.get("workload"))
     if signature_tolerance is not None:
         signatures = {
