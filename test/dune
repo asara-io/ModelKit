@@ -35,6 +35,11 @@
  (libraries modelkit alcotest))
 
 (test
+ (name cross_validation_test)
+ (modules cross_validation_test)
+ (libraries modelkit alcotest))
+
+(test
  (name protocol_test)
  (modules protocol_test)
  (libraries modelkit alcotest))

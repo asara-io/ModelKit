@@ -572,7 +572,8 @@ let test_unsupported_capabilities () =
     "capability error lacks estimator stage context";
   ignore
     (Pipeline.decision_function fitted ~feature_schema:schema ~x
-    |> expect_error is_compatibility)
+    |> expect_error is_compatibility);
+  ignore (Pipeline.classes fitted |> expect_error is_compatibility)
 
 let () =
   Alcotest.run "pipeline"

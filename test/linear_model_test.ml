@@ -245,7 +245,8 @@ let test_pipeline_dispatch () =
     Pipeline.estimator ~name:"logistic"
       (module Logistic_regression)
       ~decision_function:Logistic_regression.decision_function
-      ~predict_proba:Logistic_regression.predict_proba specification
+      ~predict_proba:Logistic_regression.predict_proba
+      ~classes:Logistic_regression.classes specification
     |> get
   in
   let pipeline = Pipeline.set_estimator Pipeline.empty estimator |> get in
@@ -257,12 +258,14 @@ let test_pipeline_dispatch () =
   in
   let decisions = Pipeline.decision_function fitted ~feature_schema ~x |> get in
   let probabilities = Pipeline.predict_proba fitted ~feature_schema ~x |> get in
+  let classes = Pipeline.classes fitted |> get in
   let predictions =
     Pipeline.predict fitted ~feature_schema ~x
     |> get |> Target.classification_values
   in
   Alcotest.(check int) "decision rows" 4 (Vector.length decisions);
   Alcotest.(check int) "probability rows" 4 (Matrix.rows probabilities);
+  Alcotest.(check (array int)) "probability class order" [| 0; 1 |] classes;
   Alcotest.(check (array int))
     "pipeline predictions" [| 0; 0; 1; 1 |] predictions
 
