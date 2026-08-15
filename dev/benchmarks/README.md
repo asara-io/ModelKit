@@ -211,3 +211,51 @@ The raw report is
 `results/cross_validation_dense_v1.darwin-arm64.json`; it records every raw run,
 toolchain versions, thread limits, per-fold output signatures, allocations, and
 the full scenario.
+
+## Dense finite grid search v1
+
+`grid_search_dense_v1` evaluates six ridge-regression configurations formed by
+the Cartesian product of three regularization strengths and two intercept
+choices. Each candidate receives the same five deterministic K-fold splits over
+a 10,000 by 12 float64 regression dataset. Both runtimes aggregate train and
+test negative mean-squared error and R², rank candidates by mean test R², and
+refit the winner on the complete dataset.
+
+All parameter encodings, 24 aggregate scores, six ranks, the selected candidate
+index, and two predictions from the refitted model must agree within `1e-7`
+absolute and relative tolerance before a report is written. ModelKit uses
+`Grid_search.Regression.search`; scikit-learn uses `GridSearchCV` with its SVD
+ridge solver. Both workers and numerical thread pools are sequential.
+
+The harness performs one warmup and three interleaved measured runs in fresh
+processes. Timings include runtime startup, deterministic data generation, 30
+fold fits, scoring, candidate-report construction, and the full-data refit. Peak
+RSS is sampled every millisecond. ModelKit also reports cumulative OCaml heap
+allocation words, which exclude Bigarray storage and measure allocation traffic
+rather than retained memory.
+
+The committed macOS arm64 report recorded these medians:
+
+| Implementation | Wall time | Peak RSS | OCaml allocation words |
+| --- | ---: | ---: | ---: |
+| ModelKit 0.3.0-dev / OCaml 5.3.0 | 0.546 s | 25,690,112 bytes | 98,941,046 |
+| scikit-learn 1.9.0 / Python 3.14.3 | 0.807 s | 134,299,648 bytes | unavailable |
+
+This scenario is `claim_eligible: false`. It is local correctness, determinism,
+allocation, and gross performance-regression evidence. It does not isolate
+search orchestration from ridge fitting, exercise failed candidates or parallel
+execution, run the release-scale workload, or satisfy the independent-CI and
+confidence-interval requirements for a comparative product claim.
+
+Build and run it from the repository root:
+
+```sh
+opam exec -- dune build bench/ocaml/grid_search_worker.exe
+env/bin/python dev/benchmarks/run.py \
+  --scenario dev/benchmarks/scenarios/grid_search_dense.json
+```
+
+The raw report is
+`results/grid_search_dense_v1.darwin-arm64.json`; it records every raw run,
+toolchain versions, thread limits, candidate output signatures, allocations,
+and the full scenario.

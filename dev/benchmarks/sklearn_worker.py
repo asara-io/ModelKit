@@ -454,6 +454,68 @@ def cross_validation(scenario: dict[str, object]) -> dict[str, object]:
     }
 
 
+def grid_search(scenario: dict[str, object]) -> dict[str, object]:
+    import numpy as np
+    from sklearn.linear_model import Ridge
+    from sklearn.model_selection import GridSearchCV, KFold
+
+    dataset = scenario["dataset"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    x = (
+        (rows * (17 + columns * 12) + columns * 31 + dataset["seed"]) % 1000
+    ).astype(np.float64)
+    x = (x / 100.0) - 5.0
+    coefficients = ((columns[0] % 5) - 2).astype(np.float64) * 0.2
+    noise = (((rows[:, 0] * 13 + 1729) % 11) - 5).astype(np.float64) * 0.01
+    y = 1.25 + x @ coefficients + noise
+    search = GridSearchCV(
+        Ridge(solver="svd"),
+        {
+            "alpha": scenario["alphas"],
+            "fit_intercept": scenario["fit_intercepts"],
+        },
+        cv=KFold(n_splits=scenario["folds"], shuffle=False),
+        scoring=("neg_mean_squared_error", "r2"),
+        refit="r2",
+        return_train_score=True,
+        error_score="raise",
+        n_jobs=1,
+    ).fit(x, y)
+    signature = []
+    for candidate, parameters in enumerate(search.cv_results_["params"]):
+        signature.extend(
+            [
+                parameters["alpha"],
+                float(parameters["fit_intercept"]),
+                search.cv_results_["mean_train_neg_mean_squared_error"][candidate],
+                search.cv_results_["mean_test_neg_mean_squared_error"][candidate],
+                search.cv_results_["mean_train_r2"][candidate],
+                search.cv_results_["mean_test_r2"][candidate],
+                search.cv_results_["rank_test_r2"][candidate],
+            ]
+        )
+    predictions = search.predict(x[[0, -1]])
+    signature.extend([search.best_index_, predictions[0], predictions[1]])
+    signature_array = np.asarray(signature, dtype="<f8")
+    return {
+        "allocated_words": None,
+        "candidates": len(search.cv_results_["params"]),
+        "checksum": hashlib.sha256(signature_array.tobytes()).hexdigest(),
+        "features": x.shape[1],
+        "folds": scenario["folds"],
+        "operations": [
+            "finite_grid_expansion",
+            "cross_validate",
+            "candidate_ranking",
+            "best_model_refit",
+        ],
+        "samples": x.shape[0],
+        "signature": signature_array.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("scenario", type=Path)
@@ -472,6 +534,8 @@ def main() -> None:
         result = metrics(scenario)
     elif workload == "cross_validation":
         result = cross_validation(scenario)
+    elif workload == "grid_search":
+        result = grid_search(scenario)
     else:
         raise ValueError(f"unknown workload {workload!r}")
     print(json.dumps(result))

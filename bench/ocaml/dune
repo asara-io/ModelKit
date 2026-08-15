@@ -17,3 +17,7 @@
 (executable
  (name cross_validation_worker)
  (libraries modelkit))
+
+(executable
+ (name grid_search_worker)
+ (libraries modelkit))

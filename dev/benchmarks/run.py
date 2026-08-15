@@ -163,6 +163,25 @@ def worker_commands(scenario: dict[str, object], scenario_path: Path) -> dict[st
             str(scenario["logistic_tolerance"]),
             str(scenario["logistic_max_iterations"]),
         ]
+    elif workload == "grid_search":
+        modelkit_worker = (
+            ROOT / "_build" / "default" / "bench" / "ocaml" / "grid_search_worker.exe"
+        )
+        if not modelkit_worker.exists():
+            raise RuntimeError(
+                "ModelKit benchmark worker is missing; run "
+                "`opam exec -- dune build bench/ocaml/grid_search_worker.exe`"
+            )
+        dataset = scenario["dataset"]
+        commands["modelkit"] = [
+            str(modelkit_worker),
+            str(dataset["samples"]),
+            str(dataset["features"]),
+            str(dataset["seed"]),
+            str(scenario["folds"]),
+            ",".join(str(value) for value in scenario["alphas"]),
+            ",".join(str(value).lower() for value in scenario["fit_intercepts"]),
+        ]
     return commands
 
 
@@ -225,6 +244,7 @@ def main() -> None:
         "splitters": 0.0,
         "metrics": 1e-7,
         "cross_validation": 1e-7,
+        "grid_search": 1e-7,
     }.get(scenario.get("workload"))
     if signature_tolerance is not None:
         signatures = {
