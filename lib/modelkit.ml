@@ -4392,7 +4392,7 @@ module Cross_validation = struct
     (Sys.time () -. started, result)
 
   let run ~return_train_score ~return_models ~return_indices ~failure_policy
-      ~splitter ~scorer_names ~seed ~score_model pipeline dataset =
+      ~fit_seed ~splitter ~scorer_names ~seed ~score_model pipeline dataset =
     let ( let* ) = Result.bind in
     let* () = validate_scorers scorer_names in
     let splitter_rng =
@@ -4441,7 +4441,7 @@ module Cross_validation = struct
               evaluate (fold_index + 1) (fold :: reversed)
         | Ok (train, test) -> (
             let fold_rng =
-              Seed.derive seed ~operation:"cross-validation-fold"
+              Seed.derive fit_seed ~operation:"cross-validation-fold"
                 ~index:fold_index
               |> Rng.create
             in
@@ -4605,12 +4605,13 @@ module Cross_validation = struct
         @ scoring_failures test_results)
 
     let cross_validate ?(return_train_score = false) ?(return_models = false)
-        ?(return_indices = false) ?(failure_policy = Abort) ~splitter ~scorers
-        ~seed pipeline dataset =
+        ?(return_indices = false) ?(failure_policy = Abort) ?fit_seed ~splitter
+        ~scorers ~seed pipeline dataset =
+      let fit_seed = Option.value fit_seed ~default:seed in
       let scorer_names = Array.map Regression_scorer.name scorers in
       run ~return_train_score ~return_models ~return_indices ~failure_policy
-        ~splitter ~scorer_names ~seed ~score_model:(score_model scorers)
-        pipeline dataset
+        ~fit_seed ~splitter ~scorer_names ~seed
+        ~score_model:(score_model scorers) pipeline dataset
   end
 
   module Binary_classification = struct
@@ -4827,11 +4828,421 @@ module Cross_validation = struct
       finish_scoring failure_policy scores failures
 
     let cross_validate ?(return_train_score = false) ?(return_models = false)
-        ?(return_indices = false) ?(failure_policy = Abort) ~splitter ~scorers
-        ~seed pipeline dataset =
+        ?(return_indices = false) ?(failure_policy = Abort) ?fit_seed ~splitter
+        ~scorers ~seed pipeline dataset =
+      let fit_seed = Option.value fit_seed ~default:seed in
       let scorer_names = Array.map Binary_classification_scorer.name scorers in
       run ~return_train_score ~return_models ~return_indices ~failure_policy
-        ~splitter ~scorer_names ~seed ~score_model:(score_model scorers)
-        pipeline dataset
+        ~fit_seed ~splitter ~scorer_names ~seed
+        ~score_model:(score_model scorers) pipeline dataset
+  end
+end
+
+module Grid_search = struct
+  type parameter_value =
+    | Bool of bool
+    | Int of int
+    | Float of float
+    | String of string
+
+  type parameter = {
+    parameter_name : string;
+    parameter_value : parameter_value;
+  }
+
+  type 'configuration axis =
+    | Axis : {
+        name : string;
+        values : 'value array;
+        encode : 'value -> parameter_value;
+        set : 'configuration -> 'value -> ('configuration, Error.t) result;
+      }
+        -> 'configuration axis
+
+  type ('configuration, 'target, 'prediction) grid = {
+    base : 'configuration;
+    build :
+      'configuration -> (('target, 'prediction) Pipeline.t, Error.t) result;
+    axes : 'configuration axis array;
+    candidate_count : int;
+  }
+
+  type score_summary = {
+    scorer_name : string;
+    train : (Score_aggregation.t, Error.t) result option;
+    test : (Score_aggregation.t, Error.t) result;
+  }
+
+  type 'model candidate = {
+    candidate_index : int;
+    parameters : parameter array;
+    rank : int option;
+    mean_fit_time : float;
+    mean_score_time : float;
+    scores : score_summary array;
+    evaluation : 'model Cross_validation.report option;
+    build_error : Error.t option;
+  }
+
+  type 'model selected = {
+    selected_candidate_index : int;
+    selected_model : 'model;
+  }
+
+  type 'model report = {
+    report_candidates : 'model candidate array;
+    report_selection : ('model selected, Error.t) result;
+  }
+
+  type 'configuration partial = {
+    configuration : ('configuration, Error.t) result;
+    reversed_parameters : parameter list;
+  }
+
+  let validation ~name ~reason ~remediation =
+    Error.make ~remediation (Error.Validation { name; reason })
+
+  let axis ~name ~values ~encode ~set =
+    if String.length (String.trim name) = 0 then
+      Error
+        (validation ~name:"grid-search axis name" ~reason:"must not be blank"
+           ~remediation:"choose a non-empty unique parameter name")
+    else if Array.length values = 0 then
+      Error
+        (validation
+           ~name:("grid-search axis " ^ name)
+           ~reason:"contains no values"
+           ~remediation:"provide at least one finite candidate value")
+    else Ok (Axis { name; values = Array.copy values; encode; set })
+
+  let create ~base ~build axes =
+    let seen = Hashtbl.create (Array.length axes) in
+    let rec validate index count =
+      if index = Array.length axes then Ok count
+      else
+        let (Axis axis) = axes.(index) in
+        if Hashtbl.mem seen axis.name then
+          Error
+            (validation ~name:"grid-search axes"
+               ~reason:
+                 (Format.sprintf "parameter name %S is duplicated" axis.name)
+               ~remediation:"use each parameter name at most once")
+        else if count > Sys.max_array_length / Array.length axis.values then
+          Error
+            (validation ~name:"grid-search candidate count"
+               ~reason:"the Cartesian product exceeds the array size limit"
+               ~remediation:"reduce the number of axes or candidate values")
+        else (
+          Hashtbl.add seen axis.name ();
+          validate (index + 1) (count * Array.length axis.values))
+    in
+    match validate 0 1 with
+    | Error _ as error -> error
+    | Ok candidate_count ->
+        Ok { base; build; axes = Array.copy axes; candidate_count }
+
+  let candidate_count grid = grid.candidate_count
+
+  let copy_candidate candidate =
+    {
+      candidate with
+      parameters = Array.copy candidate.parameters;
+      scores = Array.copy candidate.scores;
+    }
+
+  let candidates report = Array.map copy_candidate report.report_candidates
+  let selection report = report.report_selection
+
+  let expand_axis partial (Axis axis) =
+    Array.to_list axis.values
+    |> List.map (fun value ->
+        let configuration =
+          match partial.configuration with
+          | Error _ as error -> error
+          | Ok configuration -> axis.set configuration value
+        in
+        {
+          configuration;
+          reversed_parameters =
+            { parameter_name = axis.name; parameter_value = axis.encode value }
+            :: partial.reversed_parameters;
+        })
+
+  let expand grid =
+    Array.fold_left
+      (fun partials axis ->
+        List.fold_right
+          (fun partial accumulated -> expand_axis partial axis @ accumulated)
+          partials [])
+      [ { configuration = Ok grid.base; reversed_parameters = [] } ]
+      grid.axes
+    |> Array.of_list
+
+  let with_candidate candidate error =
+    Error.with_context (Error.Candidate candidate) error
+
+  let missing_score candidate scorer partition =
+    validation ~name:"grid-search score"
+      ~reason:(Format.sprintf "%s score %S is unavailable" partition scorer)
+      ~remediation:"inspect the candidate's fold failures"
+    |> with_candidate candidate
+
+  let aggregate candidate scorer partition extract folds =
+    let values = Array.make (Array.length folds) 0.0 in
+    let rec collect fold_index =
+      if fold_index = Array.length folds then
+        Score_aggregation.summarize values
+        |> Result.map_error (with_candidate candidate)
+      else
+        let score = folds.(fold_index).Cross_validation.scores.(scorer) in
+        match extract score with
+        | Some (Ok value) ->
+            values.(fold_index) <- value;
+            collect (fold_index + 1)
+        | Some (Error error) -> Error (with_candidate candidate error)
+        | None ->
+            Error
+              (missing_score candidate score.Cross_validation.name partition)
+    in
+    collect 0
+
+  let summarize candidate scorer_names ~return_train_score evaluation =
+    let folds = Cross_validation.folds evaluation in
+    Array.mapi
+      (fun scorer name ->
+        {
+          scorer_name = name;
+          train =
+            (if return_train_score then
+               Some
+                 (aggregate candidate scorer "training"
+                    (fun score -> score.Cross_validation.train_score)
+                    folds)
+             else None);
+          test =
+            aggregate candidate scorer "test"
+              (fun score -> score.Cross_validation.test_score)
+              folds;
+        })
+      scorer_names
+
+  let mean_time select evaluation =
+    let folds = Cross_validation.folds evaluation in
+    if Array.length folds = 0 then 0.0
+    else
+      Array.fold_left (fun total fold -> total +. select fold) 0.0 folds
+      /. Float.of_int (Array.length folds)
+
+  let failed_summaries ~return_train_score scorer_names error =
+    Array.map
+      (fun name ->
+        {
+          scorer_name = name;
+          train = (if return_train_score then Some (Error error) else None);
+          test = Error error;
+        })
+      scorer_names
+
+  let validate_refit scorer_names refit =
+    let ( let* ) = Result.bind in
+    let* () = Cross_validation.validate_scorers scorer_names in
+    let rec find index =
+      if index = Array.length scorer_names then
+        Error
+          (validation ~name:"grid-search refit scorer"
+             ~reason:(Format.sprintf "scorer %S was not provided" refit)
+             ~remediation:"choose one of the configured scorer names")
+      else if String.equal scorer_names.(index) refit then Ok index
+      else find (index + 1)
+    in
+    find 0
+
+  let rank_candidates primary candidates =
+    let eligible =
+      candidates |> Array.to_list
+      |> List.filter_map (fun (candidate : _ candidate) ->
+          match candidate.scores.(primary).test with
+          | Ok summary ->
+              Some (candidate.candidate_index, summary.Score_aggregation.mean)
+          | Error _ -> None)
+      |> Array.of_list
+    in
+    Array.sort
+      (fun (left_index, left_score) (right_index, right_score) ->
+        let score_order = Float.compare right_score left_score in
+        if score_order <> 0 then score_order
+        else Int.compare left_index right_index)
+      eligible;
+    let ranks = Array.make (Array.length candidates) None in
+    let previous_score = ref None in
+    let previous_rank = ref 0 in
+    Array.iteri
+      (fun position (candidate, score) ->
+        let rank =
+          match !previous_score with
+          | Some previous when Float.compare previous score = 0 ->
+              !previous_rank
+          | None | Some _ -> position + 1
+        in
+        ranks.(candidate) <- Some rank;
+        previous_score := Some score;
+        previous_rank := rank)
+      eligible;
+    ( Array.mapi
+        (fun index candidate -> { candidate with rank = ranks.(index) })
+        candidates,
+      if Array.length eligible = 0 then None else Some (fst eligible.(0)) )
+
+  let search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
+      ~refit ~seed grid dataset =
+    let ( let* ) = Result.bind in
+    let* primary = validate_refit scorer_names refit in
+    let partials = expand grid in
+    let pipelines = Array.make grid.candidate_count None in
+    let rec evaluate candidate_index reversed =
+      if candidate_index = Array.length partials then
+        Ok (Array.of_list (List.rev reversed))
+      else
+        let partial = partials.(candidate_index) in
+        let parameters =
+          partial.reversed_parameters |> List.rev |> Array.of_list
+        in
+        let built =
+          match partial.configuration with
+          | Error error -> Error error
+          | Ok configuration -> grid.build configuration
+        in
+        match built with
+        | Error error ->
+            let error = with_candidate candidate_index error in
+            if failure_policy = Cross_validation.Abort then Error error
+            else
+              let candidate : _ candidate =
+                {
+                  candidate_index;
+                  parameters;
+                  rank = None;
+                  mean_fit_time = 0.0;
+                  mean_score_time = 0.0;
+                  scores =
+                    failed_summaries ~return_train_score scorer_names error;
+                  evaluation = None;
+                  build_error = Some error;
+                }
+              in
+              evaluate (candidate_index + 1) (candidate :: reversed)
+        | Ok pipeline ->
+            pipelines.(candidate_index) <- Some pipeline;
+            let fit_seed =
+              Seed.derive seed ~operation:"grid-search-candidate"
+                ~index:candidate_index
+            in
+            let* evaluation =
+              cross_validate ~return_train_score ~failure_policy ~fit_seed
+                pipeline dataset
+              |> Result.map_error (with_candidate candidate_index)
+            in
+            let candidate : _ candidate =
+              {
+                candidate_index;
+                parameters;
+                rank = None;
+                mean_fit_time =
+                  mean_time
+                    (fun fold -> fold.Cross_validation.fit_time)
+                    evaluation;
+                mean_score_time =
+                  mean_time
+                    (fun fold -> fold.Cross_validation.score_time)
+                    evaluation;
+                scores =
+                  summarize candidate_index scorer_names ~return_train_score
+                    evaluation;
+                evaluation = Some evaluation;
+                build_error = None;
+              }
+            in
+            evaluate (candidate_index + 1) (candidate :: reversed)
+    in
+    let* evaluated = evaluate 0 [] in
+    let ranked, best = rank_candidates primary evaluated in
+    let unavailable () =
+      validation ~name:"grid-search selection"
+        ~reason:"no candidate produced an aggregatable primary test score"
+        ~remediation:"inspect candidate build, fold, and scorer failures"
+    in
+    match best with
+    | None ->
+        Ok
+          {
+            report_candidates = ranked;
+            report_selection = Error (unavailable ());
+          }
+    | Some candidate_index -> (
+        match pipelines.(candidate_index) with
+        | None -> assert false
+        | Some pipeline -> (
+            let refit_seed =
+              Seed.derive seed ~operation:"grid-search-refit"
+                ~index:candidate_index
+              |> Rng.create
+            in
+            let refitted =
+              Pipeline.fit (Pipeline.clone pipeline)
+                ?sample_weight:(Dataset.sample_weight dataset)
+                ~rng:refit_seed
+                ~feature_schema:(Dataset.feature_schema dataset)
+                ~x:(Dataset.features dataset) ~y:(Dataset.target dataset) ()
+              |> Result.map_error (with_candidate candidate_index)
+            in
+            match (failure_policy, refitted) with
+            | Cross_validation.Abort, Error error -> Error error
+            | (Cross_validation.Abort | Cross_validation.Record), Ok model ->
+                Ok
+                  {
+                    report_candidates = ranked;
+                    report_selection =
+                      Ok
+                        {
+                          selected_candidate_index = candidate_index;
+                          selected_model = model;
+                        };
+                  }
+            | Cross_validation.Record, Error error ->
+                Ok
+                  { report_candidates = ranked; report_selection = Error error }
+            ))
+
+  module Regression = struct
+    type model = Cross_validation.Regression.model
+
+    let search ?(return_train_score = false)
+        ?(failure_policy = Cross_validation.Record) ~grid ~splitter ~scorers
+        ~refit ~seed dataset =
+      let scorer_names = Array.map Regression_scorer.name scorers in
+      let cross_validate ~return_train_score ~failure_policy ~fit_seed pipeline
+          dataset =
+        Cross_validation.Regression.cross_validate ~return_train_score
+          ~failure_policy ~fit_seed ~splitter ~scorers ~seed pipeline dataset
+      in
+      search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
+        ~refit ~seed grid dataset
+  end
+
+  module Binary_classification = struct
+    type model = Cross_validation.Binary_classification.model
+
+    let search ?(return_train_score = false)
+        ?(failure_policy = Cross_validation.Record) ~grid ~splitter ~scorers
+        ~refit ~seed dataset =
+      let scorer_names = Array.map Binary_classification_scorer.name scorers in
+      let cross_validate ~return_train_score ~failure_policy ~fit_seed pipeline
+          dataset =
+        Cross_validation.Binary_classification.cross_validate
+          ~return_train_score ~failure_policy ~fit_seed ~splitter ~scorers ~seed
+          pipeline dataset
+      in
+      search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
+        ~refit ~seed grid dataset
   end
 end
