@@ -17,6 +17,7 @@ Python users of `scikit-learn` will find this library familiar in serving the sa
 - Portable weighted ordinary least squares, ridge regression, and binary logistic regression keep immutable specifications separate from fitted coefficients and solver diagnostics.
 - Deterministic K-fold, stratified K-fold, group K-fold, and expanding-window time-series splitters produce validated row views that can be explicitly materialized as aligned datasets.
 - Weighted regression and binary classification metrics provide immutable higher-is-better scorers, plotting-neutral residual, ROC, and precision–recall data, stable score aggregation, and an explicit undefined-result policy.
+- Portable sequential cross-validation fits pipelines within deterministic folds and reports ordered train/test scores, CPU timings, optional fitted models and indices, and typed failures.
 
 ## Motivation and Future Work
 
@@ -49,22 +50,27 @@ let terminal =
   Pipeline.estimator ~name:"logistic"
     (module Logistic_regression)
     ~decision_function:Logistic_regression.decision_function
-    ~predict_proba:Logistic_regression.predict_proba logistic
+    ~predict_proba:Logistic_regression.predict_proba
+    ~classes:Logistic_regression.classes logistic
   |> Result.get_ok
 
 let specification =
   Pipeline.set_estimator Pipeline.empty terminal |> Result.get_ok
 ```
 
-In the current pipeline contract, sample weights route to the terminal estimator and are not passed to the current unsupervised transformers. General transformer metadata routing remains planned for a later milestone. Cross-validation, fitted artifacts, and the finished end-to-end workflow are not yet implemented.
+In the current pipeline contract, sample weights route to the terminal estimator and are not passed to the current unsupervised transformers. General transformer metadata routing remains planned for a later milestone. Fitted artifacts and the finished end-to-end workflow are not yet implemented.
 
 `K_fold`, `Stratified_k_fold`, `Group_k_fold`, and `Time_series_split` now provide the portable splitting primitives needed by evaluation workflows. K-fold variants balance test sizes; stratification balances each integer class; group splitting prevents a group from crossing train/test boundaries; and time-series splitting uses expanding chronological training prefixes with optional gaps. Shuffled variants use ModelKit’s immutable deterministic RNG and retain source-row order in emitted views.
 
-`Split.create` and `Split.of_views` validate non-empty, unique, disjoint train/test selections over one source. `Split.materialize` is the explicit allocation boundary that copies those selections into independent datasets while retaining targets, feature names, sample weights, groups, and schema identity. Cross-validation orchestration remains subsequent work.
+`Split.create` and `Split.of_views` validate non-empty, unique, disjoint train/test selections over one source. `Split.materialize` is the explicit allocation boundary that copies those selections into independent datasets while retaining targets, feature names, sample weights, groups, and schema identity.
 
 `Regression_metrics` provides weighted MAE, MSE, RMSE, R², and residual data. `Binary_classification_metrics` provides weighted accuracy, balanced accuracy, precision, recall, F1, log loss, ROC AUC, and deterministic ROC and precision–recall curve arrays. Binary probabilities are validated as finite values in `[0, 1]`, and binary label metrics accept a configurable positive label.
 
-Undefined metrics are observable through `Undefined_metric_policy`: the default returns a typed error, while callers may explicitly request NaN or documented finite fallbacks. `Regression_scorer` and `Binary_classification_scorer` make every selection score higher-is-better by negating loss metrics, and `Score_aggregation` reports stable population summaries for fold scores. Cross-validation execution and finite grid search are not yet implemented.
+Undefined metrics are observable through `Undefined_metric_policy`: the default returns a typed error, while callers may explicitly request NaN or documented finite fallbacks. `Regression_scorer` and `Binary_classification_scorer` make every selection score higher-is-better by negating loss metrics, and `Score_aggregation` reports stable population summaries for fold scores. Finite grid search is not yet implemented.
+
+`Cross_validation.Regression.cross_validate` and `Cross_validation.Binary_classification.cross_validate` run a complete evaluation sequentially in stable fold order. Splitters are adapted explicitly as target-independent or target-aware, each fold derives its RNG from the root seed and logical fold index, and preprocessing is fitted only after the training partition is materialized. Reports contain process CPU fit/score timings, multiple scorers in caller order, optional train scores, fitted models, and original row indices. The default `Abort` failure policy returns the first typed failure; `Record` retains structured prediction and scoring failures and continues evaluating later folds.
+
+Binary probability scorers require the pipeline terminal to declare its probability-column class order with `Pipeline.estimator ~classes`; ModelKit does not assume that a particular matrix column represents the configured positive label. Cross-validation currently uses the always-available sequential implementation. Bounded Domainslib fold execution and finite grid search remain planned work.
 
 The portable package lives under `lib/`. Optional ecosystem adapters and accelerated backends are reserved under `adapters/` and `backends/`; they will remain separate packages that depend on the portable core when implemented.
 
