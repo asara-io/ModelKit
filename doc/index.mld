@@ -24,8 +24,11 @@ Newton iterations. Each fitted estimator exposes coefficients, an intercept,
 and a {!Modelkit.Solver_report}. K-fold, stratified K-fold, group K-fold, and
 expanding-window time-series splitters produce validated source-row views;
 {!Modelkit.Split.materialize} is the explicit boundary for copying train and
-test selections into aligned datasets. End-to-end evaluation remains future
-work.
+test selections into aligned datasets. Weighted regression and binary
+classification metrics expose higher-is-better scorer specifications, stable
+fold-score aggregation, explicit undefined-result handling, and residual, ROC,
+and precision-recall data without a plotting dependency. Cross-validation
+orchestration remains future work.
 Portable tests consume committed scikit-learn reference data without requiring
 Python during a normal build or test run.
 
@@ -116,6 +119,19 @@ val splits : (Row_view.t * Row_view.t) array =
   [|(<abstr>, <abstr>); (<abstr>, <abstr>)|]
 # Array.map (fun (_, test) -> Row_view.indices test) splits;;
 - : int array array = [|[|0|]; [|1|]|]
+# let positive_probabilities = Vector.of_array [|0.2; 0.8|];;
+val positive_probabilities : Vector.t = <abstr>
+# Binary_classification_metrics.log_loss ~truth:y
+    ~positive_probabilities () |> Result.get_ok;;
+- : float = 0.223143551314209737
+# let roc =
+    Binary_classification_metrics.roc_curve ~truth:y
+      ~positive_probabilities () |> Result.get_ok;;
+val roc : Binary_classification_metrics.roc_curve =
+  {Modelkit.Binary_classification_metrics.thresholds = <abstr>;
+   false_positive_rates = <abstr>; true_positive_rates = <abstr>}
+# Vector.to_array roc.Binary_classification_metrics.false_positive_rates;;
+- : float array = [|0.; 0.; 1.|]
 ]}
 
 The current pipeline routes targets and sample weights to its terminal
