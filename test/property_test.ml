@@ -486,6 +486,137 @@ let time_series_folds_never_train_on_the_future =
               last_train + gap < first_test)
             splits)
 
+let regression_losses_are_non_negative_and_consistent =
+  QCheck.Test.make ~count:500
+    ~name:"regression losses are non-negative and RMSE squares to MSE"
+    QCheck.(array nat_small)
+    (fun raw ->
+      if Array.length raw = 0 then true
+      else
+        let truth_values = Array.map Float.of_int raw in
+        let prediction_values =
+          Array.mapi
+            (fun index value ->
+              Float.of_int value +. Float.of_int ((index mod 3) - 1))
+            raw
+        in
+        let truth =
+          Target.regression (Vector.of_array truth_values) |> Result.get_ok
+        in
+        let prediction =
+          Target.regression (Vector.of_array prediction_values) |> Result.get_ok
+        in
+        match
+          ( Regression_metrics.mean_absolute_error ~truth ~prediction (),
+            Regression_metrics.mean_squared_error ~truth ~prediction (),
+            Regression_metrics.root_mean_squared_error ~truth ~prediction () )
+        with
+        | Ok mae, Ok mse, Ok rmse ->
+            mae >= 0.0 && mse >= 0.0 && rmse >= 0.0
+            && Float.abs ((rmse *. rmse) -. mse) <= 1e-12
+        | Error _, _, _ | _, Error _, _ | _, _, Error _ -> false)
+
+let binary_scalar_metrics_are_bounded =
+  QCheck.Test.make ~count:500
+    ~name:"binary scalar metrics remain within documented bounds"
+    QCheck.(array nat_small)
+    (fun raw ->
+      if Array.length raw = 0 then true
+      else
+        let truth =
+          Target.classification (Array.map (fun value -> value mod 2) raw)
+        in
+        let prediction =
+          Target.classification (Array.map (fun value -> value / 2 mod 2) raw)
+        in
+        let probabilities =
+          Vector.of_array
+            (Array.map
+               (fun value -> Float.of_int (1 + (value mod 98)) /. 100.0)
+               raw)
+        in
+        let undefined = Undefined_metric_policy.Use_fallback in
+        let results =
+          [|
+            Binary_classification_metrics.accuracy ~truth ~prediction ();
+            Binary_classification_metrics.balanced_accuracy ~undefined ~truth
+              ~prediction ();
+            Binary_classification_metrics.precision ~undefined ~truth
+              ~prediction ();
+            Binary_classification_metrics.recall ~undefined ~truth ~prediction
+              ();
+            Binary_classification_metrics.f1 ~undefined ~truth ~prediction ();
+            Binary_classification_metrics.roc_auc ~undefined ~truth
+              ~positive_probabilities:probabilities ();
+          |]
+        in
+        Array.for_all
+          (function
+            | Ok value -> value >= 0.0 && value <= 1.0 | Error _ -> false)
+          results
+        &&
+        match
+          Binary_classification_metrics.log_loss ~truth
+            ~positive_probabilities:probabilities ()
+        with
+        | Ok value -> Float.is_finite value && value >= 0.0
+        | Error _ -> false)
+
+let ranking_curves_are_monotone =
+  QCheck.Test.make ~count:500
+    ~name:"ROC and precision-recall curve axes are monotone"
+    QCheck.(array nat_small)
+    (fun raw ->
+      let samples = 4 + Array.length raw in
+      let truth =
+        Target.classification (Array.init samples (fun index -> index mod 2))
+      in
+      let probabilities =
+        Vector.of_array
+          (Array.init samples (fun index ->
+               let value =
+                 if index < Array.length raw then raw.(index) else index * 17
+               in
+               Float.of_int (value mod 101) /. 100.0))
+      in
+      match
+        ( Binary_classification_metrics.roc_curve ~truth
+            ~positive_probabilities:probabilities (),
+          Binary_classification_metrics.precision_recall_curve ~truth
+            ~positive_probabilities:probabilities () )
+      with
+      | Ok roc, Ok precision_recall ->
+          let false_positive_rates =
+            Vector.to_array
+              roc.Binary_classification_metrics.false_positive_rates
+          in
+          let true_positive_rates =
+            Vector.to_array
+              roc.Binary_classification_metrics.true_positive_rates
+          in
+          let recalls =
+            Vector.to_array
+              precision_recall.Binary_classification_metrics.recalls
+          in
+          let nondecreasing values =
+            let rec loop index =
+              index = Array.length values
+              || (values.(index - 1) <= values.(index) && loop (index + 1))
+            in
+            loop 1
+          in
+          let nonincreasing values =
+            let rec loop index =
+              index = Array.length values
+              || (values.(index - 1) >= values.(index) && loop (index + 1))
+            in
+            loop 1
+          in
+          nondecreasing false_positive_rates
+          && nondecreasing true_positive_rates
+          && nonincreasing recalls
+      | Error _, _ | _, Error _ -> false)
+
 let () =
   let random = Random.State.make [| 0x4d4f4445; 0x4c4b4954 |] in
   let failures =
@@ -505,6 +636,9 @@ let () =
         k_fold_partitions_every_sample_once;
         stratified_folds_balance_each_class;
         time_series_folds_never_train_on_the_future;
+        regression_losses_are_non_negative_and_consistent;
+        binary_scalar_metrics_are_bounded;
+        ranking_curves_are_monotone;
       ]
   in
   if failures <> 0 then exit failures

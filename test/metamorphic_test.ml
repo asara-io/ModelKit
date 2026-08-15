@@ -194,6 +194,40 @@ let test_stratified_label_renaming () =
           (Alcotest.array Alcotest.int)))
     "one-to-one label renaming preserves stratified membership" original renamed
 
+let test_metric_translation_and_label_renaming () =
+  let regression values =
+    Target.regression (Vector.of_array values) |> function
+    | Ok target -> target
+    | Error error -> Alcotest.fail (Data_error.to_string error)
+  in
+  let regression_scores truth prediction =
+    let truth = regression truth in
+    let prediction = regression prediction in
+    ( get_ok (Regression_metrics.mean_absolute_error ~truth ~prediction ()),
+      get_ok (Regression_metrics.r2 ~truth ~prediction ()) )
+  in
+  let original =
+    regression_scores [| 1.0; 4.0; 7.0; 11.0 |] [| 2.0; 3.0; 8.0; 10.0 |]
+  in
+  let translated =
+    regression_scores
+      [| 101.0; 104.0; 107.0; 111.0 |]
+      [| 102.0; 103.0; 108.0; 110.0 |]
+  in
+  check_float "joint translation preserves MAE" (fst original) (fst translated);
+  check_float "joint translation preserves R-squared" (snd original)
+    (snd translated);
+  let f1 ~positive_label truth prediction =
+    get_ok
+      (Binary_classification_metrics.f1 ~positive_label
+         ~truth:(Target.classification truth)
+         ~prediction:(Target.classification prediction)
+         ())
+  in
+  check_float "one-to-one binary label renaming preserves F1"
+    (f1 ~positive_label:1 [| 0; 1; 0; 1 |] [| 0; 1; 1; 1 |])
+    (f1 ~positive_label:9 [| -3; 9; -3; 9 |] [| -3; 9; 9; 9 |])
+
 let () =
   Alcotest.run "metamorphic invariants"
     [
@@ -211,5 +245,7 @@ let () =
             test_linear_row_duplication;
           Alcotest.test_case "stratified label renaming" `Quick
             test_stratified_label_renaming;
+          Alcotest.test_case "metric transformations" `Quick
+            test_metric_translation_and_label_renaming;
         ] );
     ]
