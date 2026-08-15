@@ -131,7 +131,7 @@ python dev/fixtures/generate.py
 python dev/benchmarks/run.py
 ```
 
-The committed smoke benchmark validates the measurement workflow only. The development preprocessing, dense-linear-model, splitter, and metrics benchmarks compare portable ModelKit operations with pinned scikit-learn references on deterministic workloads. Build the corresponding OCaml worker and select `dev/benchmarks/scenarios/preprocessing_dense.json`, `dev/benchmarks/scenarios/linear_models_dense.json`, `dev/benchmarks/scenarios/splitters_dense.json`, or `dev/benchmarks/scenarios/metrics_dense.json`. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for scope, raw-result links, and limitations. Release comparisons will use the product plan's independent-CI benchmark contract.
+The committed smoke benchmark validates the measurement workflow only. The development preprocessing, dense-linear-model, splitter, metrics, and sequential cross-validation benchmarks compare portable ModelKit operations with pinned scikit-learn references on deterministic workloads. Build the corresponding OCaml worker and select `dev/benchmarks/scenarios/preprocessing_dense.json`, `dev/benchmarks/scenarios/linear_models_dense.json`, `dev/benchmarks/scenarios/splitters_dense.json`, `dev/benchmarks/scenarios/metrics_dense.json`, or `dev/benchmarks/scenarios/cross_validation_dense.json`. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for scope, raw-result links, and limitations. Release comparisons will use the product plan's independent-CI benchmark contract.
 
 ## Project Policies
 
