@@ -124,13 +124,10 @@ val positive_probabilities : Vector.t = <abstr>
 # Binary_classification_metrics.log_loss ~truth:y
     ~positive_probabilities () |> Result.get_ok;;
 - : float = 0.223143551314209737
-# let roc =
-    Binary_classification_metrics.roc_curve ~truth:y
-      ~positive_probabilities () |> Result.get_ok;;
-val roc : Binary_classification_metrics.roc_curve =
-  {Modelkit.Binary_classification_metrics.thresholds = <abstr>;
-   false_positive_rates = <abstr>; true_positive_rates = <abstr>}
-# Vector.to_array roc.Binary_classification_metrics.false_positive_rates;;
+# Binary_classification_metrics.roc_curve ~truth:y
+    ~positive_probabilities () |> Result.get_ok
+  |> fun roc ->
+  Vector.to_array roc.Binary_classification_metrics.false_positive_rates;;
 - : float array = [|0.; 0.; 1.|]
 ]}
 
