@@ -655,10 +655,12 @@ module Pipeline : sig
       feature_schema:Feature_schema.t ->
       x:Matrix.t ->
       (Matrix.t, Error.t) result) ->
+    ?classes:('fitted -> int array) ->
     'specification ->
     (('target, 'prediction) estimator, Error.t) result
   (** Packages a terminal estimator and its explicitly supported capabilities.
-  *)
+      When supplied, [classes] declares the class label corresponding to each
+      [predict_proba] column. *)
 
   val empty : builder
   val add_transformer : builder -> transformer -> (builder, Error.t) result
@@ -706,6 +708,10 @@ module Pipeline : sig
     feature_schema:Feature_schema.t ->
     x:Matrix.t ->
     (Matrix.t, Error.t) result
+
+  val classes : ('target, 'prediction) fitted -> (int array, Error.t) result
+  (** Returns the probability-column class order declared by the terminal
+      estimator. *)
 
   val input_schema : ('target, 'prediction) fitted -> Feature_schema.t
   val output_schema : ('target, 'prediction) fitted -> Feature_schema.t
@@ -1208,4 +1214,107 @@ module Score_aggregation : sig
 
   val summarize :
     ?undefined:Undefined_metric_policy.t -> float array -> (t, Error.t) result
+end
+
+(** Deterministic sequential cross-validation over immutable pipelines.
+
+    Split membership is planned before fitting, and each fold receives a child
+    seed derived from its logical index. Training and test partitions are
+    materialized explicitly, so every preprocessing stage is fitted only from
+    training rows. Fold and scorer arrays retain splitter and caller order.
+
+    [fit_time] and [score_time] are portable process CPU seconds measured with
+    [Sys.time]. [Abort] returns the first failure in stable execution order;
+    [Record] retains typed failures in the report and continues with later
+    folds. Models and indices are retained only when requested. *)
+module Cross_validation : sig
+  type failure_policy = Abort | Record
+  type partition = Train | Test
+
+  type failure_phase =
+    | Materialization
+    | Fitting
+    | Prediction of partition
+    | Scoring of { partition : partition; scorer : string }
+
+  type failure = { phase : failure_phase; error : Error.t }
+
+  type score = {
+    name : string;
+    train_score : (float, Error.t) result option;
+    test_score : (float, Error.t) result option;
+  }
+
+  type 'model fold = {
+    fold_index : int;
+    fit_time : float;
+    score_time : float;
+    scores : score array;
+    model : 'model option;
+    train_indices : int array option;
+    test_indices : int array option;
+    failures : failure array;
+  }
+
+  type 'model report
+  type 'target splitter
+
+  val target_independent_splitter :
+    (module SPLITTER
+       with type t = 'specification
+        and type target = unit
+        and type rng = Rng.t) ->
+    'specification ->
+    'target splitter
+  (** Adapts a target-independent splitter such as {!K_fold}. *)
+
+  val target_aware_splitter :
+    (module SPLITTER
+       with type t = 'specification
+        and type target = 'target
+        and type rng = Rng.t) ->
+    'specification ->
+    'target splitter
+  (** Adapts a target-aware splitter such as {!Stratified_k_fold}. *)
+
+  val folds : 'model report -> 'model fold array
+  val successful_fold_count : 'model report -> int
+
+  module Regression : sig
+    type model =
+      (Target.regression Target.t, Target.regression Target.t) Pipeline.fitted
+
+    val cross_validate :
+      ?return_train_score:bool ->
+      ?return_models:bool ->
+      ?return_indices:bool ->
+      ?failure_policy:failure_policy ->
+      splitter:Target.regression Target.t splitter ->
+      scorers:Regression_scorer.t array ->
+      seed:Seed.t ->
+      (Target.regression Target.t, Target.regression Target.t) Pipeline.t ->
+      Target.regression Dataset.t ->
+      (model report, Error.t) result
+  end
+
+  module Binary_classification : sig
+    type model =
+      ( Target.classification Target.t,
+        Target.classification Target.t )
+      Pipeline.fitted
+
+    val cross_validate :
+      ?return_train_score:bool ->
+      ?return_models:bool ->
+      ?return_indices:bool ->
+      ?failure_policy:failure_policy ->
+      splitter:Target.classification Target.t splitter ->
+      scorers:Binary_classification_scorer.t array ->
+      seed:Seed.t ->
+      ( Target.classification Target.t,
+        Target.classification Target.t )
+      Pipeline.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+  end
 end
