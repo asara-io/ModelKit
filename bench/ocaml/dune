@@ -13,3 +13,7 @@
 (executable
  (name metrics_worker)
  (libraries modelkit))
+
+(executable
+ (name cross_validation_worker)
+ (libraries modelkit))

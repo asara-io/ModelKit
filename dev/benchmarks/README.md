@@ -161,3 +161,53 @@ The raw report is
 `results/metrics_dense_v1.darwin-arm64.json`; it records every raw run,
 toolchain versions, thread limits, output signatures, allocations, and the full
 scenario.
+
+## Dense cross-validation v1
+
+`cross_validation_dense_v1` runs five deterministic stratified folds over a
+20,000 by 20 binary dataset with deterministic missing values. Both runtimes
+fit mean imputation, population standardization, and logistic regression within
+each training fold, then compute accuracy, balanced accuracy, negative log
+loss, and ROC AUC for the train and test partitions. Fitted models and original
+row indices are also retained.
+
+All 40 train/test scores, 20 index count/sum values, and five model-retention
+markers must agree within `1e-7` absolute and relative tolerance before a report
+is written. ModelKit also rejects negative per-fold timings. Both workers are
+sequential and every numerical thread pool is limited to one thread. ModelKit
+uses `Cross_validation.Binary_classification.cross_validate`; scikit-learn uses
+`sklearn.model_selection.cross_validate` with equivalent options.
+
+The harness performs one warmup and three interleaved measured runs in fresh
+processes. Timings therefore include runtime startup, deterministic data
+generation, all fold-local preprocessing and fitting, scoring, and report
+construction. Peak RSS is sampled every millisecond. ModelKit also reports
+cumulative OCaml heap allocation words, which are allocation traffic rather
+than retained memory and exclude Bigarray storage.
+
+The committed macOS arm64 report recorded these medians:
+
+| Implementation | Wall time | Peak RSS | OCaml allocation words |
+| --- | ---: | ---: | ---: |
+| ModelKit 0.3.0-dev / OCaml 5.3.0 | 4.243 s | 62,914,560 bytes | 750,193,782 |
+| scikit-learn 1.9.0 / Python 3.14.3 | 0.974 s | 170,606,592 bytes | unavailable |
+
+This scenario is `claim_eligible: false`. It establishes correctness,
+determinism, allocation, and sequential performance-regression evidence for the
+current implementation. It does not exercise Domainslib, the release-scale
+million-row workload, eight-core scaling, independent CI, confidence intervals,
+or the release benchmark's wall-time and RSS gates. No comparative product
+claim may be based on this report.
+
+Build and run it from the repository root:
+
+```sh
+opam exec -- dune build bench/ocaml/cross_validation_worker.exe
+env/bin/python dev/benchmarks/run.py \
+  --scenario dev/benchmarks/scenarios/cross_validation_dense.json
+```
+
+The raw report is
+`results/cross_validation_dense_v1.darwin-arm64.json`; it records every raw run,
+toolchain versions, thread limits, per-fold output signatures, allocations, and
+the full scenario.

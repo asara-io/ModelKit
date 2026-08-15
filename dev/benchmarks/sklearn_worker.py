@@ -356,6 +356,104 @@ def metrics(scenario: dict[str, object]) -> dict[str, object]:
     }
 
 
+def cross_validation(scenario: dict[str, object]) -> dict[str, object]:
+    import numpy as np
+    from sklearn.impute import SimpleImputer
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.model_selection import StratifiedKFold, cross_validate
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    dataset = scenario["dataset"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    raw = (
+        (rows * (17 + columns * 12) + columns * 31 + dataset["seed"]) % 1000
+    ).astype(np.float64)
+    raw = (raw / 100.0) - 5.0
+    x = raw.copy()
+    missing = (columns > 0) & (
+        (rows * 101 + columns * 53 + dataset["seed"])
+        % dataset["missing_modulus"]
+        == 0
+    )
+    x[missing] = np.nan
+    score = raw[:, 0] + 0.25 * raw[:, 1] - 0.1 * raw[:, 2]
+    y = np.where(score > 0.0, 7, -3)
+    pipeline = Pipeline(
+        [
+            ("impute", SimpleImputer(strategy="mean")),
+            ("scale", StandardScaler()),
+            (
+                "logistic",
+                LogisticRegression(
+                    C=scenario["logistic_c"],
+                    solver=scenario["logistic_solver"],
+                    tol=scenario["logistic_tolerance"],
+                    max_iter=scenario["logistic_max_iterations"],
+                ),
+            ),
+        ]
+    )
+    result = cross_validate(
+        pipeline,
+        x,
+        y,
+        cv=StratifiedKFold(n_splits=scenario["folds"], shuffle=False),
+        scoring=("accuracy", "balanced_accuracy", "neg_log_loss", "roc_auc"),
+        n_jobs=1,
+        return_train_score=True,
+        return_estimator=True,
+        return_indices=True,
+        error_score="raise",
+    )
+    signature = []
+    for fold in range(scenario["folds"]):
+        for scorer in (
+            "accuracy",
+            "balanced_accuracy",
+            "neg_log_loss",
+            "roc_auc",
+        ):
+            signature.extend(
+                [
+                    result[f"train_{scorer}"][fold],
+                    result[f"test_{scorer}"][fold],
+                ]
+            )
+        train_indices = result["indices"]["train"][fold]
+        test_indices = result["indices"]["test"][fold]
+        signature.extend(
+            [
+                len(train_indices),
+                len(test_indices),
+                np.sum(train_indices, dtype=np.int64),
+                np.sum(test_indices, dtype=np.int64),
+                float(result["estimator"][fold] is not None),
+            ]
+        )
+    signature_array = np.asarray(signature, dtype="<f8")
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature_array.tobytes()).hexdigest(),
+        "features": x.shape[1],
+        "folds": scenario["folds"],
+        "operations": [
+            "mean_imputation",
+            "standard_scaling",
+            "binary_logistic_regression",
+            "cross_validate",
+            "multiple_scorers",
+            "train_scores",
+            "models",
+            "indices",
+        ],
+        "samples": x.shape[0],
+        "signature": signature_array.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("scenario", type=Path)
@@ -372,6 +470,8 @@ def main() -> None:
         result = splitters(scenario)
     elif workload == "metrics":
         result = metrics(scenario)
+    elif workload == "cross_validation":
+        result = cross_validation(scenario)
     else:
         raise ValueError(f"unknown workload {workload!r}")
     print(json.dumps(result))
