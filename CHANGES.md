@@ -1,4 +1,4 @@
-# 0.3.0 (2026-08-17)
+# 0.3.1 (2026-08-17)
 
 - Add immutable dense dataset admission with explicit finiteness policies,
   aligned zero-copy row views, stable schema fingerprints, and observable
