@@ -17,7 +17,7 @@ Python users of `scikit-learn` will find this library familiar in serving the sa
 - Portable weighted ordinary least squares, ridge regression, and binary logistic regression keep immutable specifications separate from fitted coefficients and solver diagnostics.
 - Deterministic K-fold, stratified K-fold, group K-fold, and expanding-window time-series splitters produce validated row views that can be explicitly materialized as aligned datasets.
 - Weighted regression and binary classification metrics provide immutable higher-is-better scorers, plotting-neutral residual, ROC, and precision–recall data, stable score aggregation, and an explicit undefined-result policy.
-- Portable sequential cross-validation fits pipelines within deterministic folds and reports ordered train/test scores, CPU timings, optional fitted models and indices, and typed failures.
+- Cross-validation fits pipelines within deterministic folds and reports ordered train/test scores, CPU timings, optional fitted models and indices, and typed failures; the optional `modelkit-parallel` package adds bounded Domainslib fold execution.
 - Typed finite grid search evaluates immutable pipeline configurations on shared deterministic splits, ranks candidates by a named scorer, records candidate failures, and refits the selected model on all training data.
 
 ## Motivation and Future Work
@@ -26,7 +26,7 @@ The library is built with a strong focus first on correctness, portability, and 
 
 To this end, you will note that there is a significant amount of from-scratch implementation under ModelKit's hood. When implementation milestones are hit for being useful in real-world data science workflows, ModelKit will undergo benchmarking to gauge its performance against alternate implementations, such as `scikit-learn` itself.
 
-Anticipating performance benefits from existing work such as using Owl for a numerical engine and Lacaml for acceleration, integration tasks will likely be brought above the line. In that phase, users who have come to be familiar with the consistent contracts of ModelKit's public APIs will enjoy performance benefits without contract changes.
+Anticipating performance benefits from existing work such as using Owl for a numerical engine and Lacaml for acceleration, integration tasks will likely be brought above the line. Such changes will not be included in version 0.3.x, but in later versions. In that phase, users who have come to be familiar with the consistent contracts of ModelKit's public APIs will enjoy performance benefits without contract changes.
 
 ## Status
 
@@ -69,13 +69,23 @@ In the current pipeline contract, sample weights route to the terminal estimator
 
 Undefined metrics are observable through `Undefined_metric_policy`: the default returns a typed error, while callers may explicitly request NaN or documented finite fallbacks. `Regression_scorer` and `Binary_classification_scorer` make every selection score higher-is-better by negating loss metrics, and `Score_aggregation` reports stable population summaries for fold scores.
 
-`Cross_validation.Regression.cross_validate` and `Cross_validation.Binary_classification.cross_validate` run a complete evaluation sequentially in stable fold order. Splitters are adapted explicitly as target-independent or target-aware, each fold derives its RNG from a fit seed and logical fold index, and preprocessing is fitted only after the training partition is materialized. The fit seed defaults to the split seed but can vary independently for deterministic meta-estimators without changing split membership. Reports contain process CPU fit/score timings, multiple scorers in caller order, optional train scores, fitted models, and original row indices. The default `Abort` failure policy returns the first typed failure; `Record` retains structured prediction and scoring failures and continues evaluating later folds.
+`Cross_validation.Regression.cross_validate` and `Cross_validation.Binary_classification.cross_validate` run a complete evaluation in stable logical fold order. Splitters are adapted explicitly as target-independent or target-aware, each fold derives its RNG from a fit seed and logical fold index, and preprocessing is fitted only after the training partition is materialized. The fit seed defaults to the split seed but can vary independently for deterministic meta-estimators without changing split membership. Reports contain process CPU fit/score timings, multiple scorers in caller order, optional train scores, fitted models, and original row indices. The default `Abort` failure policy returns the lowest-index typed failure; `Record` retains structured prediction and scoring failures and continues evaluating later folds. Under parallel execution, per-fold CPU-time intervals can overlap and should not be summed as elapsed wall time.
 
-Binary probability scorers require the pipeline terminal to declare its probability-column class order with `Pipeline.estimator ~classes`; ModelKit does not assume that a particular matrix column represents the configured positive label. Cross-validation currently uses the always-available sequential implementation. Bounded Domainslib fold execution remains planned work.
+Binary probability scorers require the pipeline terminal to declare its probability-column class order with `Pipeline.estimator ~classes`; ModelKit does not assume that a particular matrix column represents the configured positive label. Cross-validation uses the always-available sequential implementation unless an optional execution backend is supplied.
 
-`Grid_search.axis` defines a non-empty, typed parameter axis by encoding report values and immutably updating a user-owned configuration record. `Grid_search.create` forms the finite Cartesian product in stable declaration order, and the regression and binary-classification search functions evaluate every candidate against identical split membership. Reports retain candidate parameters, mean CPU timings, aggregate train/test scores, ranks, underlying cross-validation reports, and typed build failures. The default `Record` policy excludes candidates with unavailable primary scores while continuing the search; `Abort` returns the first failure. The named `refit` scorer selects the winner, with the lowest candidate index resolving exact ties, and the winning specification is fitted once on the complete dataset.
+Install `modelkit-parallel` to evaluate independent folds with a bounded Domainslib pool. The requested `domains` count includes the calling domain, and `domains:1` takes the sequential path without creating a pool. Fixed seeds produce identical logical results across domain counts. `Modelkit_parallel.diagnostics` reports the requested fold concurrency, runtime-recommended domain count, detected or explicitly supplied inner numerical-library thread limit, estimated runnable threads, and typed oversubscription warnings; it never mutates process environment variables. Configure numerical libraries for one inner thread per fold, or explicitly choose sequential folds when an inner solver owns parallelism.
 
-The portable package lives under `lib/`. Optional ecosystem adapters and accelerated backends are reserved under `adapters/` and `backends/`; they will remain separate packages that depend on the portable core when implemented.
+```ocaml
+let parallel =
+  Modelkit_parallel.create ~inner_threads:1 ~domains:4 () |> Result.get_ok
+
+let execution = Modelkit_parallel.execution parallel
+let diagnostics = Modelkit_parallel.diagnostics parallel
+```
+
+`Grid_search.axis` defines a non-empty, typed parameter axis by encoding report values and immutably updating a user-owned configuration record. `Grid_search.create` forms the finite Cartesian product in stable declaration order, and the regression and binary-classification search functions evaluate every candidate against identical split membership. Reports retain candidate parameters, mean CPU timings, aggregate train/test scores, ranks, underlying cross-validation reports, and typed build failures. The default `Record` policy excludes candidates with unavailable primary scores while continuing the search; `Abort` returns the first failure. The named `refit` scorer selects the winner, with the lowest candidate index resolving exact ties, and the winning specification is fitted once on the complete dataset. Passing an execution backend parallelizes each candidate's folds while retaining stable sequential candidate order.
+
+The portable `modelkit` package lives under `lib/`. The optional `modelkit-parallel` package lives under `backends/parallel/` and depends inward on the portable core. Other ecosystem adapters and accelerated numerical backends remain reserved under `adapters/` and `backends/` as separate future packages.
 
 ## Development
 
@@ -90,19 +100,20 @@ opam install ocamlformat.0.29.0
 
 opam exec -- dune build @all @runtest @doc @fmt @opam @install --auto-promote
 opam lint modelkit.opam
+opam lint modelkit-parallel.opam
 ```
 
 ### Windows
 
 ```commandline
-opam lock ./modelkit.opam --lock-suffix=locked.windows-x86_64
+opam lock ./modelkit.opam ./modelkit-parallel.opam --lock-suffix=locked.windows-x86_64
 opam install . --deps-only --with-test --with-doc --locked --lock-suffix=locked.windows-x86_64
 ```
 
 ### macOS (arm64)
 
 ```sh
-opam lock ./modelkit.opam --lock-suffix=locked.macos-arm64
+opam lock ./modelkit.opam ./modelkit-parallel.opam --lock-suffix=locked.macos-arm64
 opam install . --deps-only --with-test --with-doc --locked --lock-suffix=locked.macos-arm64
 ```
 
@@ -134,7 +145,7 @@ python dev/fixtures/generate.py
 python dev/benchmarks/run.py
 ```
 
-The committed smoke benchmark validates the measurement workflow only. The development preprocessing, dense-linear-model, splitter, metrics, sequential cross-validation, and finite grid-search benchmarks compare portable ModelKit operations with pinned scikit-learn references on deterministic workloads. Build the corresponding OCaml worker and select `dev/benchmarks/scenarios/preprocessing_dense.json`, `dev/benchmarks/scenarios/linear_models_dense.json`, `dev/benchmarks/scenarios/splitters_dense.json`, `dev/benchmarks/scenarios/metrics_dense.json`, `dev/benchmarks/scenarios/cross_validation_dense.json`, or `dev/benchmarks/scenarios/grid_search_dense.json`. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for scope, raw-result links, and limitations. Release comparisons will use the product plan's independent-CI benchmark contract.
+The committed smoke benchmark validates the measurement workflow only. The development preprocessing, dense-linear-model, splitter, metrics, sequential and bounded-parallel cross-validation, and finite grid-search benchmarks compare ModelKit operations with pinned scikit-learn references on deterministic workloads. Build the corresponding OCaml worker and select a scenario under `dev/benchmarks/scenarios/`; the parallel cross-validation scenario records sequential and four-worker results for both runtimes so speedup, efficiency, wall time, and peak RSS can be compared. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for scope, raw-result links, and limitations. Release comparisons will use the product plan's independent-CI benchmark contract.
 
 ## Project Policies
 
