@@ -20,6 +20,17 @@
  (libraries modelkit alcotest))
 
 (test
+ (name artifact_test)
+ (modules artifact_test)
+ (libraries modelkit alcotest)
+ (deps fixtures/artifacts/regression_pipeline_v1.hex)
+ (action
+  (setenv
+   MODELKIT_ARTIFACT_FIXTURE
+   %{dep:fixtures/artifacts/regression_pipeline_v1.hex}
+   (run %{test}))))
+
+(test
  (name linear_model_test)
  (modules linear_model_test)
  (libraries modelkit alcotest))
