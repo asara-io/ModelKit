@@ -21,3 +21,7 @@
 (executable
  (name grid_search_worker)
  (libraries modelkit))
+
+(executable
+ (name parallel_cross_validation_worker)
+ (libraries modelkit modelkit-parallel))

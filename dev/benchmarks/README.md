@@ -212,6 +212,67 @@ The raw report is
 toolchain versions, thread limits, per-fold output signatures, allocations, and
 the full scenario.
 
+## Bounded parallel cross-validation v1
+
+`parallel_cross_validation_dense_v1` runs eight deterministic stratified folds
+over the same 20,000 by 20 binary workflow as the sequential cross-validation
+scenario. It records four implementations: ModelKit and scikit-learn each with
+one fold worker and with four fold workers. Every inner numerical thread pool
+is limited to one thread. ModelKit uses a bounded Domainslib pool whose domain
+count includes the caller; scikit-learn uses its pinned version's default
+joblib process backend for `n_jobs=4`.
+
+All 104 scores, index statistics, and model-retention markers from every
+implementation must agree with sequential scikit-learn within `1e-7` absolute
+and relative tolerance before a report is written. The harness also requires a
+stable checksum across all measured runs and verifies the configured inner
+thread limit. ModelKit reports its effective fold-domain count, estimated
+runnable threads, and diagnostic-warning count.
+
+The harness performs one warmup and three interleaved measured runs in fresh
+processes. Timings therefore include runtime and worker startup, deterministic
+data generation, preprocessing, fitting, scoring, and report construction.
+Peak RSS includes recursive child processes and is sampled every millisecond.
+OCaml allocation words are omitted because `Gc.allocated_bytes` does not
+provide the aggregate cross-domain allocation traffic needed for a comparable
+parallel measurement.
+
+The committed macOS arm64 report recorded these medians:
+
+| Implementation | Fold workers | Wall time | Peak RSS |
+| --- | ---: | ---: | ---: |
+| ModelKit 0.3.0-dev / OCaml 5.3.0 | 1 | 7.522 s | 75,071,488 bytes |
+| ModelKit 0.3.0-dev / OCaml 5.3.0 | 4 | 2.045 s | 103,366,656 bytes |
+| scikit-learn 1.9.0 / Python 3.14.3 | 1 | 1.109 s | 175,210,496 bytes |
+| scikit-learn 1.9.0 / Python 3.14.3 | 4 | 2.008 s | 849,149,952 bytes |
+
+For these local measurements, ModelKit's four-domain path achieved 3.68x
+speedup over its sequential path, or 91.9% four-worker efficiency. Its parallel
+median was 1.8% longer than the parallel scikit-learn median. Scikit-learn's
+parallel median was 1.81x longer than its sequential median because process
+startup outweighed fold-level speedup at this workload size. These observations
+characterize this scenario only; notably, Domainslib threads and joblib
+processes have different startup and memory behavior.
+
+This scenario is `claim_eligible: false`. It is a local development record, not
+the release-scale workload, and it lacks independent Linux x86-64 and arm64 CI,
+confidence intervals, sustained worker-pool measurements, and the release
+benchmark's wall-time and RSS gates. It cannot support a comparative product
+claim.
+
+Build and run it from the repository root:
+
+```sh
+opam exec -- dune build bench/ocaml/parallel_cross_validation_worker.exe
+env/bin/python dev/benchmarks/run.py \
+  --scenario dev/benchmarks/scenarios/parallel_cross_validation_dense.json
+```
+
+The raw report is
+`results/parallel_cross_validation_dense_v1.darwin-arm64.json`; it records all
+raw timings, peak RSS samples, toolchain versions, thread limits, output
+signatures, execution diagnostics, and the full scenario.
+
 ## Dense finite grid search v1
 
 `grid_search_dense_v1` evaluates six ridge-regression configurations formed by

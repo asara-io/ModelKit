@@ -401,7 +401,7 @@ def cross_validation(scenario: dict[str, object]) -> dict[str, object]:
         y,
         cv=StratifiedKFold(n_splits=scenario["folds"], shuffle=False),
         scoring=("accuracy", "balanced_accuracy", "neg_log_loss", "roc_auc"),
-        n_jobs=1,
+        n_jobs=scenario.get("execution_workers", 1),
         return_train_score=True,
         return_estimator=True,
         return_indices=True,
@@ -438,6 +438,7 @@ def cross_validation(scenario: dict[str, object]) -> dict[str, object]:
         "checksum": hashlib.sha256(signature_array.tobytes()).hexdigest(),
         "features": x.shape[1],
         "folds": scenario["folds"],
+        "fold_workers": scenario.get("execution_workers", 1),
         "operations": [
             "mean_imputation",
             "standard_scaling",
@@ -519,8 +520,11 @@ def grid_search(scenario: dict[str, object]) -> dict[str, object]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("scenario", type=Path)
+    parser.add_argument("execution_workers", type=int, nargs="?")
     args = parser.parse_args()
     scenario = json.loads(args.scenario.read_text(encoding="utf-8"))
+    if args.execution_workers is not None:
+        scenario["execution_workers"] = args.execution_workers
     workload = scenario.get("workload", "dummy_cv")
     if workload == "dummy_cv":
         result = dummy_cv(scenario)
@@ -532,7 +536,7 @@ def main() -> None:
         result = splitters(scenario)
     elif workload == "metrics":
         result = metrics(scenario)
-    elif workload == "cross_validation":
+    elif workload in ("cross_validation", "parallel_cross_validation"):
         result = cross_validation(scenario)
     elif workload == "grid_search":
         result = grid_search(scenario)

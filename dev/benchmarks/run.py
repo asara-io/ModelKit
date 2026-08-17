@@ -163,6 +163,51 @@ def worker_commands(scenario: dict[str, object], scenario_path: Path) -> dict[st
             str(scenario["logistic_tolerance"]),
             str(scenario["logistic_max_iterations"]),
         ]
+    elif workload == "parallel_cross_validation":
+        modelkit_worker = (
+            ROOT
+            / "_build"
+            / "default"
+            / "bench"
+            / "ocaml"
+            / "parallel_cross_validation_worker.exe"
+        )
+        if not modelkit_worker.exists():
+            raise RuntimeError(
+                "ModelKit parallel benchmark worker is missing; run "
+                "`opam exec -- dune build "
+                "bench/ocaml/parallel_cross_validation_worker.exe`"
+            )
+        domains = str(scenario["fold_domains"])
+        commands = {
+            "sklearn_sequential": [
+                sys.executable,
+                str(sklearn_worker),
+                str(scenario_path),
+                "1",
+            ],
+            "sklearn_parallel": [
+                sys.executable,
+                str(sklearn_worker),
+                str(scenario_path),
+                domains,
+            ],
+        }
+        dataset = scenario["dataset"]
+        modelkit_arguments = [
+            str(modelkit_worker),
+            str(dataset["samples"]),
+            str(dataset["features"]),
+            str(dataset["seed"]),
+            str(scenario["folds"]),
+            str(dataset["missing_modulus"]),
+            str(scenario["logistic_c"]),
+            str(scenario["logistic_tolerance"]),
+            str(scenario["logistic_max_iterations"]),
+            str(scenario["thread_limit"]),
+        ]
+        commands["modelkit_sequential"] = [*modelkit_arguments, "1"]
+        commands["modelkit_parallel"] = [*modelkit_arguments, domains]
     elif workload == "grid_search":
         modelkit_worker = (
             ROOT / "_build" / "default" / "bench" / "ocaml" / "grid_search_worker.exe"
@@ -238,12 +283,37 @@ def main() -> None:
             raise RuntimeError(
                 f"benchmark harness did not observe {implementation} resident memory"
             )
+    if scenario.get("workload") == "parallel_cross_validation":
+        expected_workers = {
+            "sklearn_sequential": 1,
+            "sklearn_parallel": scenario["fold_domains"],
+            "modelkit_sequential": 1,
+            "modelkit_parallel": scenario["fold_domains"],
+        }
+        for implementation, implementation_runs in runs.items():
+            workers = expected_workers[implementation]
+            if any(run["worker"]["fold_workers"] != workers for run in implementation_runs):
+                raise RuntimeError(
+                    f"{implementation} did not use {workers} fold workers"
+                )
+        for implementation in ("modelkit_sequential", "modelkit_parallel"):
+            workers = expected_workers[implementation]
+            if any(
+                run["worker"]["estimated_runnable_threads"]
+                != workers * scenario["thread_limit"]
+                or run["worker"]["warning_count"] != 0
+                for run in runs[implementation]
+            ):
+                raise RuntimeError(
+                    f"{implementation} reported unexpected execution diagnostics"
+                )
     signature_tolerance = {
         "preprocessing": 1e-12,
         "linear_models": 1e-7,
         "splitters": 0.0,
         "metrics": 1e-7,
         "cross_validation": 1e-7,
+        "parallel_cross_validation": 1e-7,
         "grid_search": 1e-7,
     }.get(scenario.get("workload"))
     if signature_tolerance is not None:
@@ -251,7 +321,9 @@ def main() -> None:
             implementation: implementation_runs[0]["worker"]["signature"]
             for implementation, implementation_runs in runs.items()
         }
-        reference = signatures["sklearn"]
+        reference = signatures.get("sklearn", signatures.get("sklearn_sequential"))
+        if reference is None:
+            raise RuntimeError("benchmark has no sklearn reference implementation")
         for implementation, signature in signatures.items():
             if len(signature) != len(reference) or any(
                 not math.isclose(

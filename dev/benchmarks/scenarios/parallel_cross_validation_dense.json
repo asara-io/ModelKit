@@ -1,0 +1,20 @@
+{
+  "claim_eligible": false,
+  "dataset": {
+    "features": 20,
+    "missing_modulus": 23,
+    "samples": 20000,
+    "seed": 1729
+  },
+  "fold_domains": 4,
+  "folds": 8,
+  "logistic_c": 1.7,
+  "logistic_max_iterations": 100,
+  "logistic_solver": "newton-cholesky",
+  "logistic_tolerance": 1e-12,
+  "measured_runs": 3,
+  "scenario": "parallel_cross_validation_dense_v1",
+  "thread_limit": 1,
+  "warmup_runs": 1,
+  "workload": "parallel_cross_validation"
+}
