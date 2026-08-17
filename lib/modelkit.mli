@@ -527,6 +527,21 @@ module Sequential_execution : sig
   include EXECUTION with type t := t
 end
 
+(** A packaged execution backend.
+
+    The portable default is {!Sequential_execution}. Optional packages can
+    provide bounded parallel implementations without becoming dependencies of
+    [modelkit]. *)
+module Execution : sig
+  type t
+
+  val of_backend :
+    (module EXECUTION with type t = 'configuration) -> 'configuration -> t
+
+  val sequential : t
+  val concurrency : t -> int
+end
+
 module Reference_backend : NUMERICAL_BACKEND
 (** Native OCaml float64 kernels with stable fixed-order reductions. *)
 
@@ -1216,7 +1231,7 @@ module Score_aggregation : sig
     ?undefined:Undefined_metric_policy.t -> float array -> (t, Error.t) result
 end
 
-(** Deterministic sequential cross-validation over immutable pipelines.
+(** Deterministic cross-validation over immutable pipelines.
 
     Split membership is planned from [seed] before fitting. Each fold receives a
     child seed derived from its logical index and [fit_seed], which defaults to
@@ -1226,9 +1241,12 @@ end
     scorer arrays retain splitter and caller order.
 
     [fit_time] and [score_time] are portable process CPU seconds measured with
-    [Sys.time]. [Abort] returns the first failure in stable execution order;
-    [Record] retains typed failures in the report and continues with later
-    folds. Models and indices are retained only when requested. *)
+    [Sys.time]; intervals can overlap under parallel execution, so their sum is
+    not elapsed wall time. [Abort] returns the lowest-index failure; [Record]
+    retains typed failures in the report and continues with later folds. Models
+    and indices are retained only when requested. [execution] defaults to
+    {!Execution.sequential}; every backend must return outputs and the
+    lowest-index failure in logical fold order. *)
 module Cross_validation : sig
   type failure_policy = Abort | Record
   type partition = Train | Test
@@ -1292,6 +1310,7 @@ module Cross_validation : sig
       ?return_indices:bool ->
       ?failure_policy:failure_policy ->
       ?fit_seed:Seed.t ->
+      ?execution:Execution.t ->
       splitter:Target.regression Target.t splitter ->
       scorers:Regression_scorer.t array ->
       seed:Seed.t ->
@@ -1312,6 +1331,7 @@ module Cross_validation : sig
       ?return_indices:bool ->
       ?failure_policy:failure_policy ->
       ?fit_seed:Seed.t ->
+      ?execution:Execution.t ->
       splitter:Target.classification Target.t splitter ->
       scorers:Binary_classification_scorer.t array ->
       seed:Seed.t ->
@@ -1337,7 +1357,10 @@ end
     candidate order. The winning immutable specification is fitted once on the
     complete dataset. For [c] candidates, [f] folds, and [s] scorers, search
     performs at most [c * f + 1] fits and retains [O(c * (f + s))] report data.
-    An empty axis array evaluates the base configuration once. *)
+    An empty axis array evaluates the base configuration once. [execution]
+    controls each candidate's fold evaluation and defaults to sequential
+    execution; candidates themselves are evaluated in stable sequential order.
+*)
 module Grid_search : sig
   type parameter_value =
     | Bool of bool
@@ -1405,6 +1428,7 @@ module Grid_search : sig
     val search :
       ?return_train_score:bool ->
       ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
       grid:
         ( 'configuration,
           Target.regression Target.t,
@@ -1424,6 +1448,7 @@ module Grid_search : sig
     val search :
       ?return_train_score:bool ->
       ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
       grid:
         ( 'configuration,
           Target.classification Target.t,

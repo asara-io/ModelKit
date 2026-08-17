@@ -1032,6 +1032,24 @@ module Sequential_execution = struct
     loop 0 []
 end
 
+module Execution = struct
+  type t =
+    | Backend :
+        (module EXECUTION with type t = 'configuration) * 'configuration
+        -> t
+
+  let of_backend backend configuration = Backend (backend, configuration)
+
+  let sequential =
+    of_backend (module Sequential_execution) Sequential_execution.default
+
+  let concurrency (Backend ((module Backend), configuration)) =
+    Backend.concurrency configuration
+
+  let map (Backend ((module Backend), configuration)) ~f inputs =
+    Backend.map configuration ~f inputs
+end
+
 module Reference_backend = struct
   let name = "reference"
 
@@ -4392,7 +4410,8 @@ module Cross_validation = struct
     (Sys.time () -. started, result)
 
   let run ~return_train_score ~return_models ~return_indices ~failure_policy
-      ~fit_seed ~splitter ~scorer_names ~seed ~score_model pipeline dataset =
+      ~fit_seed ~execution ~splitter ~scorer_names ~seed ~score_model pipeline
+      dataset =
     let ( let* ) = Result.bind in
     let* () = validate_scorers scorer_names in
     let splitter_rng =
@@ -4415,84 +4434,75 @@ module Cross_validation = struct
       in
       validate 0 []
     in
-    let rec evaluate fold_index reversed =
-      if fold_index = Array.length splits then
-        Ok { report_folds = Array.of_list (List.rev reversed) }
-      else
-        let split = splits.(fold_index) in
-        let train_indices, test_indices = retain_indices return_indices split in
-        match Split.materialize dataset split with
-        | Error error ->
-            let error = contextualize fold_index error in
-            if failure_policy = Abort then Error error
-            else
-              let fold =
-                {
-                  fold_index;
-                  fit_time = 0.0;
-                  score_time = 0.0;
-                  scores = empty_scores ~return_train_score scorer_names;
-                  model = None;
-                  train_indices;
-                  test_indices;
-                  failures = [| { phase = Materialization; error } |];
-                }
-              in
-              evaluate (fold_index + 1) (fold :: reversed)
-        | Ok (train, test) -> (
-            let fold_rng =
-              Seed.derive fit_seed ~operation:"cross-validation-fold"
-                ~index:fold_index
-              |> Rng.create
-            in
-            let fit_time, fitted =
-              timed (fun () ->
-                  Pipeline.fit (Pipeline.clone pipeline)
-                    ?sample_weight:(Dataset.sample_weight train)
-                    ~rng:fold_rng
-                    ~feature_schema:(Dataset.feature_schema train)
-                    ~x:(Dataset.features train) ~y:(Dataset.target train) ())
-            in
-            match fitted with
-            | Error error ->
-                let error = contextualize fold_index error in
-                if failure_policy = Abort then Error error
-                else
-                  let fold =
-                    {
-                      fold_index;
-                      fit_time;
-                      score_time = 0.0;
-                      scores = empty_scores ~return_train_score scorer_names;
-                      model = None;
-                      train_indices;
-                      test_indices;
-                      failures = [| { phase = Fitting; error } |];
-                    }
-                  in
-                  evaluate (fold_index + 1) (fold :: reversed)
-            | Ok fitted ->
-                let score_time, scored =
-                  timed (fun () ->
-                      score_model ~fold_index ~return_train_score
-                        ~failure_policy fitted train test)
-                in
-                let* scores, failures = scored in
-                let fold =
+    let evaluate ~index:fold_index split =
+      let train_indices, test_indices = retain_indices return_indices split in
+      match Split.materialize dataset split with
+      | Error error ->
+          let error = contextualize fold_index error in
+          if failure_policy = Abort then Error error
+          else
+            Ok
+              {
+                fold_index;
+                fit_time = 0.0;
+                score_time = 0.0;
+                scores = empty_scores ~return_train_score scorer_names;
+                model = None;
+                train_indices;
+                test_indices;
+                failures = [| { phase = Materialization; error } |];
+              }
+      | Ok (train, test) -> (
+          let fold_rng =
+            Seed.derive fit_seed ~operation:"cross-validation-fold"
+              ~index:fold_index
+            |> Rng.create
+          in
+          let fit_time, fitted =
+            timed (fun () ->
+                Pipeline.fit (Pipeline.clone pipeline)
+                  ?sample_weight:(Dataset.sample_weight train)
+                  ~rng:fold_rng
+                  ~feature_schema:(Dataset.feature_schema train)
+                  ~x:(Dataset.features train) ~y:(Dataset.target train) ())
+          in
+          match fitted with
+          | Error error ->
+              let error = contextualize fold_index error in
+              if failure_policy = Abort then Error error
+              else
+                Ok
                   {
                     fold_index;
                     fit_time;
-                    score_time;
-                    scores;
-                    model = (if return_models then Some fitted else None);
+                    score_time = 0.0;
+                    scores = empty_scores ~return_train_score scorer_names;
+                    model = None;
                     train_indices;
                     test_indices;
-                    failures;
+                    failures = [| { phase = Fitting; error } |];
                   }
-                in
-                evaluate (fold_index + 1) (fold :: reversed))
+          | Ok fitted ->
+              let score_time, scored =
+                timed (fun () ->
+                    score_model ~fold_index ~return_train_score ~failure_policy
+                      fitted train test)
+              in
+              let* scores, failures = scored in
+              Ok
+                {
+                  fold_index;
+                  fit_time;
+                  score_time;
+                  scores;
+                  model = (if return_models then Some fitted else None);
+                  train_indices;
+                  test_indices;
+                  failures;
+                })
     in
-    evaluate 0 []
+    let* report_folds = Execution.map execution ~f:evaluate splits in
+    Ok { report_folds }
 
   let failure ~phase error = { phase; error }
 
@@ -4605,12 +4615,13 @@ module Cross_validation = struct
         @ scoring_failures test_results)
 
     let cross_validate ?(return_train_score = false) ?(return_models = false)
-        ?(return_indices = false) ?(failure_policy = Abort) ?fit_seed ~splitter
-        ~scorers ~seed pipeline dataset =
+        ?(return_indices = false) ?(failure_policy = Abort) ?fit_seed
+        ?(execution = Execution.sequential) ~splitter ~scorers ~seed pipeline
+        dataset =
       let fit_seed = Option.value fit_seed ~default:seed in
       let scorer_names = Array.map Regression_scorer.name scorers in
       run ~return_train_score ~return_models ~return_indices ~failure_policy
-        ~fit_seed ~splitter ~scorer_names ~seed
+        ~fit_seed ~execution ~splitter ~scorer_names ~seed
         ~score_model:(score_model scorers) pipeline dataset
   end
 
@@ -4828,12 +4839,13 @@ module Cross_validation = struct
       finish_scoring failure_policy scores failures
 
     let cross_validate ?(return_train_score = false) ?(return_models = false)
-        ?(return_indices = false) ?(failure_policy = Abort) ?fit_seed ~splitter
-        ~scorers ~seed pipeline dataset =
+        ?(return_indices = false) ?(failure_policy = Abort) ?fit_seed
+        ?(execution = Execution.sequential) ~splitter ~scorers ~seed pipeline
+        dataset =
       let fit_seed = Option.value fit_seed ~default:seed in
       let scorer_names = Array.map Binary_classification_scorer.name scorers in
       run ~return_train_score ~return_models ~return_indices ~failure_policy
-        ~fit_seed ~splitter ~scorer_names ~seed
+        ~fit_seed ~execution ~splitter ~scorer_names ~seed
         ~score_model:(score_model scorers) pipeline dataset
   end
 end
@@ -5217,13 +5229,15 @@ module Grid_search = struct
     type model = Cross_validation.Regression.model
 
     let search ?(return_train_score = false)
-        ?(failure_policy = Cross_validation.Record) ~grid ~splitter ~scorers
-        ~refit ~seed dataset =
+        ?(failure_policy = Cross_validation.Record)
+        ?(execution = Execution.sequential) ~grid ~splitter ~scorers ~refit
+        ~seed dataset =
       let scorer_names = Array.map Regression_scorer.name scorers in
       let cross_validate ~return_train_score ~failure_policy ~fit_seed pipeline
           dataset =
         Cross_validation.Regression.cross_validate ~return_train_score
-          ~failure_policy ~fit_seed ~splitter ~scorers ~seed pipeline dataset
+          ~failure_policy ~fit_seed ~execution ~splitter ~scorers ~seed pipeline
+          dataset
       in
       search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
         ~refit ~seed grid dataset
@@ -5233,14 +5247,15 @@ module Grid_search = struct
     type model = Cross_validation.Binary_classification.model
 
     let search ?(return_train_score = false)
-        ?(failure_policy = Cross_validation.Record) ~grid ~splitter ~scorers
-        ~refit ~seed dataset =
+        ?(failure_policy = Cross_validation.Record)
+        ?(execution = Execution.sequential) ~grid ~splitter ~scorers ~refit
+        ~seed dataset =
       let scorer_names = Array.map Binary_classification_scorer.name scorers in
       let cross_validate ~return_train_score ~failure_policy ~fit_seed pipeline
           dataset =
         Cross_validation.Binary_classification.cross_validate
-          ~return_train_score ~failure_policy ~fit_seed ~splitter ~scorers ~seed
-          pipeline dataset
+          ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
+          ~scorers ~seed pipeline dataset
       in
       search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
         ~refit ~seed grid dataset
