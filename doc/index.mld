@@ -27,8 +27,11 @@ expanding-window time-series splitters produce validated source-row views;
 test selections into aligned datasets. Weighted regression and binary
 classification metrics expose higher-is-better scorer specifications, stable
 fold-score aggregation, explicit undefined-result handling, and residual, ROC,
-and precision-recall data without a plotting dependency. Cross-validation
-orchestration remains future work.
+and precision-recall data without a plotting dependency. Cross-validation and
+finite grid search retain stable logical ordering and structured failures;
+optional bounded Domainslib fold execution is supplied by the separate
+[modelkit-parallel] package. Versioned data-only artifacts reconstruct fitted
+built-in pipelines under explicit reader limits and task-specific loaders.
 Portable tests consume committed scikit-learn reference data without requiring
 Python during a normal build or test run.
 
@@ -71,13 +74,11 @@ terminal estimator:
 
 {@ocaml[
 # let impute_stage =
-    Pipeline.transformer ~name:"impute" (module Simple_imputer)
-      (Simple_imputer.mean ())
+    Artifact.simple_imputer_stage ~name:"impute" (Simple_imputer.mean ())
     |> Result.get_ok;;
 val impute_stage : Pipeline.transformer = <abstr>
 # let scale_stage =
-    Pipeline.transformer ~name:"scale" (module Standard_scaler)
-      (Standard_scaler.create ())
+    Artifact.standard_scaler_stage ~name:"scale" (Standard_scaler.create ())
     |> Result.get_ok;;
 val scale_stage : Pipeline.transformer = <abstr>
 # let pipeline_steps =
@@ -88,25 +89,31 @@ val pipeline_steps : Pipeline.builder = <abstr>
 # let logistic = Logistic_regression.create () |> Result.get_ok;;
 val logistic : Logistic_regression.t = <abstr>
 # let terminal =
-    Pipeline.estimator ~name:"logistic" (module Logistic_regression)
-      ~decision_function:Logistic_regression.decision_function
-      ~predict_proba:Logistic_regression.predict_proba logistic
+    Artifact.logistic_regression_estimator ~name:"logistic" logistic
     |> Result.get_ok;;
 val terminal :
-  (Logistic_regression.target, Logistic_regression.prediction)
+  (Target.classification Target.t, Target.classification Target.t)
   Pipeline.estimator = <abstr>
 # let pipeline = Pipeline.set_estimator pipeline_steps terminal |> Result.get_ok;;
 val pipeline :
-  (Logistic_regression.target, Logistic_regression.prediction) Pipeline.t =
+  (Target.classification Target.t, Target.classification Target.t) Pipeline.t =
   <abstr>
 # let fitted =
     Pipeline.fit pipeline ~rng:(Rng.create (Seed.of_int 42))
       ~feature_schema:schema ~x ~y ()
     |> Result.get_ok;;
 val fitted :
-  (Logistic_regression.target, Logistic_regression.prediction)
+  (Target.classification Target.t, Target.classification Target.t)
   Pipeline.fitted = <abstr>
 # Pipeline.predict fitted ~feature_schema:schema ~x
+  |> Result.get_ok |> Target.classification_values;;
+- : int array = [|0; 1|]
+# let restored =
+    Artifact.encode_binary_classification fitted
+    |> Result.get_ok |> Artifact.decode_binary_classification
+    |> Result.get_ok |> Artifact.model;;
+val restored : Artifact.binary_classification_model = <abstr>
+# Pipeline.predict restored ~feature_schema:schema ~x
   |> Result.get_ok |> Target.classification_values;;
 - : int array = [|0; 1|]
 # let splitter = Stratified_k_fold.create ~folds:2 () |> Result.get_ok;;
@@ -133,7 +140,28 @@ val positive_probabilities : Vector.t = <abstr>
 
 The current pipeline routes targets and sample weights to its terminal
 estimator. Its unsupervised preprocessing stages receive neither. External
-estimators can also participate by implementing {!Modelkit.ESTIMATOR}.
+estimators can also participate by implementing {!Modelkit.ESTIMATOR}. Because
+arbitrary extension modules may close over behavior that has no reviewed data
+codec, pipelines intended for persistence use the artifact-aware built-in
+constructors. Encoding any unsupported component returns a typed
+{!Modelkit.Error.Artifact} failure.
+
+{1 Artifact safety and compatibility}
+
+{!Modelkit.Artifact} stores canonical big-endian integers and IEEE-754 binary64
+values rather than OCaml runtime representations. The versioned envelope and
+component codecs retain feature schemas, fitted parameters, and solver reports;
+optional metadata can record a row count, root seed, sample-weight presence,
+and caller labels. Training observations, closures, commands, and [Marshal]
+values are never serialized.
+
+The default reader bounds total bytes, component count, feature count, string
+length, and metadata count before component allocations. A declared MD5 digest
+detects accidental corruption only; it neither authenticates nor encrypts an
+artifact. The format remains experimental during 0.x, while golden-reader tests
+preserve every released schema. Use task-specific regression or binary
+classification loaders so a wrong model kind fails while loading rather than
+during prediction.
 
 The reference backend preserves small terms that ordinary floating-point
 summation can lose to cancellation:

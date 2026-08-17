@@ -21,6 +21,7 @@ The full documentation is available via: [https://ocaml.org/p/modelkit/latest/do
 - Weighted regression and binary classification metrics provide immutable higher-is-better scorers, plotting-neutral residual, ROC, and precision–recall data, stable score aggregation, and an explicit undefined-result policy.
 - Cross-validation fits pipelines within deterministic folds and reports ordered train/test scores, CPU timings, optional fitted models and indices, and typed failures; the optional `modelkit-parallel` package adds bounded Domainslib fold execution.
 - Typed finite grid search evaluates immutable pipeline configurations on shared deterministic splits, ranks candidates by a named scorer, records candidate failures, and refits the selected model on all training data.
+- Versioned data-only artifacts save and load fitted built-in regression and binary-classification pipelines with feature-schema identity, bounded readers, and corruption detection.
 
 ## Motivation and Future Work
 
@@ -50,18 +51,27 @@ Built-in logistic regression can be installed as a pipeline terminal with its op
 let logistic = Logistic_regression.create () |> Result.get_ok
 
 let terminal =
-  Pipeline.estimator ~name:"logistic"
-    (module Logistic_regression)
-    ~decision_function:Logistic_regression.decision_function
-    ~predict_proba:Logistic_regression.predict_proba
-    ~classes:Logistic_regression.classes logistic
+  Artifact.logistic_regression_estimator ~name:"logistic" logistic
   |> Result.get_ok
 
 let specification =
   Pipeline.set_estimator Pipeline.empty terminal |> Result.get_ok
 ```
 
-In the current pipeline contract, sample weights route to the terminal estimator and are not passed to the current unsupervised transformers. General transformer metadata routing remains planned for a later milestone. Fitted artifacts and the finished end-to-end workflow are not yet implemented.
+Use the corresponding `Artifact.simple_imputer_stage`, `Artifact.standard_scaler_stage`, and `Artifact.variance_threshold_stage` constructors for preprocessing that will be persisted. After fitting, encode and restore the complete typed pipeline without runtime-specific values:
+
+```ocaml
+let encoded =
+  Artifact.encode_binary_classification fitted |> Result.get_ok
+
+let restored =
+  Artifact.decode_binary_classification encoded
+  |> Result.get_ok |> Artifact.model
+```
+
+`Artifact.save_binary_classification` and `Artifact.load_binary_classification` provide file convenience functions; regression has matching APIs. Artifacts retain fitted values, feature schemas, solver reports, and optional non-secret training metadata, but never training observations, closures, commands, or `Marshal` data. The versioned binary format uses canonical big-endian integers and IEEE-754 values, a declared MD5 corruption checksum, and configurable byte, component, feature, string, and metadata limits. MD5 is used only to detect accidental corruption and does not authenticate or encrypt an artifact. The format is experimental during ModelKit 0.x, with a committed golden reader retained for each released schema. Pipelines assembled through the general extension constructors remain usable in memory; encoding returns a typed error when any component has no reviewed artifact codec.
+
+In the current pipeline contract, sample weights route to the terminal estimator and are not passed to the current unsupervised transformers. General transformer metadata routing remains planned for a later milestone.
 
 `K_fold`, `Stratified_k_fold`, `Group_k_fold`, and `Time_series_split` now provide the portable splitting primitives needed by evaluation workflows. K-fold variants balance test sizes; stratification balances each integer class; group splitting prevents a group from crossing train/test boundaries; and time-series splitting uses expanding chronological training prefixes with optional gaps. Shuffled variants use ModelKit’s immutable deterministic RNG and retain source-row order in emitted views.
 
@@ -121,7 +131,7 @@ opam install . --deps-only --with-test --with-doc --locked --lock-suffix=locked.
 
 The ordinary Dune workspace uses the repository-local opam switch automatically. Reproducible locks are platform-specific because compiler and system dependency packages differ by host.
 
-The full test suite combines named unit tests, deterministic generated properties, metamorphic invariants, executable documentation, a compile-time public API consumer, and a reusable numerical-backend conformance suite.
+The full test suite combines named unit tests, deterministic generated properties, metamorphic invariants, executable documentation, a compiled end-to-end example, artifact golden-reader and adversarial-input tests, a compile-time public API consumer, and a reusable numerical-backend conformance suite. Run the current supervised workflow from a source checkout with `opam exec -- dune exec examples/evaluation.exe`.
 
 GitHub Actions is configured to run the build, complete test suite, package build, and documentation generation on Linux x86-64, macOS arm64, and Windows x86-64 with OCaml 5.2, 5.3, and 5.5. These jobs use committed reference data and do not install or execute Python.
 
@@ -147,7 +157,7 @@ python dev/fixtures/generate.py
 python dev/benchmarks/run.py
 ```
 
-The committed smoke benchmark validates the measurement workflow only. The development preprocessing, dense-linear-model, splitter, metrics, sequential and bounded-parallel cross-validation, and finite grid-search benchmarks compare ModelKit operations with pinned scikit-learn references on deterministic workloads. Build the corresponding OCaml worker and select a scenario under `dev/benchmarks/scenarios/`; the parallel cross-validation scenario records sequential and four-worker results for both runtimes so speedup, efficiency, wall time, and peak RSS can be compared. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for scope, raw-result links, and limitations. Release comparisons will use the product plan's independent-CI benchmark contract.
+The committed smoke benchmark validates the measurement workflow only. The development preprocessing, dense-linear-model, splitter, metrics, sequential and bounded-parallel cross-validation, and finite grid-search benchmarks compare ModelKit operations with pinned scikit-learn references on deterministic workloads. Build the corresponding OCaml worker and select a scenario under `dev/benchmarks/scenarios/`; the parallel cross-validation scenario records sequential and four-worker results for both runtimes so speedup, efficiency, wall time, and peak RSS can be compared. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for declared parity tolerances, scope, raw-result links, and limitations. Release comparisons will use the product plan's independent-CI benchmark contract.
 
 ## Project Policies
 
