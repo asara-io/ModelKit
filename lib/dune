@@ -3,6 +3,7 @@
  (public_name modelkit)
  (private_modules
   modelkit_data
+  modelkit_linear_models
   modelkit_pipeline
   modelkit_preprocessing
   modelkit_protocols))
