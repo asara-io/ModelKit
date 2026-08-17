@@ -8,6 +8,8 @@ Python users of `scikit-learn` will find this library familiar in serving the sa
 
 ## Feature Highlights
 
+The full documentation is available via: [https://ocaml.org/p/modelkit/latest/doc/index.html](https://ocaml.org/p/modelkit/latest/doc/index.html)
+
 - Reproducible foundations with deterministic random streams and stable reference numerical operations across supported platforms, OCaml versions, and execution schedules.
 - Typed extension contracts separate immutable estimator specifications from fitted models and return actionable errors.
 - Immutable, validated float64 data primitives catch shape, feature-order, and sample-alignment problems before model code runs.
