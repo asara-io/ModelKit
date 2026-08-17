@@ -1,0 +1,23 @@
+{
+  "alphas": [
+    0.0,
+    1.0,
+    100.0
+  ],
+  "claim_eligible": false,
+  "dataset": {
+    "features": 12,
+    "samples": 10000,
+    "seed": 1729
+  },
+  "fit_intercepts": [
+    false,
+    true
+  ],
+  "folds": 5,
+  "measured_runs": 3,
+  "scenario": "grid_search_dense_v1",
+  "thread_limit": 1,
+  "warmup_runs": 1,
+  "workload": "grid_search"
+}

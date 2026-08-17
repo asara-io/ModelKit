@@ -65,4 +65,4 @@ jobs:
         run: opam exec -- dune build @all @runtest @doc @install
 
       - name: Verify package build
-        run: opam exec -- dune build -p modelkit @install @runtest @doc
+        run: opam exec -- dune build -p modelkit,modelkit-parallel @install @runtest @doc

@@ -1,0 +1,29 @@
+{
+  "configuration": {
+    "constant": -2.0,
+    "features": 4,
+    "samples": 5,
+    "variance_threshold": 1.5
+  },
+  "environment": {
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "fixture": "preprocessing_v1",
+  "generator": "dev/fixtures/generate.py",
+  "license": "Apache-2.0",
+  "references": [
+    "sklearn.feature_selection.VarianceThreshold",
+    "sklearn.impute.SimpleImputer",
+    "sklearn.preprocessing.StandardScaler"
+  ],
+  "schema_version": 1
+}

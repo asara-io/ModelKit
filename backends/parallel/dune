@@ -1,0 +1,11 @@
+(library
+ (name modelkit_parallel)
+ (public_name modelkit-parallel)
+ (modules modelkit_parallel)
+ (libraries modelkit domainslib))
+
+(test
+ (name modelkit_parallel_test)
+ (modules modelkit_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel alcotest))

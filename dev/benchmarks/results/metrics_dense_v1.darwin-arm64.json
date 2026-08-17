@@ -1,0 +1,302 @@
+{
+  "claim_eligible": false,
+  "environment": {
+    "cpu_count": 8,
+    "machine": "arm64",
+    "operating_system": "macOS-15.5-arm64-arm-64bit-Mach-O",
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "generated_at": "2026-08-14T07:18:51.462538+00:00",
+  "methodology": {
+    "measurement": "interleaved fresh-process wall time and sampled resident set size",
+    "rss_sample_interval_seconds": 0.001,
+    "signature_tolerance": {
+      "absolute": 1e-07,
+      "relative": 1e-07
+    },
+    "thread_limit": 1,
+    "warmup_runs": 1
+  },
+  "runs": {
+    "modelkit": [
+      {
+        "elapsed_ns": 165518041,
+        "peak_rss_bytes": 49283072,
+        "worker": {
+          "allocated_words": 27638011,
+          "checksum": "0.017142600000000507,0.00039999166666668408,0.019999791665582023,0.99999952000888004,0.90909333333333331,0.90909333333333331,0.90908787882828224,0.90910000000000002,0.9090939393737375,0.3521889753887073,1,35,34,0.63047266941804747,0.41390965511203281",
+          "ocaml": "5.3.0",
+          "operations": [
+            "regression_metrics",
+            "classification_metrics",
+            "ranking_curves",
+            "score_aggregation"
+          ],
+          "samples": 100000,
+          "signature": [
+            0.017142600000000507,
+            0.0003999916666666841,
+            0.019999791665582023,
+            0.99999952000888,
+            0.9090933333333333,
+            0.9090933333333333,
+            0.9090878788282822,
+            0.9091,
+            0.9090939393737375,
+            0.3521889753887073,
+            1,
+            35,
+            34,
+            0.6304726694180475,
+            0.4139096551120328
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 156604291,
+        "peak_rss_bytes": 46497792,
+        "worker": {
+          "allocated_words": 27638011,
+          "checksum": "0.017142600000000507,0.00039999166666668408,0.019999791665582023,0.99999952000888004,0.90909333333333331,0.90909333333333331,0.90908787882828224,0.90910000000000002,0.9090939393737375,0.3521889753887073,1,35,34,0.63047266941804747,0.41390965511203281",
+          "ocaml": "5.3.0",
+          "operations": [
+            "regression_metrics",
+            "classification_metrics",
+            "ranking_curves",
+            "score_aggregation"
+          ],
+          "samples": 100000,
+          "signature": [
+            0.017142600000000507,
+            0.0003999916666666841,
+            0.019999791665582023,
+            0.99999952000888,
+            0.9090933333333333,
+            0.9090933333333333,
+            0.9090878788282822,
+            0.9091,
+            0.9090939393737375,
+            0.3521889753887073,
+            1,
+            35,
+            34,
+            0.6304726694180475,
+            0.4139096551120328
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 156544417,
+        "peak_rss_bytes": 49741824,
+        "worker": {
+          "allocated_words": 27638011,
+          "checksum": "0.017142600000000507,0.00039999166666668408,0.019999791665582023,0.99999952000888004,0.90909333333333331,0.90909333333333331,0.90908787882828224,0.90910000000000002,0.9090939393737375,0.3521889753887073,1,35,34,0.63047266941804747,0.41390965511203281",
+          "ocaml": "5.3.0",
+          "operations": [
+            "regression_metrics",
+            "classification_metrics",
+            "ranking_curves",
+            "score_aggregation"
+          ],
+          "samples": 100000,
+          "signature": [
+            0.017142600000000507,
+            0.0003999916666666841,
+            0.019999791665582023,
+            0.99999952000888,
+            0.9090933333333333,
+            0.9090933333333333,
+            0.9090878788282822,
+            0.9091,
+            0.9090939393737375,
+            0.3521889753887073,
+            1,
+            35,
+            34,
+            0.6304726694180475,
+            0.4139096551120328
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      }
+    ],
+    "sklearn": [
+      {
+        "elapsed_ns": 746805500,
+        "peak_rss_bytes": 137527296,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "8a86dff6b4205982d9cbd4a62596abbccbdbc98ef29d5a37e3b48efae06fbdd7",
+          "operations": [
+            "regression_metrics",
+            "classification_metrics",
+            "ranking_curves",
+            "score_aggregation"
+          ],
+          "samples": 100000,
+          "signature": [
+            0.01714260000000051,
+            0.0003999916666666841,
+            0.019999791665582023,
+            0.99999952000888,
+            0.9090933333333333,
+            0.9090933333333333,
+            0.9090878788282822,
+            0.9091,
+            0.9090939393737375,
+            0.3521889753887073,
+            1.0,
+            35.0,
+            34.0,
+            0.6304726694180475,
+            0.4139096551120328
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 731848875,
+        "peak_rss_bytes": 136904704,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "8a86dff6b4205982d9cbd4a62596abbccbdbc98ef29d5a37e3b48efae06fbdd7",
+          "operations": [
+            "regression_metrics",
+            "classification_metrics",
+            "ranking_curves",
+            "score_aggregation"
+          ],
+          "samples": 100000,
+          "signature": [
+            0.01714260000000051,
+            0.0003999916666666841,
+            0.019999791665582023,
+            0.99999952000888,
+            0.9090933333333333,
+            0.9090933333333333,
+            0.9090878788282822,
+            0.9091,
+            0.9090939393737375,
+            0.3521889753887073,
+            1.0,
+            35.0,
+            34.0,
+            0.6304726694180475,
+            0.4139096551120328
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 737732958,
+        "peak_rss_bytes": 136511488,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "8a86dff6b4205982d9cbd4a62596abbccbdbc98ef29d5a37e3b48efae06fbdd7",
+          "operations": [
+            "regression_metrics",
+            "classification_metrics",
+            "ranking_curves",
+            "score_aggregation"
+          ],
+          "samples": 100000,
+          "signature": [
+            0.01714260000000051,
+            0.0003999916666666841,
+            0.019999791665582023,
+            0.99999952000888,
+            0.9090933333333333,
+            0.9090933333333333,
+            0.9090878788282822,
+            0.9091,
+            0.9090939393737375,
+            0.3521889753887073,
+            1.0,
+            35.0,
+            34.0,
+            0.6304726694180475,
+            0.4139096551120328
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "scenario": {
+    "claim_eligible": false,
+    "dataset": {
+      "samples": 100000
+    },
+    "measured_runs": 3,
+    "scenario": "metrics_dense_v1",
+    "thread_limit": 1,
+    "warmup_runs": 1,
+    "workload": "metrics"
+  },
+  "schema_version": 2
+}

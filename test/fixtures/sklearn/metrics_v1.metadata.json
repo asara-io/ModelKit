@@ -1,0 +1,30 @@
+{
+  "configuration": {
+    "positive_label": 1,
+    "precision_recall_drop_intermediate": false,
+    "roc_drop_intermediate": false,
+    "weighted": true
+  },
+  "environment": {
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "fixture": "metrics_v1",
+  "generator": "dev/fixtures/generate.py",
+  "license": "Apache-2.0",
+  "references": [
+    "sklearn.metrics regression metrics",
+    "sklearn.metrics binary classification metrics",
+    "sklearn.metrics.roc_curve",
+    "sklearn.metrics.precision_recall_curve"
+  ],
+  "schema_version": 1
+}

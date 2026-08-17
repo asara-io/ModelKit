@@ -1,0 +1,29 @@
+# ModelKit sklearn splitter reference fixture v1
+k_fold_sample_count	11
+k_fold_train	0	4,5,6,7,8,9,10
+k_fold_test	0	0,1,2,3
+k_fold_train	1	0,1,2,3,8,9,10
+k_fold_test	1	4,5,6,7
+k_fold_train	2	0,1,2,3,4,5,6,7
+k_fold_test	2	8,9,10
+stratified_target	0,0,0,0,0,1,1,1,1,1,1,1,2,2,2,2,2,2
+stratified_train	0	2,3,4,7,8,9,10,11,14,15,16,17
+stratified_test	0	0,1,5,6,12,13
+stratified_train	1	0,1,4,5,6,9,10,11,12,13,16,17
+stratified_test	1	2,3,7,8,14,15
+stratified_train	2	0,1,2,3,5,6,7,8,12,13,14,15
+stratified_test	2	4,9,10,11,16,17
+group_values	10,10,10,10,10,10,20,20,20,20,20,30,30,30,30,40,40,40,50,50,60,60
+group_train	0	6,7,8,9,10,11,12,13,14,15,16,17,20,21
+group_test	0	0,1,2,3,4,5,18,19
+group_train	1	0,1,2,3,4,5,11,12,13,14,15,16,17,18,19
+group_test	1	6,7,8,9,10,20,21
+group_train	2	0,1,2,3,4,5,6,7,8,9,10,18,19,20,21
+group_test	2	11,12,13,14,15,16,17
+time_sample_count	12
+time_train	0	0,1,2,3,4
+time_test	0	6,7
+time_train	1	0,1,2,3,4,5,6
+time_test	1	8,9
+time_train	2	0,1,2,3,4,5,6,7,8
+time_test	2	10,11

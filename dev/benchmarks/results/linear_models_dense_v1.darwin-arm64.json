@@ -1,0 +1,267 @@
+{
+  "claim_eligible": false,
+  "environment": {
+    "cpu_count": 8,
+    "machine": "arm64",
+    "operating_system": "macOS-15.5-arm64-arm-64bit-Mach-O",
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "generated_at": "2026-08-13T16:11:44.590192+00:00",
+  "methodology": {
+    "measurement": "interleaved fresh-process wall time and sampled resident set size",
+    "rss_sample_interval_seconds": 0.001,
+    "signature_tolerance": {
+      "absolute": 1e-07,
+      "relative": 1e-07
+    },
+    "thread_limit": 1,
+    "warmup_runs": 1
+  },
+  "runs": {
+    "modelkit": [
+      {
+        "elapsed_ns": 283899458,
+        "peak_rss_bytes": 11960320,
+        "worker": {
+          "allocated_words": 48127294,
+          "checksum": "1.1937033631859526:-0.44017776930102914:1.193706500166364:-0.44014250918039755:0.21804097455692567:0.93992199963718148:-3:7",
+          "features": 12,
+          "ocaml": "5.3.0",
+          "operations": [
+            "ordinary_least_squares",
+            "ridge_regression",
+            "binary_logistic_regression"
+          ],
+          "samples": 10000,
+          "signature": [
+            1.1937033631859526,
+            -0.44017776930102914,
+            1.193706500166364,
+            -0.44014250918039755,
+            0.21804097455692567,
+            0.9399219996371815,
+            -3,
+            7
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 288940042,
+        "peak_rss_bytes": 12402688,
+        "worker": {
+          "allocated_words": 48127294,
+          "checksum": "1.1937033631859526:-0.44017776930102914:1.193706500166364:-0.44014250918039755:0.21804097455692567:0.93992199963718148:-3:7",
+          "features": 12,
+          "ocaml": "5.3.0",
+          "operations": [
+            "ordinary_least_squares",
+            "ridge_regression",
+            "binary_logistic_regression"
+          ],
+          "samples": 10000,
+          "signature": [
+            1.1937033631859526,
+            -0.44017776930102914,
+            1.193706500166364,
+            -0.44014250918039755,
+            0.21804097455692567,
+            0.9399219996371815,
+            -3,
+            7
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 285704083,
+        "peak_rss_bytes": 12271616,
+        "worker": {
+          "allocated_words": 48127294,
+          "checksum": "1.1937033631859526:-0.44017776930102914:1.193706500166364:-0.44014250918039755:0.21804097455692567:0.93992199963718148:-3:7",
+          "features": 12,
+          "ocaml": "5.3.0",
+          "operations": [
+            "ordinary_least_squares",
+            "ridge_regression",
+            "binary_logistic_regression"
+          ],
+          "samples": 10000,
+          "signature": [
+            1.1937033631859526,
+            -0.44017776930102914,
+            1.193706500166364,
+            -0.44014250918039755,
+            0.21804097455692567,
+            0.9399219996371815,
+            -3,
+            7
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      }
+    ],
+    "sklearn": [
+      {
+        "elapsed_ns": 737231292,
+        "peak_rss_bytes": 131825664,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "28a926ad63f411e563e90a55b3cd27605d9e113d278f0d9e8168cc9797bb6479",
+          "features": 12,
+          "operations": [
+            "ordinary_least_squares",
+            "ridge_regression",
+            "binary_logistic_regression"
+          ],
+          "samples": 10000,
+          "signature": [
+            1.1937033631859923,
+            -0.440177769301034,
+            1.1937065001663127,
+            -0.4401425091803788,
+            0.21804097455692525,
+            0.9399219996371817,
+            -3.0,
+            7.0
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 739650250,
+        "peak_rss_bytes": 131121152,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "28a926ad63f411e563e90a55b3cd27605d9e113d278f0d9e8168cc9797bb6479",
+          "features": 12,
+          "operations": [
+            "ordinary_least_squares",
+            "ridge_regression",
+            "binary_logistic_regression"
+          ],
+          "samples": 10000,
+          "signature": [
+            1.1937033631859923,
+            -0.440177769301034,
+            1.1937065001663127,
+            -0.4401425091803788,
+            0.21804097455692525,
+            0.9399219996371817,
+            -3.0,
+            7.0
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 736633750,
+        "peak_rss_bytes": 129990656,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "28a926ad63f411e563e90a55b3cd27605d9e113d278f0d9e8168cc9797bb6479",
+          "features": 12,
+          "operations": [
+            "ordinary_least_squares",
+            "ridge_regression",
+            "binary_logistic_regression"
+          ],
+          "samples": 10000,
+          "signature": [
+            1.1937033631859923,
+            -0.440177769301034,
+            1.1937065001663127,
+            -0.4401425091803788,
+            0.21804097455692525,
+            0.9399219996371817,
+            -3.0,
+            7.0
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "scenario": {
+    "claim_eligible": false,
+    "dataset": {
+      "features": 12,
+      "samples": 10000,
+      "seed": 1729
+    },
+    "logistic_c": 1.7,
+    "logistic_max_iterations": 1000,
+    "logistic_solver": "newton-cholesky",
+    "logistic_tolerance": 1e-12,
+    "measured_runs": 3,
+    "ridge_alpha": 2.5,
+    "scenario": "linear_models_dense_v1",
+    "thread_limit": 1,
+    "warmup_runs": 1,
+    "workload": "linear_models"
+  },
+  "schema_version": 2
+}

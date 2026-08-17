@@ -1,0 +1,343 @@
+{
+  "claim_eligible": false,
+  "environment": {
+    "cpu_count": 8,
+    "machine": "arm64",
+    "operating_system": "macOS-15.5-arm64-arm-64bit-Mach-O",
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "generated_at": "2026-08-14T05:01:31.268254+00:00",
+  "methodology": {
+    "measurement": "interleaved fresh-process wall time and sampled resident set size",
+    "rss_sample_interval_seconds": 0.001,
+    "signature_tolerance": {
+      "absolute": 0.0,
+      "relative": 0.0
+    },
+    "thread_limit": 1,
+    "warmup_runs": 1
+  },
+  "runs": {
+    "modelkit": [
+      {
+        "elapsed_ns": 56885500,
+        "peak_rss_bytes": 38633472,
+        "worker": {
+          "allocated_words": 9846162,
+          "checksum": "5,400000,100000,20000,20000,5,400000,100000,20000,20000,5,400000,100000,20000,20000,5,349500,50000,10000,10000",
+          "folds": 5,
+          "ocaml": "5.3.0",
+          "operations": [
+            "k_fold",
+            "stratified_k_fold",
+            "group_k_fold",
+            "time_series_split"
+          ],
+          "samples": 100000,
+          "signature": [
+            5,
+            400000,
+            100000,
+            20000,
+            20000,
+            5,
+            400000,
+            100000,
+            20000,
+            20000,
+            5,
+            400000,
+            100000,
+            20000,
+            20000,
+            5,
+            349500,
+            50000,
+            10000,
+            10000
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 59140042,
+        "peak_rss_bytes": 49364992,
+        "worker": {
+          "allocated_words": 9846162,
+          "checksum": "5,400000,100000,20000,20000,5,400000,100000,20000,20000,5,400000,100000,20000,20000,5,349500,50000,10000,10000",
+          "folds": 5,
+          "ocaml": "5.3.0",
+          "operations": [
+            "k_fold",
+            "stratified_k_fold",
+            "group_k_fold",
+            "time_series_split"
+          ],
+          "samples": 100000,
+          "signature": [
+            5,
+            400000,
+            100000,
+            20000,
+            20000,
+            5,
+            400000,
+            100000,
+            20000,
+            20000,
+            5,
+            400000,
+            100000,
+            20000,
+            20000,
+            5,
+            349500,
+            50000,
+            10000,
+            10000
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 56966375,
+        "peak_rss_bytes": 38633472,
+        "worker": {
+          "allocated_words": 9846162,
+          "checksum": "5,400000,100000,20000,20000,5,400000,100000,20000,20000,5,400000,100000,20000,20000,5,349500,50000,10000,10000",
+          "folds": 5,
+          "ocaml": "5.3.0",
+          "operations": [
+            "k_fold",
+            "stratified_k_fold",
+            "group_k_fold",
+            "time_series_split"
+          ],
+          "samples": 100000,
+          "signature": [
+            5,
+            400000,
+            100000,
+            20000,
+            20000,
+            5,
+            400000,
+            100000,
+            20000,
+            20000,
+            5,
+            400000,
+            100000,
+            20000,
+            20000,
+            5,
+            349500,
+            50000,
+            10000,
+            10000
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      }
+    ],
+    "sklearn": [
+      {
+        "elapsed_ns": 707788625,
+        "peak_rss_bytes": 136773632,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "47781c88fa933a4ac7376197d97d25a64961dcc224953f30251e272bc5be269f",
+          "folds": 5,
+          "operations": [
+            "k_fold",
+            "stratified_k_fold",
+            "group_k_fold",
+            "time_series_split"
+          ],
+          "samples": 100000,
+          "signature": [
+            5,
+            400000,
+            100000,
+            20000,
+            20000,
+            5,
+            400000,
+            100000,
+            20000,
+            20000,
+            5,
+            400000,
+            100000,
+            20000,
+            20000,
+            5,
+            349500,
+            50000,
+            10000,
+            10000
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 708409083,
+        "peak_rss_bytes": 136183808,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "47781c88fa933a4ac7376197d97d25a64961dcc224953f30251e272bc5be269f",
+          "folds": 5,
+          "operations": [
+            "k_fold",
+            "stratified_k_fold",
+            "group_k_fold",
+            "time_series_split"
+          ],
+          "samples": 100000,
+          "signature": [
+            5,
+            400000,
+            100000,
+            20000,
+            20000,
+            5,
+            400000,
+            100000,
+            20000,
+            20000,
+            5,
+            400000,
+            100000,
+            20000,
+            20000,
+            5,
+            349500,
+            50000,
+            10000,
+            10000
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 707469958,
+        "peak_rss_bytes": 137494528,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "47781c88fa933a4ac7376197d97d25a64961dcc224953f30251e272bc5be269f",
+          "folds": 5,
+          "operations": [
+            "k_fold",
+            "stratified_k_fold",
+            "group_k_fold",
+            "time_series_split"
+          ],
+          "samples": 100000,
+          "signature": [
+            5,
+            400000,
+            100000,
+            20000,
+            20000,
+            5,
+            400000,
+            100000,
+            20000,
+            20000,
+            5,
+            400000,
+            100000,
+            20000,
+            20000,
+            5,
+            349500,
+            50000,
+            10000,
+            10000
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "scenario": {
+    "claim_eligible": false,
+    "dataset": {
+      "classes": 3,
+      "group_size": 20,
+      "samples": 100000
+    },
+    "folds": 5,
+    "measured_runs": 3,
+    "scenario": "splitters_dense_v1",
+    "thread_limit": 1,
+    "time_gap": 100,
+    "time_test_size": 10000,
+    "warmup_runs": 1,
+    "workload": "splitters"
+  },
+  "schema_version": 2
+}

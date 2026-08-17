@@ -25,6 +25,10 @@ The portable suite covers x86-64 Linux and Windows alongside arm64 macOS.
 Optional adapters and accelerated backends publish their own dependency and
 platform matrices.
 
+The optional `modelkit-parallel` package supports the same compiler and desktop
+platform matrix as the portable package and is tested there with Domainslib
+0.5.2 or newer. Domain-count invariance is part of its conformance suite.
+
 ## Version Support
 
 Before 1.0, public APIs and artifact formats may change between minor

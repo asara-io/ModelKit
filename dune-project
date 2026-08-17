@@ -1,7 +1,7 @@
 (lang dune 3.23)
 (using mdx 0.4)
 (name modelkit)
-(version 0.2.1)
+(version 0.3.0)
 (generate_opam_files true)
 (implicit_transitive_deps false)
 
@@ -25,3 +25,16 @@
   (alcotest (and :with-test (>= 1.9.0)))
   (mdx (and :with-test (>= 2.4.0)))
   (qcheck-core (and :with-test (>= 0.90)))))
+
+(package
+ (name modelkit-parallel)
+ (synopsis "Bounded parallel execution for ModelKit")
+ (description
+  "ModelKit Parallel provides an optional Domainslib execution backend for deterministic bounded cross-validation.")
+ (tags
+  (data-science machine-learning parallelism))
+ (depends
+  (ocaml (>= 5.2))
+  (modelkit (= :version))
+  (domainslib (>= 0.5.2))
+  (alcotest (and :with-test (>= 1.9.0)))))

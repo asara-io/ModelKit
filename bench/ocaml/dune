@@ -1,0 +1,27 @@
+(executable
+ (name preprocessing_worker)
+ (libraries modelkit))
+
+(executable
+ (name linear_models_worker)
+ (libraries modelkit))
+
+(executable
+ (name splitters_worker)
+ (libraries modelkit))
+
+(executable
+ (name metrics_worker)
+ (libraries modelkit))
+
+(executable
+ (name cross_validation_worker)
+ (libraries modelkit))
+
+(executable
+ (name grid_search_worker)
+ (libraries modelkit))
+
+(executable
+ (name parallel_cross_validation_worker)
+ (libraries modelkit modelkit-parallel))

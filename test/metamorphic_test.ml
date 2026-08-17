@@ -62,6 +62,172 @@ let test_transpose_identity () =
   let right = get_ok (Reference_backend.dot x transposed_matrix_y) in
   check_float "<Xx,y> equals <x,X^T y>" left right
 
+let test_preprocessing_row_permutation () =
+  let original =
+    Result.get_ok
+      (Matrix.of_arrays
+         [| [| 1.0; Float.nan |]; [| 3.0; 8.0 |]; [| 5.0; 4.0 |] |])
+  in
+  let permuted =
+    Result.get_ok
+      (Matrix.of_arrays
+         [| [| 5.0; 4.0 |]; [| 1.0; Float.nan |]; [| 3.0; 8.0 |] |])
+  in
+  let schema = Result.get_ok (Feature_schema.of_matrix original) in
+  let fit_imputer x =
+    get_ok
+      (Simple_imputer.fit (Simple_imputer.mean ())
+         ~rng:(Rng.create (Seed.of_int 0))
+         ~feature_schema:schema ~x ~y:None ())
+  in
+  let original_imputer = fit_imputer original in
+  let permuted_imputer = fit_imputer permuted in
+  Array.iter2
+    (check_float "row permutation preserves imputation statistics")
+    (Vector.to_array (Simple_imputer.statistics original_imputer))
+    (Vector.to_array (Simple_imputer.statistics permuted_imputer));
+  let complete_original =
+    get_ok
+      (Simple_imputer.transform original_imputer ~feature_schema:schema
+         ~x:original)
+  in
+  let complete_permuted =
+    get_ok
+      (Simple_imputer.transform permuted_imputer ~feature_schema:schema
+         ~x:permuted)
+  in
+  let fit_scaler x =
+    get_ok
+      (Standard_scaler.fit
+         (Standard_scaler.create ())
+         ~rng:(Rng.create (Seed.of_int 0))
+         ~feature_schema:schema ~x ~y:None ())
+  in
+  let original_scaler = fit_scaler complete_original in
+  let permuted_scaler = fit_scaler complete_permuted in
+  Array.iter2
+    (check_float "row permutation preserves scaling means")
+    (Vector.to_array (Standard_scaler.mean original_scaler))
+    (Vector.to_array (Standard_scaler.mean permuted_scaler));
+  Array.iter2
+    (check_float "row permutation preserves scaling variances")
+    (Vector.to_array (Standard_scaler.variance original_scaler))
+    (Vector.to_array (Standard_scaler.variance permuted_scaler))
+
+let fit_linear x target =
+  let schema = Result.get_ok (Feature_schema.of_matrix x) in
+  let target =
+    Target.regression (Vector.of_array target) |> function
+    | Ok target -> target
+    | Error error -> Alcotest.fail (Data_error.to_string error)
+  in
+  get_ok
+    (Linear_regression.fit
+       (Linear_regression.create ())
+       ~rng:(Rng.create (Seed.of_int 0))
+       ~feature_schema:schema ~x ~y:target ())
+
+let test_linear_target_translation () =
+  let x =
+    Result.get_ok
+      (Matrix.of_arrays
+         [| [| -2.0; 1.0 |]; [| -1.0; 0.0 |]; [| 1.0; 0.0 |]; [| 2.0; 1.0 |] |])
+  in
+  let original = fit_linear x [| -4.0; -1.0; 5.0; 8.0 |] in
+  let translated = fit_linear x [| 6.0; 9.0; 15.0; 18.0 |] in
+  Array.iter2
+    (check_float "target translation preserves coefficients")
+    (Linear_regression.coefficients original |> Vector.to_array)
+    (Linear_regression.coefficients translated |> Vector.to_array);
+  check_float "target translation shifts the intercept" 10.0
+    (Linear_regression.intercept translated
+    -. Linear_regression.intercept original)
+
+let test_linear_row_duplication () =
+  let original_x =
+    Result.get_ok (Matrix.of_arrays [| [| -1.0 |]; [| 0.0 |]; [| 2.0 |] |])
+  in
+  let duplicated_x =
+    Result.get_ok
+      (Matrix.of_arrays
+         [|
+           [| -1.0 |]; [| 0.0 |]; [| 2.0 |]; [| -1.0 |]; [| 0.0 |]; [| 2.0 |];
+         |])
+  in
+  let original = fit_linear original_x [| -1.0; 1.0; 5.0 |] in
+  let duplicated =
+    fit_linear duplicated_x [| -1.0; 1.0; 5.0; -1.0; 1.0; 5.0 |]
+  in
+  check_float "duplicating every row preserves the coefficient"
+    (Vector.get (Linear_regression.coefficients original) 0)
+    (Vector.get (Linear_regression.coefficients duplicated) 0);
+  check_float "duplicating every row preserves the intercept"
+    (Linear_regression.intercept original)
+    (Linear_regression.intercept duplicated)
+
+let test_stratified_label_renaming () =
+  let x =
+    Result.get_ok
+      (Matrix.init ~rows:18 ~columns:1 (fun row _ -> Float.of_int row))
+  in
+  let original = Array.init 18 (fun row -> row mod 3) in
+  let renamed = Array.map (function 0 -> 70 | 1 -> -4 | _ -> 900) original in
+  let specification =
+    Stratified_k_fold.create ~folds:3 ~shuffle:true () |> get_ok
+  in
+  let split labels =
+    Stratified_k_fold.split specification
+      ~rng:(Rng.create (Seed.of_int 19))
+      ~x
+      ~y:(Some (Target.classification labels))
+      ()
+    |> get_ok
+    |> Array.map (fun (train, test) ->
+        (Row_view.indices train, Row_view.indices test))
+  in
+  let original = split original in
+  let renamed = split renamed in
+  Alcotest.check
+    (Alcotest.array
+       (Alcotest.pair
+          (Alcotest.array Alcotest.int)
+          (Alcotest.array Alcotest.int)))
+    "one-to-one label renaming preserves stratified membership" original renamed
+
+let test_metric_translation_and_label_renaming () =
+  let regression values =
+    Target.regression (Vector.of_array values) |> function
+    | Ok target -> target
+    | Error error -> Alcotest.fail (Data_error.to_string error)
+  in
+  let regression_scores truth prediction =
+    let truth = regression truth in
+    let prediction = regression prediction in
+    ( get_ok (Regression_metrics.mean_absolute_error ~truth ~prediction ()),
+      get_ok (Regression_metrics.r2 ~truth ~prediction ()) )
+  in
+  let original =
+    regression_scores [| 1.0; 4.0; 7.0; 11.0 |] [| 2.0; 3.0; 8.0; 10.0 |]
+  in
+  let translated =
+    regression_scores
+      [| 101.0; 104.0; 107.0; 111.0 |]
+      [| 102.0; 103.0; 108.0; 110.0 |]
+  in
+  check_float "joint translation preserves MAE" (fst original) (fst translated);
+  check_float "joint translation preserves R-squared" (snd original)
+    (snd translated);
+  let f1 ~positive_label truth prediction =
+    get_ok
+      (Binary_classification_metrics.f1 ~positive_label
+         ~truth:(Target.classification truth)
+         ~prediction:(Target.classification prediction)
+         ())
+  in
+  check_float "one-to-one binary label renaming preserves F1"
+    (f1 ~positive_label:1 [| 0; 1; 0; 1 |] [| 0; 1; 1; 1 |])
+    (f1 ~positive_label:9 [| -3; 9; -3; 9 |] [| -3; 9; 9; 9 |])
+
 let () =
   Alcotest.run "metamorphic invariants"
     [
@@ -71,5 +237,15 @@ let () =
           Alcotest.test_case "dot scaling" `Quick test_dot_scaling;
           Alcotest.test_case "row permutation" `Quick test_row_permutation;
           Alcotest.test_case "transpose identity" `Quick test_transpose_identity;
+          Alcotest.test_case "preprocessing row permutation" `Quick
+            test_preprocessing_row_permutation;
+          Alcotest.test_case "linear target translation" `Quick
+            test_linear_target_translation;
+          Alcotest.test_case "linear row duplication" `Quick
+            test_linear_row_duplication;
+          Alcotest.test_case "stratified label renaming" `Quick
+            test_stratified_label_renaming;
+          Alcotest.test_case "metric transformations" `Quick
+            test_metric_translation_and_label_renaming;
         ] );
     ]

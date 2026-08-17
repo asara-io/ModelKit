@@ -10,6 +10,52 @@
  (libraries modelkit alcotest))
 
 (test
+ (name preprocessing_test)
+ (modules preprocessing_test)
+ (libraries modelkit alcotest))
+
+(test
+ (name pipeline_test)
+ (modules pipeline_test)
+ (libraries modelkit alcotest))
+
+(test
+ (name artifact_test)
+ (modules artifact_test)
+ (libraries modelkit alcotest)
+ (deps fixtures/artifacts/regression_pipeline_v1.hex)
+ (action
+  (setenv
+   MODELKIT_ARTIFACT_FIXTURE
+   %{dep:fixtures/artifacts/regression_pipeline_v1.hex}
+   (run %{test}))))
+
+(test
+ (name linear_model_test)
+ (modules linear_model_test)
+ (libraries modelkit alcotest))
+
+(test
+ (name splitter_test)
+ (modules splitter_test)
+ (libraries modelkit alcotest))
+
+(test
+ (name metrics_test)
+ (modules metrics_test)
+ (libraries modelkit alcotest))
+
+(test
+ (name cross_validation_test)
+ (modules cross_validation_test)
+ (libraries modelkit alcotest))
+
+(test
+ (name grid_search_test)
+ (modules grid_search_test)
+ (libraries modelkit alcotest))
+
+(test
  (name protocol_test)
  (modules protocol_test)
  (libraries modelkit alcotest))
@@ -48,4 +94,48 @@
   (setenv
    MODELKIT_SKLEARN_FIXTURE
    %{dep:fixtures/sklearn/stratified_kfold_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name sklearn_splitter_fixture_test)
+ (modules sklearn_splitter_fixture_test)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/splitters_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_SKLEARN_SPLITTER_FIXTURE
+   %{dep:fixtures/sklearn/splitters_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name sklearn_metrics_fixture_test)
+ (modules sklearn_metrics_fixture_test)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/metrics_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_SKLEARN_METRICS_FIXTURE
+   %{dep:fixtures/sklearn/metrics_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name sklearn_preprocessing_fixture_test)
+ (modules sklearn_preprocessing_fixture_test)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/preprocessing_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_SKLEARN_PREPROCESSING_FIXTURE
+   %{dep:fixtures/sklearn/preprocessing_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name sklearn_linear_model_fixture_test)
+ (modules sklearn_linear_model_fixture_test)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/linear_models_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_SKLEARN_LINEAR_MODEL_FIXTURE
+   %{dep:fixtures/sklearn/linear_models_v1.tsv}
    (run %{test}))))

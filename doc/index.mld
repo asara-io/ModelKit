@@ -3,19 +3,169 @@
 ModelKit is a portable OCaml library for cohesive classical machine learning
 workflows.
 
-The current engineering foundation provides opaque float64 {!Modelkit.Vector}
-and {!Modelkit.Matrix} values, immutable {!Modelkit.Row_view} selections,
-validated targets, aligned metadata, immutable feature schemas, and structured
-protocol errors. Public specification, estimator, transformer, scorer,
+The supported API is the flat {!Modelkit} namespace documented below. Physical
+[Modelkit_*] compilation units are private implementation details rather than
+additional public namespaces or compatibility targets. Optional integrations,
+such as bounded Domainslib execution, are distributed as separate packages.
+
+Version 0.3.0 provides immutable dense {!Modelkit.Dataset} admission, explicit
+feature-finiteness policies, stable schema fingerprints, zero-copy row-index
+views, and copy/view reports for opaque float64 {!Modelkit.Vector} and
+{!Modelkit.Matrix} values. Public specification, estimator, transformer, scorer,
 splitter, execution, RNG, and numerical-backend module types define the
 extension boundaries with separate unfitted and fitted states. The portable
 runtime includes fixed-order compensated numerical kernels, sequential
 stable-order execution, deterministic logical seed derivation, and a pure
-SplitMix64 random-number stream. Estimators and end-to-end workflows will
-arrive in later releases. Portable tests consume committed scikit-learn
-reference data without requiring Python during a normal build or test run.
+SplitMix64 random-number stream. Mean, median, and constant imputation,
+population standardization, and variance-threshold feature filtering are
+available as immutable specifications with distinct fitted states. Sequential
+{!Modelkit.Pipeline} values fit those stages only on their training input,
+preserve feature schemas, derive stage-local random streams, and dispatch
+terminal prediction capabilities. Weighted ordinary least squares and ridge
+regression use the portable rank-revealing QR solver. Weighted binary logistic
+regression uses stable sigmoid and softplus formulas with deterministic damped
+Newton iterations. Each fitted estimator exposes coefficients, an intercept,
+and a {!Modelkit.Solver_report}. K-fold, stratified K-fold, group K-fold, and
+expanding-window time-series splitters produce validated source-row views;
+{!Modelkit.Split.materialize} is the explicit boundary for copying train and
+test selections into aligned datasets. Weighted regression and binary
+classification metrics expose higher-is-better scorer specifications, stable
+fold-score aggregation, explicit undefined-result handling, and residual, ROC,
+and precision-recall data without a plotting dependency. Cross-validation and
+finite grid search retain stable logical ordering and structured failures;
+optional bounded Domainslib fold execution is supplied by the separate
+[modelkit-parallel] package. Versioned data-only artifacts reconstruct fitted
+built-in pipelines under explicit reader limits and task-specific loaders.
+Portable tests consume committed scikit-learn reference data without requiring
+Python during a normal build or test run.
 
 {1 Executable example}
+
+Dataset admission permits NaN missing markers only when explicitly requested:
+
+{@ocaml[
+# open Modelkit;;
+# let x = Matrix.of_arrays [| [| 1.; Float.nan |]; [| 3.; 4. |] |] |> Result.get_ok;;
+val x : Matrix.t = <abstr>
+# let y = Target.classification [| 0; 1 |];;
+val y : Target.classification Target.t = <abstr>
+# let dataset = Dataset.create ~finiteness:Dataset.Allow_nan ~x ~y () |> Result.get_ok;;
+val dataset : Target.classification Dataset.t = <abstr>
+# Dataset.sample_count dataset, Dataset.feature_count dataset;;
+- : int * int = (2, 2)
+]}
+
+Preprocessing is fitted on a training matrix and then reused:
+
+{@ocaml[
+# let schema = Dataset.feature_schema dataset;;
+val schema : Feature_schema.t = <abstr>
+# let fitted_imputer =
+    Simple_imputer.fit (Simple_imputer.mean ())
+      ~rng:(Rng.create (Seed.of_int 42)) ~feature_schema:schema ~x ~y:None ()
+    |> Result.get_ok;;
+val fitted_imputer : Simple_imputer.fitted = <abstr>
+# Simple_imputer.statistics fitted_imputer |> Vector.to_array;;
+- : float array = [|2.; 4.|]
+# let complete = Simple_imputer.transform fitted_imputer ~feature_schema:schema ~x |> Result.get_ok;;
+val complete : Matrix.t = <abstr>
+# Matrix.to_arrays complete;;
+- : float array array = [|[|1.; 4.|]; [|3.; 4.|]|]
+]}
+
+Preprocessing stages can be assembled before selecting a protocol-compatible
+terminal estimator:
+
+{@ocaml[
+# let impute_stage =
+    Artifact.simple_imputer_stage ~name:"impute" (Simple_imputer.mean ())
+    |> Result.get_ok;;
+val impute_stage : Pipeline.transformer = <abstr>
+# let scale_stage =
+    Artifact.standard_scaler_stage ~name:"scale" (Standard_scaler.create ())
+    |> Result.get_ok;;
+val scale_stage : Pipeline.transformer = <abstr>
+# let pipeline_steps =
+    Result.bind (Pipeline.add_transformer Pipeline.empty impute_stage)
+      (fun builder -> Pipeline.add_transformer builder scale_stage)
+    |> Result.get_ok;;
+val pipeline_steps : Pipeline.builder = <abstr>
+# let logistic = Logistic_regression.create () |> Result.get_ok;;
+val logistic : Logistic_regression.t = <abstr>
+# let terminal =
+    Artifact.logistic_regression_estimator ~name:"logistic" logistic
+    |> Result.get_ok;;
+val terminal :
+  (Target.classification Target.t, Target.classification Target.t)
+  Pipeline.estimator = <abstr>
+# let pipeline = Pipeline.set_estimator pipeline_steps terminal |> Result.get_ok;;
+val pipeline :
+  (Target.classification Target.t, Target.classification Target.t) Pipeline.t =
+  <abstr>
+# let fitted =
+    Pipeline.fit pipeline ~rng:(Rng.create (Seed.of_int 42))
+      ~feature_schema:schema ~x ~y ()
+    |> Result.get_ok;;
+val fitted :
+  (Target.classification Target.t, Target.classification Target.t)
+  Pipeline.fitted = <abstr>
+# Pipeline.predict fitted ~feature_schema:schema ~x
+  |> Result.get_ok |> Target.classification_values;;
+- : int array = [|0; 1|]
+# let restored =
+    Artifact.encode_binary_classification fitted
+    |> Result.get_ok |> Artifact.decode_binary_classification
+    |> Result.get_ok |> Artifact.model;;
+val restored : Artifact.binary_classification_model = <abstr>
+# Pipeline.predict restored ~feature_schema:schema ~x
+  |> Result.get_ok |> Target.classification_values;;
+- : int array = [|0; 1|]
+# let splitter = Stratified_k_fold.create ~folds:2 () |> Result.get_ok;;
+val splitter : Stratified_k_fold.t = <abstr>
+# let splits =
+    Stratified_k_fold.split splitter ~rng:(Rng.create (Seed.of_int 42))
+      ~x ~y:(Some y) ()
+    |> Result.get_ok;;
+val splits : (Row_view.t * Row_view.t) array =
+  [|(<abstr>, <abstr>); (<abstr>, <abstr>)|]
+# Array.map (fun (_, test) -> Row_view.indices test) splits;;
+- : int array array = [|[|0|]; [|1|]|]
+# let positive_probabilities = Vector.of_array [|0.2; 0.8|];;
+val positive_probabilities : Vector.t = <abstr>
+# Binary_classification_metrics.log_loss ~truth:y
+    ~positive_probabilities () |> Result.get_ok;;
+- : float = 0.223143551314209737
+# Binary_classification_metrics.roc_curve ~truth:y
+    ~positive_probabilities () |> Result.get_ok
+  |> fun roc ->
+  Vector.to_array roc.Binary_classification_metrics.false_positive_rates;;
+- : float array = [|0.; 0.; 1.|]
+]}
+
+The current pipeline routes targets and sample weights to its terminal
+estimator. Its unsupervised preprocessing stages receive neither. External
+estimators can also participate by implementing {!Modelkit.ESTIMATOR}. Because
+arbitrary extension modules may close over behavior that has no reviewed data
+codec, pipelines intended for persistence use the artifact-aware built-in
+constructors. Encoding any unsupported component returns a typed
+{!Modelkit.Error.Artifact} failure.
+
+{1 Artifact safety and compatibility}
+
+{!Modelkit.Artifact} stores canonical big-endian integers and IEEE-754 binary64
+values rather than OCaml runtime representations. The versioned envelope and
+component codecs retain feature schemas, fitted parameters, and solver reports;
+optional metadata can record a row count, root seed, sample-weight presence,
+and caller labels. Training observations, closures, commands, and [Marshal]
+values are never serialized.
+
+The default reader bounds total bytes, component count, feature count, string
+length, and metadata count before component allocations. A declared MD5 digest
+detects accidental corruption only; it neither authenticates nor encrypts an
+artifact. The format remains experimental during 0.x, while golden-reader tests
+preserve every released schema. Use task-specific regression or binary
+classification loaders so a wrong model kind fails while loading rather than
+during prediction.
 
 The reference backend preserves small terms that ordinary floating-point
 summation can lose to cancellation:

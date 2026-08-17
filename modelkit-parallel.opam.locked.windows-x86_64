@@ -1,0 +1,78 @@
+opam-version: "2.0"
+name: "modelkit-parallel"
+version: "0.3.0"
+synopsis: "Bounded parallel execution for ModelKit"
+description:
+  "ModelKit Parallel provides an optional Domainslib execution backend for deterministic bounded cross-validation."
+maintainer: "Asara developers <devs@asara.io>"
+authors: "Asara"
+license: "Apache-2.0"
+tags: ["data-science" "machine-learning" "parallelism"]
+homepage: "https://github.com/asara-io/ModelKit"
+bug-reports: "https://github.com/asara-io/ModelKit/issues"
+depends: [
+  "alcotest" {= "1.9.1" & with-test}
+  "arch-x86_64" {= "1"}
+  "astring" {= "0.8.5" & with-test}
+  "backoff" {= "0.1.1"}
+  "base-bigarray" {= "base"}
+  "base-domains" {= "base"}
+  "base-effects" {= "base"}
+  "base-nnp" {= "base"}
+  "base-threads" {= "base"}
+  "base-unix" {= "base"}
+  "camlp-streams" {= "5.0.1" & with-doc}
+  "cmdliner" {= "2.1.1" & with-test}
+  "conf-mingw-w64-gcc-i686" {= "1"}
+  "conf-mingw-w64-gcc-x86_64" {= "1"}
+  "cppo" {= "1.8.0" & with-doc}
+  "crunch" {= "4.1.0" & with-doc}
+  "domain-local-await" {= "1.0.1"}
+  "domainslib" {= "0.5.2"}
+  "dune" {= "3.24.2"}
+  "flexdll" {= "0.44"}
+  "fmt" {= "0.11.0" & with-test}
+  "fpath" {= "0.7.3" & with-doc}
+  "host-arch-x86_64" {= "1"}
+  "host-system-mingw" {= "1"}
+  "mingw-w64-shims" {= "1.0.1"}
+  "modelkit" {= "0.3.0"}
+  "multicore-magic" {= "2.3.2"}
+  "ocaml" {= "5.3.0"}
+  "ocaml-base-compiler" {= "5.3.0"}
+  "ocaml-compiler" {= "5.3.0"}
+  "ocaml-config" {= "3"}
+  "ocaml-env-mingw64" {= "1"}
+  "ocaml-options-vanilla" {= "1"}
+  "ocaml-syntax-shims" {= "1.0.0" & with-test}
+  "ocamlbuild" {= "0.16.1" & with-test}
+  "ocamlfind" {= "1.9.8" & with-test}
+  "odoc" {= "3.2.1" & with-doc}
+  "odoc-parser" {= "3.2.1" & with-doc}
+  "ptime" {= "1.2.0" & with-doc}
+  "re" {= "1.14.0" & with-test}
+  "saturn" {= "1.0.0"}
+  "seq" {= "base" & with-doc}
+  "stdlib-shims" {= "0.3.0" & with-test}
+  "system-mingw" {= "1"}
+  "thread-table" {= "1.0.0"}
+  "topkg" {= "1.1.1" & with-test}
+  "tyxml" {= "4.6.0" & with-doc}
+  "uutf" {= "1.0.4" & with-test}
+]
+build: [
+  ["dune" "subst"] {dev}
+  [
+    "dune"
+    "build"
+    "-p"
+    name
+    "-j"
+    jobs
+    "@install"
+    "@runtest" {with-test}
+    "@doc" {with-doc}
+  ]
+]
+dev-repo: "git+https://github.com/asara-io/ModelKit.git"
+x-maintenance-intent: ["(latest)"]

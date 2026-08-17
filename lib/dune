@@ -1,3 +1,13 @@
 (library
  (name modelkit)
- (public_name modelkit))
+ (public_name modelkit)
+ (private_modules
+  modelkit_artifact
+  modelkit_data
+  modelkit_linear_models
+  modelkit_metrics
+  modelkit_model_selection
+  modelkit_pipeline
+  modelkit_preprocessing
+  modelkit_protocols
+  modelkit_splitting))
