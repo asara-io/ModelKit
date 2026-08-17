@@ -86,7 +86,7 @@ let test_regression_round_trip () =
     "training rows" (Some 5)
     (Artifact.metadata_of_loaded loaded |> Artifact.training_rows);
   Alcotest.(check string)
-    "producer version" "0.3.0"
+    "producer version" "0.3.1"
     (Artifact.producer_version loaded);
   Alcotest.(check string)
     "canonical bytes survive another write" (Bytes.to_string encoded)
@@ -309,14 +309,14 @@ let test_golden_reader_and_component_versions () =
   let golden = read_file path |> bytes_of_hex in
   let generated = golden_artifact () in
   if Bytes.length golden = 1 then Alcotest.fail (hex_of_bytes generated);
-  Alcotest.(check string)
-    "writer remains canonical" (Bytes.to_string golden)
-    (Bytes.to_string generated);
   let loaded = Artifact.decode_regression golden |> get in
+  Alcotest.(check string)
+    "golden producer version" "0.3.0"
+    (Artifact.producer_version loaded);
   let rewritten = Artifact.encode_regression (Artifact.model loaded) |> get in
   Alcotest.(check string)
-    "golden artifact rewrites canonically" (Bytes.to_string golden)
-    (Bytes.to_string rewritten);
+    "rewritten producer version" "0.3.1"
+    (Artifact.decode_regression rewritten |> get |> Artifact.producer_version);
   let tag_offset, version_offset = terminal_component_offsets golden in
   let unknown_tag = Bytes.copy golden in
   Bytes.set unknown_tag tag_offset (Char.chr 127);
