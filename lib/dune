@@ -1,4 +1,4 @@
 (library
  (name modelkit)
  (public_name modelkit)
- (private_modules modelkit_data modelkit_protocols))
+ (private_modules modelkit_data modelkit_preprocessing modelkit_protocols))
