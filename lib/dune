@@ -5,6 +5,7 @@
   modelkit_data
   modelkit_linear_models
   modelkit_metrics
+  modelkit_model_selection
   modelkit_pipeline
   modelkit_preprocessing
   modelkit_protocols
