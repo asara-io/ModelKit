@@ -1,6 +1,6 @@
 opam-version: "2.0"
 name: "modelkit-parallel"
-version: "0.3.0"
+version: "0.3.1"
 synopsis: "Bounded parallel execution for ModelKit"
 description:
   "ModelKit Parallel provides an optional Domainslib execution backend for deterministic bounded cross-validation."
@@ -29,7 +29,7 @@ depends: [
   "dune" {= "3.24.2"}
   "fmt" {= "0.11.0" & with-test}
   "fpath" {= "0.7.3" & with-doc}
-  "modelkit" {= "0.3.0"}
+  "modelkit" {= "0.3.1"}
   "multicore-magic" {= "2.3.2"}
   "ocaml" {= "5.3.0"}
   "ocaml-base-compiler" {= "5.3.0"}

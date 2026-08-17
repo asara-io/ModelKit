@@ -2,26 +2,31 @@
  (name modelkit_test_support)
  (wrapped false)
  (modules backend_conformance)
+ (package modelkit)
  (libraries modelkit alcotest))
 
 (test
  (name data_test)
  (modules data_test)
+ (package modelkit)
  (libraries modelkit alcotest))
 
 (test
  (name preprocessing_test)
  (modules preprocessing_test)
+ (package modelkit)
  (libraries modelkit alcotest))
 
 (test
  (name pipeline_test)
  (modules pipeline_test)
+ (package modelkit)
  (libraries modelkit alcotest))
 
 (test
  (name artifact_test)
  (modules artifact_test)
+ (package modelkit)
  (libraries modelkit alcotest)
  (deps fixtures/artifacts/regression_pipeline_v1.hex)
  (action
@@ -33,61 +38,73 @@
 (test
  (name linear_model_test)
  (modules linear_model_test)
+ (package modelkit)
  (libraries modelkit alcotest))
 
 (test
  (name splitter_test)
  (modules splitter_test)
+ (package modelkit)
  (libraries modelkit alcotest))
 
 (test
  (name metrics_test)
  (modules metrics_test)
+ (package modelkit)
  (libraries modelkit alcotest))
 
 (test
  (name cross_validation_test)
  (modules cross_validation_test)
+ (package modelkit)
  (libraries modelkit alcotest))
 
 (test
  (name grid_search_test)
  (modules grid_search_test)
+ (package modelkit)
  (libraries modelkit alcotest))
 
 (test
  (name protocol_test)
  (modules protocol_test)
+ (package modelkit)
  (libraries modelkit alcotest))
 
 (test
  (name convention_test)
  (modules convention_test)
+ (package modelkit)
  (libraries modelkit alcotest))
 
 (test
  (name portable_test)
  (modules portable_test)
+ (package modelkit)
  (libraries modelkit alcotest))
 
 (test
  (name property_test)
  (modules property_test)
+ (package modelkit)
  (libraries modelkit qcheck-core qcheck-core.runner))
 
 (test
  (name metamorphic_test)
  (modules metamorphic_test)
+ (package modelkit)
  (libraries modelkit alcotest))
 
 (test
  (name backend_conformance_test)
  (modules backend_conformance_test)
+ (package modelkit)
  (libraries modelkit modelkit_test_support alcotest))
 
 (test
  (name sklearn_fixture_test)
  (modules sklearn_fixture_test)
+ (package modelkit)
  (libraries alcotest)
  (deps fixtures/sklearn/stratified_kfold_v1.tsv)
  (action
@@ -99,6 +116,7 @@
 (test
  (name sklearn_splitter_fixture_test)
  (modules sklearn_splitter_fixture_test)
+ (package modelkit)
  (libraries modelkit alcotest)
  (deps fixtures/sklearn/splitters_v1.tsv)
  (action
@@ -110,6 +128,7 @@
 (test
  (name sklearn_metrics_fixture_test)
  (modules sklearn_metrics_fixture_test)
+ (package modelkit)
  (libraries modelkit alcotest)
  (deps fixtures/sklearn/metrics_v1.tsv)
  (action
@@ -121,6 +140,7 @@
 (test
  (name sklearn_preprocessing_fixture_test)
  (modules sklearn_preprocessing_fixture_test)
+ (package modelkit)
  (libraries modelkit alcotest)
  (deps fixtures/sklearn/preprocessing_v1.tsv)
  (action
@@ -132,6 +152,7 @@
 (test
  (name sklearn_linear_model_fixture_test)
  (modules sklearn_linear_model_fixture_test)
+ (package modelkit)
  (libraries modelkit alcotest)
  (deps fixtures/sklearn/linear_models_v1.tsv)
  (action
