@@ -1,4 +1,7 @@
-(** Portable classical machine learning workflows for OCaml. *)
+(** Portable classical machine learning workflows for OCaml.
+
+    This module is the complete supported public namespace. Physical
+    implementation units are private and are not compatibility targets. *)
 
 (** Typed failures raised while admitting and aligning data. *)
 module Data_error : sig

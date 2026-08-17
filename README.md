@@ -33,11 +33,11 @@ Anticipating performance benefits from existing work such as using Owl for a num
 
 ## Status
 
-ModelKit 0.2.1 is the current foundation release and adds OCaml 5.5 build support. The `0.3.x` development branch now includes immutable dense dataset admission, explicit `Require_finite` and `Allow_nan` feature policies, aligned zero-copy row views, stable versioned schema fingerprints, and explicit copy/view reporting. `Allow_nan` treats NaN as a missing-value marker but still rejects positive and negative infinity.
+ModelKit 0.3.0 is the current evaluation release. It includes immutable dense dataset admission, explicit `Require_finite` and `Allow_nan` feature policies, aligned zero-copy row views, stable versioned schema fingerprints, and explicit copy/view reporting. `Allow_nan` treats NaN as a missing-value marker but still rejects positive and negative infinity.
 
 Dataset row views preserve ordering and duplicates without packing feature or metadata buffers. Use `Dataset.materialize` when an algorithm requires contiguous selected rows; its access report identifies the resulting copies.
 
-The development API also provides `Simple_imputer`, `Standard_scaler`, and `Variance_threshold`. Imputation learns only from the supplied training matrix and treats NaN as the missing-value marker. Scaling uses population variance and maps constant centered features to zero with a scale of one. Variance filtering keeps columns whose variance is strictly greater than its threshold and preserves selected names in input order. These transformers reject infinities with typed errors rather than silently continuing.
+The 0.3.0 API also provides `Simple_imputer`, `Standard_scaler`, and `Variance_threshold`. Imputation learns only from the supplied training matrix and treats NaN as the missing-value marker. Scaling uses population variance and maps constant centered features to zero with a scale of one. Variance filtering keeps columns whose variance is strictly greater than its threshold and preserves selected names in input order. These transformers reject infinities with typed errors rather than silently continuing.
 
 `Pipeline` now packages these unsupervised transformers with any implementation of ModelKit's public `ESTIMATOR` protocol. Fitting learns every preprocessing stage exclusively from the supplied training matrix, then fits the terminal estimator on the transformed training output. The fitted pipeline reuses those exact stage values for `transform`, `predict`, `decision_function`, and `predict_proba`; unavailable terminal capabilities and named-stage failures are typed errors. Feature schemas are checked at the pipeline boundary and propagated after every transformation. Fixed root RNG state produces stage-local streams derived from stable logical names and positions.
 
@@ -97,7 +97,26 @@ let diagnostics = Modelkit_parallel.diagnostics parallel
 
 `Grid_search.axis` defines a non-empty, typed parameter axis by encoding report values and immutably updating a user-owned configuration record. `Grid_search.create` forms the finite Cartesian product in stable declaration order, and the regression and binary-classification search functions evaluate every candidate against identical split membership. Reports retain candidate parameters, mean CPU timings, aggregate train/test scores, ranks, underlying cross-validation reports, and typed build failures. The default `Record` policy excludes candidates with unavailable primary scores while continuing the search; `Abort` returns the first failure. The named `refit` scorer selects the winner, with the lowest candidate index resolving exact ties, and the winning specification is fitted once on the complete dataset. Passing an execution backend parallelizes each candidate's folds while retaining stable sequential candidate order.
 
-The portable `modelkit` package lives under `lib/`. The optional `modelkit-parallel` package lives under `backends/parallel/` and depends inward on the portable core. Other ecosystem adapters and accelerated numerical backends remain reserved under `adapters/` and `backends/` as separate future packages.
+## Architecture
+
+The supported library API is the flat `Modelkit.*` namespace documented by `lib/modelkit.mli`. The physical `Modelkit_*` compilation units are private implementation details: consumers should depend on `modelkit` and use modules such as `Modelkit.Dataset`, `Modelkit.Pipeline`, and `Modelkit.Artifact`, rather than importing internal source units directly.
+
+The portable implementation is organized by responsibility:
+
+| Source unit | Responsibility |
+| --- | --- |
+| `modelkit_data` | Immutable vectors, matrices, row views, targets, schemas, datasets, and typed errors |
+| `modelkit_protocols` | Extension contracts, deterministic random streams, execution, and reference numerical kernels |
+| `modelkit_preprocessing` | Preprocessing validation and built-in transformers |
+| `modelkit_pipeline` | Leakage-safe pipeline construction, fitting, and inference dispatch |
+| `modelkit_linear_models` | Solver reports, shared numerical routines, and linear estimators |
+| `modelkit_splitting` | Validated splits and built-in cross-validation splitters |
+| `modelkit_metrics` | Metrics, binary responses, scorers, and score aggregation |
+| `modelkit_model_selection` | Cross-validation and finite grid search |
+| `modelkit_artifact` | Versioned fitted-pipeline persistence and built-in component codecs |
+| `modelkit.ml` | Public façade retaining the stable `Modelkit.*` namespace |
+
+These units remain within the portable `modelkit` package under `lib/`; they are not separately installable packages or additional public namespaces. Dependencies flow from higher-level workflows toward data and protocol foundations. The optional `modelkit-parallel` package lives under `backends/parallel/` and depends inward on the portable core. Other ecosystem adapters and accelerated numerical backends remain reserved under `adapters/` and `backends/` as separate future packages.
 
 ## Development
 
