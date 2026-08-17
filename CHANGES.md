@@ -1,3 +1,46 @@
+# 0.3.0 (2026-08-17)
+
+- Add immutable dense dataset admission with explicit finiteness policies,
+  aligned zero-copy row views, stable schema fingerprints, and observable
+  copy/view reporting.
+- Add immutable mean, median, and constant imputation, population
+  standardization, and variance-based feature filtering while preserving
+  feature identities.
+- Add leakage-safe sequential pipelines that fit preprocessing only on training
+  input, propagate schemas, derive stage-local random streams, and dispatch
+  prediction, decision, and probability operations.
+- Add portable weighted ordinary least squares, ridge regression, and binary
+  logistic regression with stable numerical methods, fitted coefficients, and
+  solver diagnostics.
+- Add deterministic K-fold, stratified K-fold, group K-fold, and
+  expanding-window time-series splitters with validated row views and explicit
+  aligned dataset materialization.
+- Add weighted regression and binary classification metrics, plotting-neutral
+  residual, ROC, and precision-recall data, higher-is-better scorers, stable
+  score aggregation, and explicit undefined-result policies.
+- Add deterministic cross-validation with ordered train and test scores, CPU
+  timings, optional fitted models and row indices, structured failures, and
+  independent split and fit seeds.
+- Add the separately installable `modelkit-parallel` package for bounded
+  Domainslib fold execution with sequential fallback, stable logical results,
+  and oversubscription diagnostics.
+- Add typed finite grid search over immutable configurations with shared splits,
+  failure-aware candidate reports, named-scorer ranking, deterministic tie
+  handling, and best-model refitting on all training data.
+- Add versioned data-only artifacts for fitted built-in regression and binary
+  classification pipelines with feature-schema identity, bounded readers,
+  accidental-corruption detection, file conveniences, and golden compatibility
+  coverage.
+- Add committed scikit-learn parity fixtures and deterministic comparative
+  benchmark reports for preprocessing, linear models, splitters, metrics,
+  cross-validation, parallel execution, and grid search without adding a Python
+  runtime dependency or making performance claims.
+- Expand executable documentation and the end-to-end evaluation example to cover
+  the complete supervised workflow.
+- Decompose the portable implementation into private cohesive source units while
+  retaining the existing flat `Modelkit.*` public API and optional-package
+  dependency boundaries.
+
 # 0.2.1 (2026-08-11)
 
 - Restore package builds on OCaml 5.5 by making typed target accessor specializations explicit.
