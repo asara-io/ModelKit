@@ -6,4 +6,5 @@
   modelkit_linear_models
   modelkit_pipeline
   modelkit_preprocessing
-  modelkit_protocols))
+  modelkit_protocols
+  modelkit_splitting))
