@@ -58,7 +58,13 @@ jobs:
           ocaml-compiler: ${{ matrix.ocaml-compiler }}
           dune-cache: true
 
-      - name: Install dependencies
+      - name: Install runtime dependencies
+        run: opam install . --deps-only
+
+      - name: Verify production package build
+        run: opam exec -- dune build -p modelkit,modelkit-parallel @install
+
+      - name: Install test and documentation dependencies
         run: opam install . --deps-only --with-test --with-doc
 
       - name: Build, test, and generate documentation
