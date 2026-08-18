@@ -8,7 +8,7 @@ The supported API is the flat {!Modelkit} namespace documented below. Physical
 additional public namespaces or compatibility targets. Optional integrations,
 such as bounded Domainslib execution, are distributed as separate packages.
 
-Version 0.3.1 provides immutable dense {!Modelkit.Dataset} admission, explicit
+Version 0.3.2 provides immutable dense {!Modelkit.Dataset} admission, explicit
 feature-finiteness policies, stable schema fingerprints, zero-copy row-index
 views, and copy/view reports for opaque float64 {!Modelkit.Vector} and
 {!Modelkit.Matrix} values. Public specification, estimator, transformer, scorer,
