@@ -47,6 +47,12 @@
  (libraries modelkit alcotest))
 
 (test
+ (name regularized_linear_test)
+ (modules regularized_linear_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
  (name splitter_test)
  (modules splitter_test)
  (package modelkit)
@@ -169,4 +175,16 @@
   (setenv
    MODELKIT_SKLEARN_LINEAR_MODEL_FIXTURE
    %{dep:fixtures/sklearn/linear_models_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name sklearn_regularized_linear_fixture_test)
+ (modules sklearn_regularized_linear_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/regularized_linear_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_SKLEARN_REGULARIZED_LINEAR_FIXTURE
+   %{dep:fixtures/sklearn/regularized_linear_v1.tsv}
    (run %{test}))))

@@ -30,8 +30,10 @@ preserve feature schemas, derive stage-local random streams, and dispatch
 terminal prediction capabilities. Weighted ordinary least squares and ridge
 regression use the portable rank-revealing QR solver. Weighted binary logistic
 regression uses stable sigmoid and softplus formulas with deterministic damped
-Newton iterations. Each fitted estimator exposes coefficients, an intercept,
-and a {!Modelkit.Solver_report}. K-fold, stratified K-fold, group K-fold, and
+Newton iterations. Weighted lasso and elastic-net regression use deterministic
+cyclic coordinate descent and can fit descending warm-started regularization
+paths. Each fitted estimator exposes coefficients, an intercept, and a
+{!Modelkit.Solver_report}. K-fold, stratified K-fold, group K-fold, and
 expanding-window time-series splitters produce validated source-row views;
 {!Modelkit.Split.materialize} is the explicit boundary for copying train and
 test selections into aligned datasets. Weighted regression and binary
@@ -125,6 +127,52 @@ val fitted : Min_max_scaler.fitted = <abstr>
 # Min_max_scaler.transform fitted ~feature_schema:schema ~x
   |> Result.get_ok |> Matrix.to_arrays;;
 - : float array array = [|[|0.; 0.|]; [|1.; 1.|]|]
+]}
+
+{1 Regularized linear paths}
+
+{!Modelkit.Lasso_regression} minimizes weighted mean squared error plus an L1
+coefficient penalty. {!Modelkit.Elastic_net_regression} adds an L2 penalty and
+uses [l1_ratio] to mix the two. Both normalize the loss by total positive sample
+weight, leave the optional intercept unpenalized, and use deterministic cyclic
+coordinate descent. Convergence checks coordinate updates and the optimality
+residual; exhausting the configured iteration bound returns a typed
+{!Modelkit.Error.Convergence} failure.
+
+{!Modelkit.Lasso_path} and {!Modelkit.Elastic_net_path} fit alpha values in
+descending order and warm-start each point from its stronger-penalty
+predecessor. Explicit alpha vectors are copied, validated, and sorted.
+Otherwise, [epsilon] and [count] define a logarithmic sequence beginning at the
+smallest L1 penalty that gives an all-zero centered solution. Coefficient matrix
+rows, intercepts, solver reports, and checked [model] indices share that alpha
+order. Automatic elastic-net paths require a positive L1 ratio; callers can
+still fit pure-L2 paths by providing explicit alphas.
+
+The estimators implement the common regression protocol and can be packaged
+with {!val:Modelkit.Pipeline.estimator}. Their current implementation consumes
+dense matrices. Artifact codecs for these development estimators are deferred;
+generally packaged pipelines remain available in memory and artifact encoding
+returns the existing typed unsupported-component error.
+
+{@ocaml[
+# open Modelkit;;
+# let x = Matrix.of_arrays [|[|-1.|]; [|0.|]; [|1.|]|] |> Result.get_ok;;
+val x : Matrix.t = <abstr>
+# let schema = Feature_schema.of_matrix x |> Result.get_ok;;
+val schema : Feature_schema.t = <abstr>
+# let y =
+    Target.regression (Vector.of_array [|-2.; 0.; 2.|]) |> Result.get_ok;;
+val y : Target.regression Target.t = <abstr>
+# let path =
+    Lasso_path.fit (Lasso_path.create ~count:3 () |> Result.get_ok)
+      ~rng:(Rng.create (Seed.of_int 42)) ~feature_schema:schema ~x ~y ()
+    |> Result.get_ok;;
+val path : Lasso_path.fitted = <abstr>
+# Lasso_path.alphas path |> Vector.length;;
+- : int = 3
+# Lasso_path.model path ~index:1 |> Result.get_ok
+  |> Lasso_regression.coefficients |> Vector.length;;
+- : int = 1
 ]}
 
 {1 Executable example}

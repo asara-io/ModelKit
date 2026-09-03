@@ -689,6 +689,83 @@ let binary_scalar_metrics_are_bounded =
         | Ok value -> Float.is_finite value && value >= 0.0
         | Error _ -> false)
 
+let lasso_matches_one_dimensional_soft_threshold =
+  QCheck.Test.make ~count:400
+    ~name:"lasso matches the analytic one-dimensional soft threshold"
+    QCheck.(pair (int_range 1 100) (int_range 0 100))
+    (fun (raw_slope, raw_penalty) ->
+      let slope = Float.of_int raw_slope /. 10.0 in
+      let alpha = Float.of_int raw_penalty /. 20.0 in
+      let x =
+        Result.get_ok (Matrix.of_arrays [| [| -1.0 |]; [| 0.0 |]; [| 1.0 |] |])
+      in
+      let feature_schema = Result.get_ok (Feature_schema.of_matrix x) in
+      let y =
+        Result.get_ok
+          (Target.regression
+             (Vector.of_array [| -.slope +. 3.0; 3.0; slope +. 3.0 |]))
+      in
+      match
+        Result.bind (Lasso_regression.create ~alpha ~tolerance:1e-10 ())
+          (fun specification ->
+            Lasso_regression.fit specification
+              ~rng:(Rng.create (Seed.of_int 11))
+              ~feature_schema ~x ~y ())
+      with
+      | Error _ -> false
+      | Ok fitted ->
+          let expected = Float.max 0.0 (slope -. (1.5 *. alpha)) in
+          Float.abs
+            (Vector.get (Lasso_regression.coefficients fitted) 0 -. expected)
+          <= 1e-8
+          && Float.abs (Lasso_regression.intercept fitted -. 3.0) <= 1e-8)
+
+let regularization_paths_are_descending_and_warm_started =
+  QCheck.Test.make ~count:200
+    ~name:"regularization paths are descending with aligned fitted models"
+    QCheck.(pair (int_range 1 100) (int_range 2 12))
+    (fun (raw_slope, count) ->
+      let slope = Float.of_int raw_slope /. 10.0 in
+      let x =
+        Result.get_ok (Matrix.of_arrays [| [| -1.0 |]; [| 0.0 |]; [| 1.0 |] |])
+      in
+      let feature_schema = Result.get_ok (Feature_schema.of_matrix x) in
+      let y =
+        Result.get_ok
+          (Target.regression (Vector.of_array [| -.slope; 0.0; slope |]))
+      in
+      match
+        Result.bind (Lasso_path.create ~count ~tolerance:1e-10 ())
+          (fun specification ->
+            Lasso_path.fit specification
+              ~rng:(Rng.create (Seed.of_int 12))
+              ~feature_schema ~x ~y ())
+      with
+      | Error _ -> false
+      | Ok path ->
+          let alphas = Vector.to_array (Lasso_path.alphas path) in
+          let coefficients = Lasso_path.coefficients path in
+          let rec aligned index =
+            if index = Array.length alphas then true
+            else
+              let descending =
+                index = 0 || alphas.(index - 1) >= alphas.(index)
+              in
+              match Lasso_path.model path ~index with
+              | Error _ -> false
+              | Ok model ->
+                  descending
+                  && Float.abs
+                       (Vector.get (Lasso_regression.coefficients model) 0
+                       -. Matrix.get coefficients index 0)
+                     <= 1e-12
+                  && aligned (index + 1)
+          in
+          Array.length alphas = count
+          && Matrix.shape coefficients = (count, 1)
+          && Float.abs (Matrix.get coefficients 0 0) <= 1e-10
+          && aligned 0)
+
 let ranking_curves_are_monotone =
   QCheck.Test.make ~count:500
     ~name:"ROC and precision-recall curve axes are monotone"
@@ -763,6 +840,8 @@ let () =
         variance_threshold_removes_constant_column;
         pipeline_matches_manual_preprocessing;
         ordinary_least_squares_recovers_exact_lines;
+        lasso_matches_one_dimensional_soft_threshold;
+        regularization_paths_are_descending_and_warm_started;
         logistic_probabilities_are_complementary;
         k_fold_partitions_every_sample_once;
         stratified_folds_balance_each_class;

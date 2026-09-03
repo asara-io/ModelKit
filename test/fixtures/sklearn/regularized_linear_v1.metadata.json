@@ -1,0 +1,42 @@
+{
+  "configuration": {
+    "elastic_alpha": 0.12,
+    "elastic_l1_ratio": 0.35,
+    "features": 4,
+    "lasso_alpha": 0.15,
+    "max_iter": 100000,
+    "path_alphas": [
+      0.8,
+      0.35,
+      0.12,
+      0.04
+    ],
+    "prediction_samples": 4,
+    "samples": 8,
+    "selection": "cyclic",
+    "tol": 1e-12,
+    "weighted_estimators": true
+  },
+  "environment": {
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "fixture": "regularized_linear_v1",
+  "generator": "dev/fixtures/generate.py",
+  "license": "Apache-2.0",
+  "references": [
+    "sklearn.linear_model.ElasticNet",
+    "sklearn.linear_model.Lasso",
+    "sklearn.linear_model.enet_path",
+    "sklearn.linear_model.lasso_path"
+  ],
+  "schema_version": 1
+}

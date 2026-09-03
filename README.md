@@ -18,7 +18,7 @@ The full documentation is available via: [https://ocaml.org/p/modelkit/latest/do
 - Immutable preprocessing specifications fit mean, median, or constant imputation, population standardization, and variance-based feature filtering without changing or losing feature identities.
 - Portable numeric, categorical, target, interaction, and missingness transforms cover min-max, max-absolute, robust, per-sample normalization, one-hot, ordinal, label, polynomial, and missing-indicator workflows.
 - Sequential pipelines fit preprocessing only on their training input, preserve schemas through ordered stages, and dispatch prediction, decision, and probability operations through an explicitly capable terminal estimator.
-- Portable weighted ordinary least squares, ridge regression, and binary logistic regression keep immutable specifications separate from fitted coefficients and solver diagnostics.
+- Portable weighted ordinary least squares, ridge, lasso, elastic-net, and binary logistic regression keep immutable specifications separate from fitted coefficients and solver diagnostics.
 - Deterministic K-fold, stratified K-fold, group K-fold, and expanding-window time-series splitters produce validated row views that can be explicitly materialized as aligned datasets.
 - Weighted regression and binary classification metrics provide immutable higher-is-better scorers, plotting-neutral residual, ROC, and precision–recall data, stable score aggregation, and an explicit undefined-result policy.
 - Cross-validation fits pipelines within deterministic folds and reports ordered train/test scores, CPU timings, optional fitted models and indices, and typed failures; the optional `modelkit-parallel` package adds bounded Domainslib fold execution.
@@ -74,7 +74,13 @@ All matrix transforms are immutable training specifications with distinct fitted
 
 `Linear_regression` fits weighted ordinary least squares with column-pivoted Householder QR and reports numerical rank, including for rank-deficient input. `Ridge_regression` solves an augmented least-squares system without forming normal equations and applies its non-negative `alpha` penalty only to coefficients. Both expose fitted coefficients, intercepts, and direct-solver reports.
 
-`Logistic_regression` supports exactly two integer classes, optional sample weights, an L2 coefficient penalty controlled by positive inverse strength `c`, and stable decision/probability calculations for extreme logits. Its deterministic damped Newton fit reports objective, iteration count, and stopping reason; iteration exhaustion and invalid training data are typed errors. All three estimators accept only finite feature values, so missing values must be handled by an imputer or before fitting.
+Development toward 0.4.0 adds `Lasso_regression` and `Elastic_net_regression` for sparse-coefficient scalar regression. Their portable deterministic cyclic coordinate-descent solver minimizes a weighted objective normalized by total positive sample weight, leaves the optional intercept unpenalized, checks both coordinate updates and optimality residuals, and returns typed convergence failures. `Elastic_net_regression` mixes L1 and L2 coefficient penalties through `l1_ratio`; setting it to one gives lasso semantics.
+
+`Lasso_path` and `Elastic_net_path` fit complete descending regularization paths, warm-starting each point from the preceding stronger penalty. Callers can provide explicit alphas or request a logarithmic path through `epsilon` and `count`. Path results expose alphas, one coefficient row and intercept per alpha, per-point solver reports, and checked access to an ordinary fitted estimator that can predict or participate in an in-memory pipeline. Automatic elastic-net paths require a positive L1 ratio; pure L2 paths require explicit alphas because no finite penalty forces every coefficient to zero.
+
+`Logistic_regression` supports exactly two integer classes, optional sample weights, an L2 coefficient penalty controlled by positive inverse strength `c`, and stable decision/probability calculations for extreme logits. Its deterministic damped Newton fit reports objective, iteration count, and stopping reason; iteration exhaustion and invalid training data are typed errors. These estimators accept only finite feature values, so missing values must be handled by an imputer or before fitting.
+
+Lasso and elastic-net currently accept dense `Matrix.t` input through the common regressor and pipeline contracts. They do not yet have built-in artifact constructors or codecs; generally packaged pipelines remain usable in memory and return a typed unsupported-component error if artifact encoding is attempted.
 
 Built-in logistic regression can be installed as a pipeline terminal with its optional capabilities:
 
@@ -142,6 +148,7 @@ The portable implementation is organized by responsibility:
 | `modelkit_transforms` | Numeric, categorical, target, polynomial, and missing-indicator transforms |
 | `modelkit_pipeline` | Leakage-safe pipeline construction, fitting, and inference dispatch |
 | `modelkit_linear_models` | Solver reports, shared numerical routines, and linear estimators |
+| `modelkit_regularized_linear` | Coordinate-descent lasso and elastic-net estimators and regularization paths |
 | `modelkit_splitting` | Validated splits and built-in cross-validation splitters |
 | `modelkit_metrics` | Metrics, binary responses, scorers, and score aggregation |
 | `modelkit_model_selection` | Cross-validation and finite grid search |

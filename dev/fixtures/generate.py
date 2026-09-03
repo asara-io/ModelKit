@@ -648,6 +648,142 @@ def generate_linear_model_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_regularized_linear_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.linear_model import ElasticNet, Lasso, enet_path, lasso_path
+
+    x_train = np.array(
+        [
+            [-2.0, 0.5, 1.0, 0.0],
+            [-1.0, -1.5, 0.0, 1.0],
+            [0.0, 2.0, -0.5, 0.0],
+            [1.0, -0.5, 2.0, 1.0],
+            [2.0, 1.5, 1.0, 0.0],
+            [3.0, -2.0, -1.0, 1.0],
+            [4.0, 0.25, 0.5, 0.0],
+            [5.0, 2.5, -2.0, 1.0],
+        ],
+        dtype=np.float64,
+    )
+    target = np.array(
+        [-1.15, 0.4, -2.25, 2.6, 2.85, 8.3, 7.175, 4.0], dtype=np.float64
+    )
+    sample_weight = np.array(
+        [1.0, 2.0, 0.5, 3.0, 1.5, 0.75, 2.5, 1.25], dtype=np.float64
+    )
+    x_predict = np.array(
+        [
+            [-1.5, 0.0, 0.5, 1.0],
+            [0.5, 1.0, -1.0, 0.0],
+            [2.5, -1.0, 1.5, 1.0],
+            [6.0, 0.75, -0.25, 0.0],
+        ],
+        dtype=np.float64,
+    )
+    lasso_alpha = 0.15
+    elastic_alpha = 0.12
+    elastic_l1_ratio = 0.35
+    path_alphas = np.array([0.8, 0.35, 0.12, 0.04], dtype=np.float64)
+
+    lasso = Lasso(
+        alpha=lasso_alpha,
+        fit_intercept=True,
+        selection="cyclic",
+        tol=1e-12,
+        max_iter=100000,
+    ).fit(x_train, target, sample_weight=sample_weight)
+    elastic = ElasticNet(
+        alpha=elastic_alpha,
+        l1_ratio=elastic_l1_ratio,
+        fit_intercept=True,
+        selection="cyclic",
+        tol=1e-12,
+        max_iter=100000,
+    ).fit(x_train, target, sample_weight=sample_weight)
+
+    centered_x = x_train - x_train.mean(axis=0)
+    centered_target = target - target.mean()
+    lasso_path_alphas, lasso_path_coefficients, _ = lasso_path(
+        centered_x,
+        centered_target,
+        alphas=path_alphas,
+        tol=1e-12,
+        max_iter=100000,
+    )
+    elastic_path_alphas, elastic_path_coefficients, _ = enet_path(
+        centered_x,
+        centered_target,
+        l1_ratio=elastic_l1_ratio,
+        alphas=path_alphas,
+        tol=1e-12,
+        max_iter=100000,
+    )
+
+    rows = ["# ModelKit sklearn regularized-linear reference fixture v1"]
+
+    def add_matrix(name: str, matrix) -> None:
+        for index, row in enumerate(matrix):
+            rows.append(f"{name}\t{index}\t{float_values(row)}")
+
+    def add_vector(name: str, values) -> None:
+        rows.append(f"{name}\t{float_values(values)}")
+
+    add_matrix("x_train", x_train)
+    add_matrix("x_predict", x_predict)
+    add_vector("target", target)
+    add_vector("sample_weight", sample_weight)
+    add_vector("lasso_alpha", [lasso_alpha])
+    add_vector("lasso_coefficients", lasso.coef_)
+    add_vector("lasso_intercept", [lasso.intercept_])
+    add_vector("lasso_prediction", lasso.predict(x_predict))
+    add_vector("elastic_alpha", [elastic_alpha])
+    add_vector("elastic_l1_ratio", [elastic_l1_ratio])
+    add_vector("elastic_coefficients", elastic.coef_)
+    add_vector("elastic_intercept", [elastic.intercept_])
+    add_vector("elastic_prediction", elastic.predict(x_predict))
+    add_matrix("centered_x", centered_x)
+    add_vector("centered_target", centered_target)
+    add_vector("lasso_path_alphas", lasso_path_alphas)
+    add_matrix("lasso_path_coefficients", lasso_path_coefficients.T)
+    add_vector("elastic_path_alphas", elastic_path_alphas)
+    add_matrix("elastic_path_coefficients", elastic_path_coefficients.T)
+
+    data_path = fixture_dir / "regularized_linear_v1.tsv"
+    metadata_path = fixture_dir / "regularized_linear_v1.metadata.json"
+    data_path.write_text("\n".join(rows) + "\n", encoding="utf-8", newline="\n")
+    metadata = {
+        "configuration": {
+            "elastic_alpha": elastic_alpha,
+            "elastic_l1_ratio": elastic_l1_ratio,
+            "features": x_train.shape[1],
+            "lasso_alpha": lasso_alpha,
+            "max_iter": 100000,
+            "path_alphas": path_alphas.tolist(),
+            "prediction_samples": x_predict.shape[0],
+            "samples": x_train.shape[0],
+            "selection": "cyclic",
+            "tol": 1e-12,
+            "weighted_estimators": True,
+        },
+        "environment": environment.metadata(),
+        "fixture": "regularized_linear_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.linear_model.ElasticNet",
+            "sklearn.linear_model.Lasso",
+            "sklearn.linear_model.enet_path",
+            "sklearn.linear_model.lasso_path",
+        ],
+        "schema_version": 1,
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
@@ -658,6 +794,7 @@ def main() -> None:
     generate_preprocessing_fixture(fixture_dir)
     generate_transform_fixture(fixture_dir)
     generate_linear_model_fixture(fixture_dir)
+    generate_regularized_linear_fixture(fixture_dir)
 
 
 if __name__ == "__main__":
