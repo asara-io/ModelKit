@@ -102,6 +102,55 @@ let test_matrix_kernels () =
     (Reference_backend.transposed_matrix_vector_product transposed_matrix
        (Vector.of_array [| 1.0 |]))
 
+let test_feature_matrix_dispatch () =
+  let dense =
+    Result.get_ok
+      (Matrix.of_arrays
+         [| [| 1.0; 0.0; 3.0 |]; [| 0.0; -2.0; 0.0 |]; [| 4.0; 0.0; 5.0 |] |])
+  in
+  let csr = Csr_matrix.of_dense dense in
+  let operand = Vector.of_array [| 2.0; 3.0; -1.0 |] in
+  let dense_product =
+    get_ok
+      (Reference_backend.feature_matrix_vector_product
+         (Feature_matrix.dense dense)
+         operand)
+  in
+  let sparse_product =
+    get_ok
+      (Reference_backend.feature_matrix_vector_product (Feature_matrix.csr csr)
+         operand)
+  in
+  check
+    (Vector.to_array dense_product = [| -1.0; -6.0; 3.0 |]
+    && Vector.to_array sparse_product = Vector.to_array dense_product)
+    "dense and CSR matrix-vector dispatch disagree";
+  let transposed_operand = Vector.of_array [| 2.0; -1.0; 0.5 |] in
+  let dense_transposed =
+    get_ok
+      (Reference_backend.transposed_feature_matrix_vector_product
+         (Feature_matrix.dense dense)
+         transposed_operand)
+  in
+  let sparse_transposed =
+    get_ok
+      (Reference_backend.transposed_feature_matrix_vector_product
+         (Feature_matrix.csr csr) transposed_operand)
+  in
+  check
+    (Vector.to_array dense_transposed = [| 4.0; 2.0; 8.5 |]
+    && Vector.to_array sparse_transposed = Vector.to_array dense_transposed)
+    "dense and CSR transposed dispatch disagree";
+  check_length_mismatch ~name:"feature-matrix-vector operand" ~expected:3
+    ~observed:1
+    (Reference_backend.feature_matrix_vector_product (Feature_matrix.csr csr)
+       (Vector.of_array [| 1.0 |]));
+  check_length_mismatch ~name:"transposed-feature-matrix-vector operand"
+    ~expected:3 ~observed:1
+    (Reference_backend.transposed_feature_matrix_vector_product
+       (Feature_matrix.csr csr)
+       (Vector.of_array [| 1.0 |]))
+
 let test_sequential_execution () =
   check
     (Sequential_execution.concurrency Sequential_execution.default = 1)
@@ -178,6 +227,8 @@ let () =
         [
           Alcotest.test_case "stable reductions" `Quick test_stable_reductions;
           Alcotest.test_case "matrix kernels" `Quick test_matrix_kernels;
+          Alcotest.test_case "dense and CSR kernel dispatch" `Quick
+            test_feature_matrix_dispatch;
           Alcotest.test_case "sequential execution" `Quick
             test_sequential_execution;
           Alcotest.test_case "seed derivation" `Quick test_seed_derivation;

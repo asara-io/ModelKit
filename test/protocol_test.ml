@@ -267,6 +267,50 @@ module Test_backend : NUMERICAL_BACKEND = struct
                  +. (Matrix.get matrix row column *. Vector.get vector row)
              done;
              !total))
+
+  let feature_matrix_vector_product matrix vector =
+    let expected = Feature_matrix.columns matrix in
+    let observed = Vector.length vector in
+    if expected <> observed then
+      Error
+        (wrap_data_error
+           (Data_error.Length_mismatch
+              { name = "feature-matrix-vector operand"; expected; observed }))
+    else
+      wrap_data_result
+        (Vector.init ~length:(Feature_matrix.rows matrix) (fun row ->
+             let total = ref 0.0 in
+             for column = 0 to expected - 1 do
+               total :=
+                 !total
+                 +. Feature_matrix.get matrix row column
+                    *. Vector.get vector column
+             done;
+             !total))
+
+  let transposed_feature_matrix_vector_product matrix vector =
+    let expected = Feature_matrix.rows matrix in
+    let observed = Vector.length vector in
+    if expected <> observed then
+      Error
+        (wrap_data_error
+           (Data_error.Length_mismatch
+              {
+                name = "transposed-feature-matrix-vector operand";
+                expected;
+                observed;
+              }))
+    else
+      wrap_data_result
+        (Vector.init ~length:(Feature_matrix.columns matrix) (fun column ->
+             let total = ref 0.0 in
+             for row = 0 to expected - 1 do
+               total :=
+                 !total
+                 +. Feature_matrix.get matrix row column
+                    *. Vector.get vector row
+             done;
+             !total))
 end
 
 let test_public_api_compatibility () =

@@ -85,6 +85,47 @@ let dataset_view_order =
         in
         preserves_order 0)
 
+let csr_dense_round_trip =
+  QCheck.Test.make ~count:500
+    ~name:"CSR conversion preserves dense values and portable kernels"
+    QCheck.(array (int_range (-100) 100))
+    (fun raw ->
+      let rows = Array.length raw in
+      let columns = 3 in
+      let dense =
+        Result.get_ok
+          (Matrix.init ~rows ~columns (fun row column ->
+               let value = raw.(row) + column in
+               if (row + column) mod 3 = 0 then 0.0 else Float.of_int value))
+      in
+      let csr = Csr_matrix.of_dense dense in
+      let restored = Csr_matrix.to_dense csr in
+      let operand = Vector.of_array [| 1.0; -2.0; 0.5 |] in
+      let dense_product =
+        Reference_backend.feature_matrix_vector_product
+          (Feature_matrix.dense dense)
+          operand
+      in
+      let csr_product =
+        Reference_backend.feature_matrix_vector_product (Feature_matrix.csr csr)
+          operand
+      in
+      let transposed_operand = Vector.of_array (Array.map Float.of_int raw) in
+      let dense_transposed =
+        Reference_backend.transposed_feature_matrix_vector_product
+          (Feature_matrix.dense dense)
+          transposed_operand
+      in
+      let csr_transposed =
+        Reference_backend.transposed_feature_matrix_vector_product
+          (Feature_matrix.csr csr) transposed_operand
+      in
+      Matrix.to_arrays restored = Matrix.to_arrays dense
+      && Result.map Vector.to_array dense_product
+         = Result.map Vector.to_array csr_product
+      && Result.map Vector.to_array dense_transposed
+         = Result.map Vector.to_array csr_transposed)
+
 let preprocessing_rng () = Rng.create (Seed.of_int 17)
 
 let imputer_removes_missing_values =
@@ -627,6 +668,7 @@ let () =
         seed_derivation;
         rng_purity;
         dataset_view_order;
+        csr_dense_round_trip;
         imputer_removes_missing_values;
         scaler_normalizes_nonconstant_columns;
         variance_threshold_removes_constant_column;

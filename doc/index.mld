@@ -11,7 +11,10 @@ such as bounded Domainslib execution, are distributed as separate packages.
 Version 0.3.2 provides immutable dense {!Modelkit.Dataset} admission, explicit
 feature-finiteness policies, stable schema fingerprints, zero-copy row-index
 views, and copy/view reports for opaque float64 {!Modelkit.Vector} and
-{!Modelkit.Matrix} values. Public specification, estimator, transformer, scorer,
+{!Modelkit.Matrix} values. Development toward 0.4.0 adds checked
+{!Modelkit.Csr_matrix} storage, indexed CSR views, payload-memory accounting,
+and dense/CSR dispatch through {!Modelkit.Feature_matrix}. Public specification,
+estimator, transformer, scorer,
 splitter, execution, RNG, and numerical-backend module types define the
 extension boundaries with separate unfitted and fitted states. The portable
 runtime includes fixed-order compensated numerical kernels, sequential
@@ -38,6 +41,37 @@ optional bounded Domainslib fold execution is supplied by the separate
 built-in pipelines under explicit reader limits and task-specific loaders.
 Portable tests consume committed scikit-learn reference data without requiring
 Python during a normal build or test run.
+
+{1 Sparse storage foundation}
+
+{!Modelkit.Csr_matrix} copies admitted index arrays and requires canonical CSR
+structure: offsets begin at zero, end at the stored-value count, and never
+decrease; columns are in bounds and strictly increase within each row. Explicit
+stored zeroes are retained. Row selections share the source matrix until
+{!Modelkit.Csr_matrix.materialize} is called, while
+{!val:Modelkit.Csr_matrix.view_memory} makes the selection, sharing, and
+prospective materialization payload costs observable.
+
+{!Modelkit.Feature_matrix} selects dense or CSR storage at a numerical boundary.
+The portable {!Modelkit.Reference_backend.feature_matrix_vector_product} and
+{!Modelkit.Reference_backend.transposed_feature_matrix_vector_product} functions
+dispatch without densifying CSR input. Dense and sparse forms agree for finite
+operands; sparse kernels visit only stored entries. Estimators and workflow APIs
+remain dense-only until their subsequent 0.4.0 integration work.
+
+{@ocaml[
+# open Modelkit;;
+# let sparse =
+    Csr_matrix.of_arrays ~rows:2 ~columns:3
+      ~row_offsets:[|0; 2; 3|] ~column_indices:[|0; 2; 1|]
+      ~values:[|1.; 3.; 2.|]
+    |> Result.get_ok;;
+val sparse : Csr_matrix.t = <abstr>
+# Reference_backend.feature_matrix_vector_product
+    (Feature_matrix.csr sparse) (Vector.of_array [|2.; 4.; -1.|])
+  |> Result.get_ok |> Vector.to_array;;
+- : float array = [|-1.; 8.|]
+]}
 
 {1 Executable example}
 

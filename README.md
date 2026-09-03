@@ -13,6 +13,7 @@ The full documentation is available via: [https://ocaml.org/p/modelkit/latest/do
 - Reproducible foundations with deterministic random streams and stable reference numerical operations across supported platforms, OCaml versions, and execution schedules.
 - Typed extension contracts separate immutable estimator specifications from fitted models and return actionable errors.
 - Immutable, validated float64 data primitives catch shape, feature-order, and sample-alignment problems before model code runs.
+- Checked immutable CSR matrices provide canonical sparse storage, zero-copy indexed row views, explicit materialization and payload-memory accounting, and portable dense/CSR numerical-kernel dispatch.
 - Dense datasets admit aligned features, targets, weights, groups, and names under an explicit finiteness policy; stable schema fingerprints and copy/view reports make compatibility and allocation behavior observable.
 - Immutable preprocessing specifications fit mean, median, or constant imputation, population standardization, and variance-based feature filtering without changing or losing feature identities.
 - Sequential pipelines fit preprocessing only on their training input, preserve schemas through ordered stages, and dispatch prediction, decision, and probability operations through an explicitly capable terminal estimator.
@@ -34,6 +35,27 @@ Anticipating performance benefits from existing work such as using Owl for a num
 ## Status
 
 ModelKit 0.3.2 is the current evaluation release. It includes immutable dense dataset admission, explicit `Require_finite` and `Allow_nan` feature policies, aligned zero-copy row views, stable versioned schema fingerprints, and explicit copy/view reporting. `Allow_nan` treats NaN as a missing-value marker but still rejects positive and negative infinity.
+
+Development toward 0.4.0 adds `Csr_matrix` for checked compressed sparse row storage. CSR admission copies caller-owned arrays and requires row offsets to span the stored values monotonically, with in-range columns in strictly increasing order within each row. `Csr_matrix.view` preserves row order and duplicates while sharing the source matrix; `Csr_matrix.materialize` is the explicit packing boundary. `Csr_matrix.memory` and `Csr_matrix.view_memory` report payload bytes separately from runtime object headers and allocator overhead.
+
+Wrap a dense or sparse value with `Feature_matrix.dense` or `Feature_matrix.csr` to use the representation-dispatching `Reference_backend.feature_matrix_vector_product` and `Reference_backend.transposed_feature_matrix_vector_product` kernels:
+
+```ocaml
+let sparse =
+  Csr_matrix.of_arrays ~rows:2 ~columns:3
+    ~row_offsets:[| 0; 2; 3 |]
+    ~column_indices:[| 0; 2; 1 |]
+    ~values:[| 1.0; 3.0; 2.0 |]
+  |> Result.get_ok
+
+let product =
+  Reference_backend.feature_matrix_vector_product
+    (Feature_matrix.csr sparse)
+    (Vector.of_array [| 2.0; 4.0; -1.0 |])
+  |> Result.get_ok
+```
+
+The current estimators, transformers, datasets, pipelines, and model-selection workflows still accept dense `Matrix.t` inputs. Sparse estimator and workflow integration is scheduled in the remaining 0.4.0 work; the present API is the checked storage and numerical-dispatch foundation for it.
 
 Dataset row views preserve ordering and duplicates without packing feature or metadata buffers. Use `Dataset.materialize` when an algorithm requires contiguous selected rows; its access report identifies the resulting copies.
 
@@ -105,8 +127,8 @@ The portable implementation is organized by responsibility:
 
 | Source unit | Responsibility |
 | --- | --- |
-| `modelkit_data` | Immutable vectors, matrices, row views, targets, schemas, datasets, and typed errors |
-| `modelkit_protocols` | Extension contracts, deterministic random streams, execution, and reference numerical kernels |
+| `modelkit_data` | Immutable vectors, dense and CSR matrices, row views, memory accounting, targets, schemas, datasets, and typed errors |
+| `modelkit_protocols` | Extension contracts, deterministic random streams, execution, and dense/CSR reference numerical kernels |
 | `modelkit_preprocessing` | Preprocessing validation and built-in transformers |
 | `modelkit_pipeline` | Leakage-safe pipeline construction, fitting, and inference dispatch |
 | `modelkit_linear_models` | Solver reports, shared numerical routines, and linear estimators |

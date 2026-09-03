@@ -17,6 +17,7 @@ type error_kind =
   | All_zero_weights
   | Empty_feature_name
   | Duplicate_feature_name
+  | Csr_structure
 
 let error_kind = function
   | Data_error.Negative_dimension _ -> Negative_dimension
@@ -28,6 +29,9 @@ let error_kind = function
   | Data_error.All_zero_weights -> All_zero_weights
   | Data_error.Empty_feature_name _ -> Empty_feature_name
   | Data_error.Duplicate_feature_name _ -> Duplicate_feature_name
+  | Data_error.Csr_row_offset_mismatch _ | Data_error.Invalid_csr_row_offset _
+  | Data_error.Invalid_csr_column_order _ ->
+      Csr_structure
 
 let expect_error expected = function
   | Error error when error_kind error = expected -> ()
@@ -71,6 +75,131 @@ let test_row_view () =
   indices.(0) <- 1;
   check (Row_view.indices view = [| 2; 0; 2 |]) "row view did not copy indices";
   expect_error Index_out_of_bounds (Row_view.create ~source_size:3 [| 3 |])
+
+let sample_csr () =
+  get_ok
+    (Csr_matrix.of_arrays ~rows:3 ~columns:4 ~row_offsets:[| 0; 2; 2; 4 |]
+       ~column_indices:[| 0; 3; 1; 2 |] ~values:[| 1.0; 2.0; 3.0; 4.0 |])
+
+let test_csr_admission () =
+  let row_offsets = [| 0; 2; 2; 4 |] in
+  let column_indices = [| 0; 3; 1; 2 |] in
+  let values = [| 1.0; 2.0; 3.0; 4.0 |] in
+  let matrix =
+    get_ok
+      (Csr_matrix.of_arrays ~rows:3 ~columns:4 ~row_offsets ~column_indices
+         ~values)
+  in
+  row_offsets.(1) <- 0;
+  column_indices.(0) <- 2;
+  values.(0) <- 9.0;
+  check (Csr_matrix.shape matrix = (3, 4)) "CSR shape is incorrect";
+  check (Csr_matrix.nonzero_count matrix = 4) "CSR stored count is incorrect";
+  check (Csr_matrix.get matrix 0 0 = 1.0) "CSR values retained mutation";
+  check (Csr_matrix.get matrix 0 1 = 0.0) "CSR implicit zero is incorrect";
+  let exported_offsets = Csr_matrix.row_offsets matrix in
+  exported_offsets.(1) <- 0;
+  check
+    (Csr_matrix.row_offsets matrix = [| 0; 2; 2; 4 |])
+    "CSR offsets export exposed internal storage";
+  let dense = Csr_matrix.to_dense matrix in
+  check
+    (Matrix.to_arrays dense
+    = [|
+        [| 1.0; 0.0; 0.0; 2.0 |];
+        [| 0.0; 0.0; 0.0; 0.0 |];
+        [| 0.0; 3.0; 4.0; 0.0 |];
+      |])
+    "CSR dense conversion is incorrect";
+  let round_trip = Csr_matrix.of_dense dense in
+  check
+    (Csr_matrix.row_offsets round_trip = [| 0; 2; 2; 4 |]
+    && Csr_matrix.column_indices round_trip = [| 0; 3; 1; 2 |])
+    "dense CSR conversion changed canonical structure"
+
+let test_csr_validation () =
+  expect_error Negative_dimension
+    (Csr_matrix.of_arrays ~rows:(-1) ~columns:2 ~row_offsets:[||]
+       ~column_indices:[||] ~values:[||]);
+  expect_error Index_out_of_bounds
+    (Csr_matrix.of_arrays ~rows:max_int ~columns:2 ~row_offsets:[||]
+       ~column_indices:[||] ~values:[||]);
+  expect_error Length_mismatch
+    (Csr_matrix.of_arrays ~rows:2 ~columns:2 ~row_offsets:[| 0; 1 |]
+       ~column_indices:[| 0 |] ~values:[| 1.0 |]);
+  expect_error Csr_structure
+    (Csr_matrix.of_arrays ~rows:1 ~columns:2 ~row_offsets:[| 1; 1 |]
+       ~column_indices:[| 0 |] ~values:[| 1.0 |]);
+  expect_error Csr_structure
+    (Csr_matrix.of_arrays ~rows:2 ~columns:2 ~row_offsets:[| 0; 2; 1 |]
+       ~column_indices:[| 0; 1 |] ~values:[| 1.0; 2.0 |]);
+  expect_error Csr_structure
+    (Csr_matrix.of_arrays ~rows:1 ~columns:3 ~row_offsets:[| 0; 2 |]
+       ~column_indices:[| 2; 1 |] ~values:[| 1.0; 2.0 |]);
+  expect_error Index_out_of_bounds
+    (Csr_matrix.of_arrays ~rows:1 ~columns:2 ~row_offsets:[| 0; 1 |]
+       ~column_indices:[| 2 |] ~values:[| 1.0 |]);
+  let empty =
+    get_ok
+      (Csr_matrix.of_arrays ~rows:0 ~columns:4 ~row_offsets:[| 0 |]
+         ~column_indices:[||] ~values:[||])
+  in
+  check (Csr_matrix.shape empty = (0, 4)) "empty CSR shape is incorrect"
+
+let test_csr_views_and_memory () =
+  let matrix = sample_csr () in
+  let selection = get_ok (Row_view.create ~source_size:3 [| 2; 0; 2 |]) in
+  let view = get_ok (Csr_matrix.view matrix selection) in
+  check (Csr_matrix.view_rows view = 3) "CSR view row count is incorrect";
+  check (Csr_matrix.view_columns view = 4) "CSR view width is incorrect";
+  check
+    (Csr_matrix.view_nonzero_count view = 6)
+    "CSR view stored count is incorrect";
+  check
+    (Csr_matrix.view_get view ~row:1 ~column:3 = 2.0)
+    "CSR view lookup is incorrect";
+  let materialized = Csr_matrix.materialize view in
+  check
+    (Csr_matrix.row_offsets materialized = [| 0; 2; 4; 6 |]
+    && Csr_matrix.column_indices materialized = [| 1; 2; 0; 3; 1; 2 |])
+    "CSR view materialization changed row order or duplicates";
+  let word_bytes = Int64.of_int (Sys.word_size / 8) in
+  let memory = Csr_matrix.memory matrix in
+  let expected_total = Int64.add 32L (Int64.mul 8L word_bytes) in
+  check
+    (Int64.equal memory.Matrix_memory.value_bytes 32L
+    && Int64.equal memory.Matrix_memory.column_index_bytes
+         (Int64.mul 4L word_bytes)
+    && Int64.equal memory.Matrix_memory.row_offset_bytes
+         (Int64.mul 4L word_bytes)
+    && Int64.equal memory.Matrix_memory.total_bytes expected_total
+    && memory.Matrix_memory.dense_equivalent_bytes = Some 96L)
+    "CSR payload memory accounting is incorrect";
+  let view_memory = Csr_matrix.view_memory view in
+  check
+    (Int64.equal view_memory.Csr_matrix.allocated_bytes
+       (Int64.mul 3L word_bytes)
+    && Int64.equal view_memory.Csr_matrix.shared_bytes expected_total
+    && Int64.equal view_memory.Csr_matrix.materialized_bytes
+         (Int64.add 48L (Int64.mul 10L word_bytes)))
+    "CSR view memory accounting is incorrect";
+  let dense_memory =
+    Feature_matrix.memory
+      (Feature_matrix.dense (get_ok (Matrix.create ~rows:3 ~columns:4 0.0)))
+  in
+  check
+    (Int64.equal dense_memory.Matrix_memory.total_bytes 96L)
+    "dense payload memory accounting is incorrect";
+  let wide =
+    get_ok
+      (Csr_matrix.of_arrays ~rows:1 ~columns:max_int ~row_offsets:[| 0; 0 |]
+         ~column_indices:[||] ~values:[||])
+  in
+  check
+    ((Csr_matrix.memory wide).Matrix_memory.dense_equivalent_bytes = None)
+    "overflowing dense equivalent was not reported explicitly";
+  let incompatible = get_ok (Row_view.create ~source_size:2 [| 0 |]) in
+  expect_error Length_mismatch (Csr_matrix.view matrix incompatible)
 
 let test_targets () =
   expect_error Non_finite
@@ -317,6 +446,10 @@ let () =
           Alcotest.test_case "matrix values" `Quick test_matrix;
           Alcotest.test_case "matrix ownership" `Quick test_matrix_ownership;
           Alcotest.test_case "row views" `Quick test_row_view;
+          Alcotest.test_case "CSR admission" `Quick test_csr_admission;
+          Alcotest.test_case "CSR validation" `Quick test_csr_validation;
+          Alcotest.test_case "CSR views and memory" `Quick
+            test_csr_views_and_memory;
           Alcotest.test_case "targets" `Quick test_targets;
           Alcotest.test_case "feature names" `Quick test_feature_names;
           Alcotest.test_case "sample weights" `Quick test_sample_weights;

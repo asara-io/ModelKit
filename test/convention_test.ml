@@ -15,7 +15,9 @@ let data_error_kind = function
   | Data_error.Ragged_matrix _ | Data_error.Index_out_of_bounds _
   | Data_error.Non_finite _ | Data_error.Negative_weight _
   | Data_error.All_zero_weights | Data_error.Empty_feature_name _
-  | Data_error.Duplicate_feature_name _ ->
+  | Data_error.Duplicate_feature_name _ | Data_error.Csr_row_offset_mismatch _
+  | Data_error.Invalid_csr_row_offset _ | Data_error.Invalid_csr_column_order _
+    ->
       Other
 
 let expect_data_error expected = function
@@ -111,7 +113,9 @@ let test_error_convention () =
         | Data_error.Index_out_of_bounds _ | Data_error.Non_finite _
         | Data_error.Negative_weight _ | Data_error.All_zero_weights
         | Data_error.Empty_feature_name _ | Data_error.Duplicate_feature_name _
-          )
+        | Data_error.Csr_row_offset_mismatch _
+        | Data_error.Invalid_csr_row_offset _
+        | Data_error.Invalid_csr_column_order _ )
     | None ->
         None
   in
