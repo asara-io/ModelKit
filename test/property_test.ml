@@ -206,6 +206,92 @@ let scaler_normalizes_nonconstant_columns =
                 Float.abs !mean <= 1e-10
                 && Float.abs (!variance -. 1.0) <= 1e-10))
 
+let one_hot_dense_and_csr_agree =
+  QCheck.Test.make ~count:300
+    ~name:"one-hot dense and CSR outputs agree with one category per feature"
+    QCheck.(array (pair (int_range (-3) 3) (int_range (-3) 3)))
+    (fun rows ->
+      if Array.length rows = 0 then true
+      else
+        let x =
+          Result.get_ok
+            (Matrix.of_arrays
+               (Array.map
+                  (fun (left, right) ->
+                    [| Float.of_int left; Float.of_int right |])
+                  rows))
+        in
+        let schema = Result.get_ok (Feature_schema.of_matrix x) in
+        match One_hot_encoder.create () with
+        | Error _ -> false
+        | Ok specification -> (
+            match
+              One_hot_encoder.fit specification ~rng:(preprocessing_rng ())
+                ~feature_schema:schema ~x ~y:None ()
+            with
+            | Error _ -> false
+            | Ok fitted -> (
+                match
+                  ( One_hot_encoder.transform fitted ~feature_schema:schema ~x,
+                    One_hot_encoder.transform_csr fitted ~feature_schema:schema
+                      ~x )
+                with
+                | Ok dense, Ok csr ->
+                    let dense_values = Matrix.to_arrays dense in
+                    Matrix.to_arrays (Csr_matrix.to_dense csr) = dense_values
+                    && Array.for_all
+                         (fun row -> Array.fold_left ( +. ) 0.0 row = 2.0)
+                         dense_values
+                | Error _, _ | _, Error _ -> false)))
+
+let label_encoding_round_trip =
+  QCheck.Test.make ~count:500
+    ~name:"label encoding is a reversible sorted bijection"
+    QCheck.(array (int_range (-100) 100))
+    (fun values ->
+      let target = Target.classification values in
+      match Label_encoder.fit (Label_encoder.create ()) ~y:target with
+      | Error _ -> false
+      | Ok fitted -> (
+          match Label_encoder.transform fitted target with
+          | Error _ -> false
+          | Ok encoded -> (
+              match Label_encoder.inverse_transform fitted encoded with
+              | Error _ -> false
+              | Ok decoded -> Target.classification_values decoded = values)))
+
+let l2_normalization_is_scale_invariant =
+  QCheck.Test.make ~count:300
+    ~name:"L2 normalization is invariant under positive row scaling"
+    QCheck.(array (int_range (-100) 100))
+    (fun values ->
+      let values = if Array.length values = 0 then [| 0 |] else values in
+      let row = Array.map Float.of_int values in
+      let x = Result.get_ok (Matrix.of_arrays [| row |]) in
+      let scaled =
+        Result.get_ok
+          (Matrix.of_arrays [| Array.map (fun value -> value *. 7.0) row |])
+      in
+      let schema = Result.get_ok (Feature_schema.of_matrix x) in
+      match
+        Normalizer.fit
+          (Normalizer.create ~norm:Normalizer.L2 ())
+          ~rng:(preprocessing_rng ()) ~feature_schema:schema ~x ~y:None ()
+      with
+      | Error _ -> false
+      | Ok fitted -> (
+          match
+            ( Normalizer.transform fitted ~feature_schema:schema ~x,
+              Normalizer.transform fitted ~feature_schema:schema ~x:scaled )
+          with
+          | Ok left, Ok right ->
+              let left = Matrix.to_arrays left in
+              let right = Matrix.to_arrays right in
+              Array.for_all2
+                (fun left right -> Float.abs (left -. right) <= 1e-12)
+                left.(0) right.(0)
+          | Error _, _ | _, Error _ -> false))
+
 let variance_threshold_removes_constant_column =
   QCheck.Test.make ~count:500
     ~name:"variance threshold removes constant columns in stable order"
@@ -671,6 +757,9 @@ let () =
         csr_dense_round_trip;
         imputer_removes_missing_values;
         scaler_normalizes_nonconstant_columns;
+        one_hot_dense_and_csr_agree;
+        label_encoding_round_trip;
+        l2_normalization_is_scale_invariant;
         variance_threshold_removes_constant_column;
         pipeline_matches_manual_preprocessing;
         ordinary_least_squares_recovers_exact_lines;

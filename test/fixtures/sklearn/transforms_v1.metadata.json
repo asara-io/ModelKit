@@ -1,0 +1,39 @@
+{
+  "configuration": {
+    "categorical_features": 2,
+    "min_max_range": [
+      -1.0,
+      2.0
+    ],
+    "numeric_features": 3,
+    "polynomial_degree": 2,
+    "samples": 4
+  },
+  "environment": {
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "fixture": "transforms_v1",
+  "generator": "dev/fixtures/generate.py",
+  "license": "Apache-2.0",
+  "references": [
+    "sklearn.impute.MissingIndicator",
+    "sklearn.preprocessing.LabelEncoder",
+    "sklearn.preprocessing.MaxAbsScaler",
+    "sklearn.preprocessing.MinMaxScaler",
+    "sklearn.preprocessing.Normalizer",
+    "sklearn.preprocessing.OneHotEncoder",
+    "sklearn.preprocessing.OrdinalEncoder",
+    "sklearn.preprocessing.PolynomialFeatures",
+    "sklearn.preprocessing.RobustScaler"
+  ],
+  "schema_version": 1
+}

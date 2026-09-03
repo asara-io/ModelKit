@@ -1,0 +1,71 @@
+# ModelKit sklearn transform reference fixture v1
+numeric_input	0	-4,0,1
+numeric_input	1	-2,0,2
+numeric_input	2	0,0,4
+numeric_input	3	8,0,100
+min_max_data_min	-4,0,1
+min_max_data_max	8,0,100
+min_max_data_range	12,0,99
+min_max_scale	0.25,3,0.030303030303030304
+min_max_offset	0,-1,-1.0303030303030303
+min_max_output	0	-1,-1,-1
+min_max_output	1	-0.5,-1,-0.96969696969696972
+min_max_output	2	0,-1,-0.90909090909090906
+min_max_output	3	2,-1,2
+max_abs_max	8,0,100
+max_abs_scale	8,1,100
+max_abs_output	0	-0.5,0,0.01
+max_abs_output	1	-0.25,0,0.02
+max_abs_output	2	0,0,0.040000000000000001
+max_abs_output	3	1,0,1
+robust_center	-1,0,3
+robust_scale	4.5,1,26.25
+robust_output	0	-0.66666666666666663,0,-0.076190476190476197
+robust_output	1	-0.22222222222222221,0,-0.038095238095238099
+robust_output	2	0.22222222222222221,0,0.038095238095238099
+robust_output	3	2,0,3.6952380952380954
+normalizer_input	0	3,4,0
+normalizer_input	1	0,0,0
+normalizer_input	2	-2,1,2
+normalizer_l1_output	0	0.42857142857142855,0.5714285714285714,0
+normalizer_l1_output	1	0,0,0
+normalizer_l1_output	2	-0.40000000000000002,0.20000000000000001,0.40000000000000002
+normalizer_l2_output	0	0.59999999999999998,0.80000000000000004,0
+normalizer_l2_output	1	0,0,0
+normalizer_l2_output	2	-0.66666666666666663,0.33333333333333331,0.66666666666666663
+normalizer_max_output	0	0.75,1,0
+normalizer_max_output	1	0,0,0
+normalizer_max_output	2	-1,0.5,1
+categorical_input	0	2,10
+categorical_input	1	1,20
+categorical_input	2	2,10
+categorical_predict	0	3,10
+categorical_predict	1	1,20
+one_hot_categories_0	1,2
+one_hot_categories_1	10,20
+one_hot_output	0	0,0,1,0
+one_hot_output	1	1,0,0,1
+ordinal_categories_0	1,2
+ordinal_categories_1	10,20
+ordinal_output	0	-1,0
+ordinal_output	1	0,1
+label_input	42,-3,42,10
+label_classes	-3,10,42
+label_encoded	2,0,2,1
+label_decoded	42,-3,42,10
+polynomial_input	0	2,3
+polynomial_input	1	-1,4
+polynomial_output	0	1,2,3,4,6,9
+polynomial_output	1	1,-1,4,1,-4,16
+interaction_output	0	1,2,3,6
+interaction_output	1	1,-1,4,-4
+missing_input	0	nan,1,nan
+missing_input	1	2,3,nan
+missing_input	2	4,5,6
+missing_only_features	0,2
+missing_only_output	0	1,1
+missing_only_output	1	0,1
+missing_only_output	2	0,0
+missing_all_output	0	1,0,1
+missing_all_output	1	0,0,1
+missing_all_output	2	0,0,0

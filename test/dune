@@ -17,6 +17,12 @@
  (libraries modelkit alcotest))
 
 (test
+ (name transforms_test)
+ (modules transforms_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
  (name pipeline_test)
  (modules pipeline_test)
  (package modelkit)
@@ -141,12 +147,17 @@
  (modules sklearn_preprocessing_fixture_test)
  (package modelkit)
  (libraries modelkit alcotest)
- (deps fixtures/sklearn/preprocessing_v1.tsv)
+ (deps
+  fixtures/sklearn/preprocessing_v1.tsv
+  fixtures/sklearn/transforms_v1.tsv)
  (action
   (setenv
    MODELKIT_SKLEARN_PREPROCESSING_FIXTURE
    %{dep:fixtures/sklearn/preprocessing_v1.tsv}
-   (run %{test}))))
+   (setenv
+    MODELKIT_SKLEARN_TRANSFORM_FIXTURE
+    %{dep:fixtures/sklearn/transforms_v1.tsv}
+    (run %{test})))))
 
 (test
  (name sklearn_linear_model_fixture_test)

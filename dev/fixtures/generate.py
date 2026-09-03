@@ -394,6 +394,148 @@ def generate_preprocessing_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_transform_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.impute import MissingIndicator
+    from sklearn.preprocessing import (
+        LabelEncoder,
+        MaxAbsScaler,
+        MinMaxScaler,
+        Normalizer,
+        OneHotEncoder,
+        OrdinalEncoder,
+        PolynomialFeatures,
+        RobustScaler,
+    )
+
+    numeric = np.array(
+        [
+            [-4.0, 0.0, 1.0],
+            [-2.0, 0.0, 2.0],
+            [0.0, 0.0, 4.0],
+            [8.0, 0.0, 100.0],
+        ],
+        dtype=np.float64,
+    )
+    normalized = np.array(
+        [[3.0, 4.0, 0.0], [0.0, 0.0, 0.0], [-2.0, 1.0, 2.0]],
+        dtype=np.float64,
+    )
+    categorical = np.array(
+        [[2.0, 10.0], [1.0, 20.0], [2.0, 10.0]], dtype=np.float64
+    )
+    categorical_predict = np.array(
+        [[3.0, 10.0], [1.0, 20.0]], dtype=np.float64
+    )
+    labels = np.array([42, -3, 42, 10], dtype=np.int64)
+    polynomial = np.array([[2.0, 3.0], [-1.0, 4.0]], dtype=np.float64)
+    missing = np.array(
+        [[np.nan, 1.0, np.nan], [2.0, 3.0, np.nan], [4.0, 5.0, 6.0]],
+        dtype=np.float64,
+    )
+
+    min_max = MinMaxScaler(feature_range=(-1.0, 2.0)).fit(numeric)
+    max_abs = MaxAbsScaler().fit(numeric)
+    robust = RobustScaler(quantile_range=(25.0, 75.0)).fit(numeric)
+    one_hot = OneHotEncoder(handle_unknown="ignore", sparse_output=False).fit(
+        categorical
+    )
+    ordinal = OrdinalEncoder(
+        handle_unknown="use_encoded_value", unknown_value=-1
+    ).fit(categorical)
+    label = LabelEncoder().fit(labels)
+    polynomial_features = PolynomialFeatures(degree=2, include_bias=True).fit(
+        polynomial
+    )
+    interaction_features = PolynomialFeatures(
+        degree=2, include_bias=True, interaction_only=True
+    ).fit(polynomial)
+    missing_only = MissingIndicator(features="missing-only", error_on_new=False).fit(
+        missing
+    )
+    missing_all = MissingIndicator(features="all").fit(missing)
+
+    rows = ["# ModelKit sklearn transform reference fixture v1"]
+
+    def add_matrix(name: str, matrix) -> None:
+        for index, row in enumerate(matrix):
+            rows.append(f"{name}\t{index}\t{float_values(row)}")
+
+    def add_vector(name: str, values) -> None:
+        rows.append(f"{name}\t{float_values(values)}")
+
+    add_matrix("numeric_input", numeric)
+    add_vector("min_max_data_min", min_max.data_min_)
+    add_vector("min_max_data_max", min_max.data_max_)
+    add_vector("min_max_data_range", min_max.data_range_)
+    add_vector("min_max_scale", min_max.scale_)
+    add_vector("min_max_offset", min_max.min_)
+    add_matrix("min_max_output", min_max.transform(numeric))
+    add_vector("max_abs_max", max_abs.max_abs_)
+    add_vector("max_abs_scale", max_abs.scale_)
+    add_matrix("max_abs_output", max_abs.transform(numeric))
+    add_vector("robust_center", robust.center_)
+    add_vector("robust_scale", robust.scale_)
+    add_matrix("robust_output", robust.transform(numeric))
+    add_matrix("normalizer_input", normalized)
+    for norm in ("l1", "l2", "max"):
+        add_matrix(f"normalizer_{norm}_output", Normalizer(norm=norm).transform(normalized))
+    add_matrix("categorical_input", categorical)
+    add_matrix("categorical_predict", categorical_predict)
+    for column, values in enumerate(one_hot.categories_):
+        add_vector(f"one_hot_categories_{column}", values)
+    add_matrix("one_hot_output", one_hot.transform(categorical_predict))
+    for column, values in enumerate(ordinal.categories_):
+        add_vector(f"ordinal_categories_{column}", values)
+    add_matrix("ordinal_output", ordinal.transform(categorical_predict))
+    add_vector("label_input", labels)
+    add_vector("label_classes", label.classes_)
+    encoded_labels = label.transform(labels)
+    add_vector("label_encoded", encoded_labels)
+    add_vector("label_decoded", label.inverse_transform(encoded_labels))
+    add_matrix("polynomial_input", polynomial)
+    add_matrix("polynomial_output", polynomial_features.transform(polynomial))
+    add_matrix("interaction_output", interaction_features.transform(polynomial))
+    add_matrix("missing_input", missing)
+    add_vector("missing_only_features", missing_only.features_)
+    add_matrix("missing_only_output", missing_only.transform(missing))
+    add_matrix("missing_all_output", missing_all.transform(missing))
+
+    data_path = fixture_dir / "transforms_v1.tsv"
+    metadata_path = fixture_dir / "transforms_v1.metadata.json"
+    data_path.write_text("\n".join(rows) + "\n", encoding="utf-8", newline="\n")
+    metadata = {
+        "configuration": {
+            "categorical_features": categorical.shape[1],
+            "min_max_range": [-1.0, 2.0],
+            "numeric_features": numeric.shape[1],
+            "polynomial_degree": 2,
+            "samples": numeric.shape[0],
+        },
+        "environment": environment.metadata(),
+        "fixture": "transforms_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.impute.MissingIndicator",
+            "sklearn.preprocessing.LabelEncoder",
+            "sklearn.preprocessing.MaxAbsScaler",
+            "sklearn.preprocessing.MinMaxScaler",
+            "sklearn.preprocessing.Normalizer",
+            "sklearn.preprocessing.OneHotEncoder",
+            "sklearn.preprocessing.OrdinalEncoder",
+            "sklearn.preprocessing.PolynomialFeatures",
+            "sklearn.preprocessing.RobustScaler",
+        ],
+        "schema_version": 1,
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def generate_linear_model_fixture(fixture_dir: Path) -> None:
     import numpy as np
     from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge
@@ -514,6 +656,7 @@ def main() -> None:
     generate_splitter_fixture(fixture_dir)
     generate_metrics_fixture(fixture_dir)
     generate_preprocessing_fixture(fixture_dir)
+    generate_transform_fixture(fixture_dir)
     generate_linear_model_fixture(fixture_dir)
 
 

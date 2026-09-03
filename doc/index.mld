@@ -21,7 +21,10 @@ runtime includes fixed-order compensated numerical kernels, sequential
 stable-order execution, deterministic logical seed derivation, and a pure
 SplitMix64 random-number stream. Mean, median, and constant imputation,
 population standardization, and variance-threshold feature filtering are
-available as immutable specifications with distinct fitted states. Sequential
+available as immutable specifications with distinct fitted states. Numeric
+scalers, per-sample normalization, categorical and target encoders, polynomial
+features, and missing indicators extend the same immutable fit/transform model.
+Sequential
 {!Modelkit.Pipeline} values fit those stages only on their training input,
 preserve feature schemas, derive stage-local random streams, and dispatch
 terminal prediction capabilities. Weighted ordinary least squares and ridge
@@ -71,6 +74,57 @@ val sparse : Csr_matrix.t = <abstr>
     (Feature_matrix.csr sparse) (Vector.of_array [|2.; 4.; -1.|])
   |> Result.get_ok |> Vector.to_array;;
 - : float array = [|-1.; 8.|]
+]}
+
+{1 Extended preprocessing}
+
+{!Modelkit.Min_max_scaler}, {!Modelkit.Max_abs_scaler}, and
+{!Modelkit.Robust_scaler} learn per-feature statistics from a finite training
+matrix. {!Modelkit.Normalizer} instead scales each sample independently using
+its L1, L2, or maximum norm and leaves zero-norm rows unchanged. Constant
+features use a finite unit denominator where needed. Every fitted transformer
+checks the incoming feature schema before reuse.
+
+{!Modelkit.One_hot_encoder} and {!Modelkit.Ordinal_encoder} learn ascending
+finite float64 categories. Their unknown-category policies are explicit rather
+than inferred at transform time. One-hot output follows a deterministic
+feature/category order and is available both through the dense transformer
+protocol and directly as checked CSR storage through
+{!val:Modelkit.One_hot_encoder.transform_csr}. A configured output-width limit
+guards allocations. The portable core has no heterogeneous string table type;
+callers or table adapters map textual categories to stable finite values before
+fitting these encoders. {!Modelkit.Label_encoder} independently maps sorted
+integer classification labels to contiguous integer codes and reverses those
+codes with a checked inverse transform.
+
+{!Modelkit.Polynomial_features} expands dense inputs in deterministic
+scikit-learn-compatible term order, with explicit degree, bias,
+interaction-only, and output-width choices. {!Modelkit.Missing_indicator}
+turns NaN missing markers into binary features, either for all columns or only
+columns observed missing during fitting. It can reject a missing marker that
+appears later in a previously complete column. Infinity is invalid input to
+all of these transforms.
+
+The matrix transforms can be installed with {!val:Modelkit.Pipeline.transformer}
+for leakage-safe in-memory workflows. This development increment does not add
+artifact codecs for the new stages. Encoding a generally packaged transformer
+without a reviewed codec returns a typed artifact error.
+
+{@ocaml[
+# open Modelkit;;
+# let x =
+    Matrix.of_arrays [|[|0.; 2.|]; [|10.; 4.|]|] |> Result.get_ok;;
+val x : Matrix.t = <abstr>
+# let schema = Feature_schema.anonymous ~feature_count:2 |> Result.get_ok;;
+val schema : Feature_schema.t = <abstr>
+# let fitted =
+    Min_max_scaler.fit (Min_max_scaler.create () |> Result.get_ok)
+      ~rng:(Rng.create (Seed.of_int 42)) ~feature_schema:schema ~x ~y:None ()
+    |> Result.get_ok;;
+val fitted : Min_max_scaler.fitted = <abstr>
+# Min_max_scaler.transform fitted ~feature_schema:schema ~x
+  |> Result.get_ok |> Matrix.to_arrays;;
+- : float array array = [|[|0.; 0.|]; [|1.; 1.|]|]
 ]}
 
 {1 Executable example}

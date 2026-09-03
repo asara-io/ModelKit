@@ -16,6 +16,7 @@ The full documentation is available via: [https://ocaml.org/p/modelkit/latest/do
 - Checked immutable CSR matrices provide canonical sparse storage, zero-copy indexed row views, explicit materialization and payload-memory accounting, and portable dense/CSR numerical-kernel dispatch.
 - Dense datasets admit aligned features, targets, weights, groups, and names under an explicit finiteness policy; stable schema fingerprints and copy/view reports make compatibility and allocation behavior observable.
 - Immutable preprocessing specifications fit mean, median, or constant imputation, population standardization, and variance-based feature filtering without changing or losing feature identities.
+- Portable numeric, categorical, target, interaction, and missingness transforms cover min-max, max-absolute, robust, per-sample normalization, one-hot, ordinal, label, polynomial, and missing-indicator workflows.
 - Sequential pipelines fit preprocessing only on their training input, preserve schemas through ordered stages, and dispatch prediction, decision, and probability operations through an explicitly capable terminal estimator.
 - Portable weighted ordinary least squares, ridge regression, and binary logistic regression keep immutable specifications separate from fitted coefficients and solver diagnostics.
 - Deterministic K-fold, stratified K-fold, group K-fold, and expanding-window time-series splitters produce validated row views that can be explicitly materialized as aligned datasets.
@@ -55,11 +56,19 @@ let product =
   |> Result.get_ok
 ```
 
-The current estimators, transformers, datasets, pipelines, and model-selection workflows still accept dense `Matrix.t` inputs. Sparse estimator and workflow integration is scheduled in the remaining 0.4.0 work; the present API is the checked storage and numerical-dispatch foundation for it.
+The current estimators, datasets, pipelines, and model-selection workflows still accept dense `Matrix.t` feature inputs. `One_hot_encoder.transform_csr` can produce checked sparse output directly, but sparse estimator and workflow integration is scheduled in the remaining 0.4.0 work.
 
 Dataset row views preserve ordering and duplicates without packing feature or metadata buffers. Use `Dataset.materialize` when an algorithm requires contiguous selected rows; its access report identifies the resulting copies.
 
 The 0.3.2 API also provides `Simple_imputer`, `Standard_scaler`, and `Variance_threshold`. Imputation learns only from the supplied training matrix and treats NaN as the missing-value marker. Scaling uses population variance and maps constant centered features to zero with a scale of one. Variance filtering keeps columns whose variance is strictly greater than its threshold and preserves selected names in input order. These transformers reject infinities with typed errors rather than silently continuing.
+
+Development toward 0.4.0 adds `Min_max_scaler`, `Max_abs_scaler`, and `Robust_scaler` for fitted per-feature scaling, plus the stateless `Normalizer` for L1, L2, or maximum-norm scaling of each sample. Constant features and zero-norm rows have defined finite behavior, learned statistics remain inspectable, and fitted stages verify their input schema before transforming new data.
+
+`One_hot_encoder` and `Ordinal_encoder` learn deterministically sorted finite float64 categories and make unknown-category handling explicit. One-hot output is available as either a dense matrix through the common transformer protocol or checked CSR storage through `transform_csr`; an output-width limit prevents accidental allocation from unbounded cardinality. ModelKit does not yet own a heterogeneous string table type, so callers and future table adapters are responsible for mapping string categories to stable finite float values before using these core transforms. `Label_encoder` separately provides reversible sorted encoding for integer classification targets.
+
+`Polynomial_features` creates a deterministic scikit-learn-compatible ordering of polynomial or interaction-only terms with configurable degree, bias inclusion, and output-width limit. `Missing_indicator` converts NaN markers into binary features, optionally selecting only columns that were missing during fitting and optionally rejecting new missing columns at transform time. Infinity remains invalid input.
+
+All matrix transforms are immutable training specifications with distinct fitted values and can be installed in an in-memory pipeline with `Pipeline.transformer`, ensuring fitting occurs only on the matrix supplied to `Pipeline.fit`. Artifact-aware constructors and reviewed codecs for these new stages are not part of the current increment: pipelines that use them work normally in memory, while attempting to encode such a general extension stage returns a typed unsupported-component error.
 
 `Pipeline` now packages these unsupervised transformers with any implementation of ModelKit's public `ESTIMATOR` protocol. Fitting learns every preprocessing stage exclusively from the supplied training matrix, then fits the terminal estimator on the transformed training output. The fitted pipeline reuses those exact stage values for `transform`, `predict`, `decision_function`, and `predict_proba`; unavailable terminal capabilities and named-stage failures are typed errors. Feature schemas are checked at the pipeline boundary and propagated after every transformation. Fixed root RNG state produces stage-local streams derived from stable logical names and positions.
 
@@ -129,7 +138,8 @@ The portable implementation is organized by responsibility:
 | --- | --- |
 | `modelkit_data` | Immutable vectors, dense and CSR matrices, row views, memory accounting, targets, schemas, datasets, and typed errors |
 | `modelkit_protocols` | Extension contracts, deterministic random streams, execution, and dense/CSR reference numerical kernels |
-| `modelkit_preprocessing` | Preprocessing validation and built-in transformers |
+| `modelkit_preprocessing` | Shared preprocessing validation, imputation, standardization, and variance filtering |
+| `modelkit_transforms` | Numeric, categorical, target, polynomial, and missing-indicator transforms |
 | `modelkit_pipeline` | Leakage-safe pipeline construction, fitting, and inference dispatch |
 | `modelkit_linear_models` | Solver reports, shared numerical routines, and linear estimators |
 | `modelkit_splitting` | Validated splits and built-in cross-validation splitters |
