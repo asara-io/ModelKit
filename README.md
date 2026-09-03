@@ -18,7 +18,7 @@ The full documentation is available via: [https://ocaml.org/p/modelkit/latest/do
 - Immutable preprocessing specifications fit mean, median, or constant imputation, population standardization, and variance-based feature filtering without changing or losing feature identities.
 - Portable numeric, categorical, target, interaction, and missingness transforms cover min-max, max-absolute, robust, per-sample normalization, one-hot, ordinal, label, polynomial, and missing-indicator workflows.
 - Sequential pipelines fit preprocessing only on their training input, preserve schemas through ordered stages, and dispatch prediction, decision, and probability operations through an explicitly capable terminal estimator.
-- Portable weighted ordinary least squares, ridge, lasso, elastic-net, and binary logistic regression keep immutable specifications separate from fitted coefficients and solver diagnostics.
+- Portable weighted ordinary least squares, ridge, lasso, elastic-net, and binary logistic regression plus binary and multiclass ridge classification keep immutable specifications separate from fitted coefficients and solver diagnostics.
 - Deterministic K-fold, stratified K-fold, group K-fold, and expanding-window time-series splitters produce validated row views that can be explicitly materialized as aligned datasets.
 - Weighted regression and binary classification metrics provide immutable higher-is-better scorers, plotting-neutral residual, ROC, and precision–recall data, stable score aggregation, and an explicit undefined-result policy.
 - Cross-validation fits pipelines within deterministic folds and reports ordered train/test scores, CPU timings, optional fitted models and indices, and typed failures; the optional `modelkit-parallel` package adds bounded Domainslib fold execution.
@@ -78,9 +78,11 @@ Development toward 0.4.0 adds `Lasso_regression` and `Elastic_net_regression` fo
 
 `Lasso_path` and `Elastic_net_path` fit complete descending regularization paths, warm-starting each point from the preceding stronger penalty. Callers can provide explicit alphas or request a logarithmic path through `epsilon` and `count`. Path results expose alphas, one coefficient row and intercept per alpha, per-point solver reports, and checked access to an ordinary fitted estimator that can predict or participate in an in-memory pipeline. Automatic elastic-net paths require a positive L1 ratio; pure L2 paths require explicit alphas because no finite penalty forces every coefficient to zero.
 
+`Ridge_classifier` provides weighted binary and multiclass classification by fitting one ridge problem per ascending class against targets encoded as negative or positive one. Its decision function always returns a sample-by-class score matrix, including for binary problems, so coefficient rows, intercepts, reports, and score columns share one class order without a shape special case. Prediction selects the first maximum and therefore resolves exact ties to the lowest class label. Only classes represented by positive sample weight participate in fitting.
+
 `Logistic_regression` supports exactly two integer classes, optional sample weights, an L2 coefficient penalty controlled by positive inverse strength `c`, and stable decision/probability calculations for extreme logits. Its deterministic damped Newton fit reports objective, iteration count, and stopping reason; iteration exhaustion and invalid training data are typed errors. These estimators accept only finite feature values, so missing values must be handled by an imputer or before fitting.
 
-Lasso and elastic-net currently accept dense `Matrix.t` input through the common regressor and pipeline contracts. They do not yet have built-in artifact constructors or codecs; generally packaged pipelines remain usable in memory and return a typed unsupported-component error if artifact encoding is attempted.
+Lasso, elastic-net, and ridge classification currently accept dense `Matrix.t` input through the common estimator and pipeline contracts. They do not yet have built-in artifact constructors or codecs; generally packaged pipelines remain usable in memory and return a typed unsupported-component error if artifact encoding is attempted. The current pipeline decision-function capability is vector-valued for binary estimators, so ridge classifiers support pipeline prediction and class metadata while their matrix-valued decision scores are obtained directly from `Ridge_classifier.decision_function`.
 
 Built-in logistic regression can be installed as a pipeline terminal with its optional capabilities:
 
@@ -149,6 +151,7 @@ The portable implementation is organized by responsibility:
 | `modelkit_pipeline` | Leakage-safe pipeline construction, fitting, and inference dispatch |
 | `modelkit_linear_models` | Solver reports, shared numerical routines, and linear estimators |
 | `modelkit_regularized_linear` | Coordinate-descent lasso and elastic-net estimators and regularization paths |
+| `modelkit_linear_classifiers` | Binary and multiclass linear classifiers with matrix-valued class scores |
 | `modelkit_splitting` | Validated splits and built-in cross-validation splitters |
 | `modelkit_metrics` | Metrics, binary responses, scorers, and score aggregation |
 | `modelkit_model_selection` | Cross-validation and finite grid search |
@@ -215,7 +218,7 @@ python dev/fixtures/generate.py
 python dev/benchmarks/run.py
 ```
 
-The committed smoke benchmark validates the measurement workflow only. The development preprocessing, dense-linear-model, splitter, metrics, sequential and bounded-parallel cross-validation, and finite grid-search benchmarks compare ModelKit operations with pinned scikit-learn references on deterministic workloads. Build the corresponding OCaml worker and select a scenario under `dev/benchmarks/scenarios/`; the parallel cross-validation scenario records sequential and four-worker results for both runtimes so speedup, efficiency, wall time, and peak RSS can be compared. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for declared parity tolerances, scope, raw-result links, and limitations. Release comparisons will use the product plan's independent-CI benchmark contract.
+The committed smoke benchmark validates the measurement workflow only. The development preprocessing, dense-linear-model, ridge-classifier, splitter, metrics, sequential and bounded-parallel cross-validation, and finite grid-search benchmarks compare ModelKit operations with pinned scikit-learn references on deterministic workloads. Build the corresponding OCaml worker and select a scenario under `dev/benchmarks/scenarios/`; the parallel cross-validation scenario records sequential and four-worker results for both runtimes so speedup, efficiency, wall time, and peak RSS can be compared. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for declared parity tolerances, scope, raw-result links, and limitations. Release comparisons will use the product plan's independent-CI benchmark contract.
 
 ## Project Policies
 

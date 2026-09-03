@@ -53,6 +53,12 @@
  (libraries modelkit alcotest))
 
 (test
+ (name linear_classifier_test)
+ (modules linear_classifier_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
  (name splitter_test)
  (modules splitter_test)
  (package modelkit)
@@ -187,4 +193,16 @@
   (setenv
    MODELKIT_SKLEARN_REGULARIZED_LINEAR_FIXTURE
    %{dep:fixtures/sklearn/regularized_linear_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name sklearn_ridge_classifier_fixture_test)
+ (modules sklearn_ridge_classifier_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/ridge_classifier_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_SKLEARN_RIDGE_CLASSIFIER_FIXTURE
+   %{dep:fixtures/sklearn/ridge_classifier_v1.tsv}
    (run %{test}))))

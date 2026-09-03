@@ -171,6 +171,62 @@ def linear_models(scenario: dict[str, object]) -> dict[str, object]:
     }
 
 
+def ridge_classifier(scenario: dict[str, object]) -> dict[str, object]:
+    import numpy as np
+    from sklearn.linear_model import RidgeClassifier
+
+    dataset = scenario["dataset"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    x = (
+        (rows * (17 + columns * 12) + columns * 31 + dataset["seed"]) % 1000
+    ).astype(np.float64)
+    x = (x / 100.0) - 5.0
+    binary_score = x[:, 0] + 0.25 * x[:, 1] - 0.1 * x[:, 2]
+    binary_target = np.where(binary_score > 0.0, 7, -3)
+    multiclass_target = np.where(
+        x[:, 0] + 0.25 * x[:, 1] > 1.0,
+        9,
+        np.where(x[:, 2] - 0.2 * x[:, 3] > 0.0, 2, -4),
+    )
+    sample_weight = 1.0 + (rows[:, 0] % 5).astype(np.float64) * 0.25
+    binary = RidgeClassifier(alpha=scenario["alpha"], solver="svd").fit(
+        x, binary_target, sample_weight=sample_weight
+    )
+    multiclass = RidgeClassifier(alpha=scenario["alpha"], solver="svd").fit(
+        x, multiclass_target, sample_weight=sample_weight
+    )
+    binary_decisions = binary.decision_function(x)
+    binary_predictions = binary.predict(x)
+    multiclass_decisions = multiclass.decision_function(x)
+    multiclass_predictions = multiclass.predict(x)
+    signature = np.asarray(
+        [
+            binary_decisions[0],
+            binary_decisions[-1],
+            binary_predictions[0],
+            binary_predictions[-1],
+            *multiclass_decisions[0],
+            *multiclass_decisions[-1],
+            multiclass_predictions[0],
+            multiclass_predictions[-1],
+        ],
+        dtype="<f8",
+    )
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "features": x.shape[1],
+        "operations": [
+            "binary_ridge_classification",
+            "multiclass_ridge_classification",
+        ],
+        "samples": x.shape[0],
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
 def splitters(scenario: dict[str, object]) -> dict[str, object]:
     import numpy as np
     from sklearn.model_selection import (
@@ -532,6 +588,8 @@ def main() -> None:
         result = preprocessing(scenario)
     elif workload == "linear_models":
         result = linear_models(scenario)
+    elif workload == "ridge_classifier":
+        result = ridge_classifier(scenario)
     elif workload == "splitters":
         result = splitters(scenario)
     elif workload == "metrics":

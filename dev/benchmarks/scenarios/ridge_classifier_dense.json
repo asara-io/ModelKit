@@ -1,0 +1,14 @@
+{
+  "alpha": 2.5,
+  "claim_eligible": false,
+  "dataset": {
+    "features": 12,
+    "samples": 10000,
+    "seed": 1729
+  },
+  "measured_runs": 3,
+  "scenario": "ridge_classifier_dense_v1",
+  "thread_limit": 1,
+  "warmup_runs": 1,
+  "workload": "ridge_classifier"
+}

@@ -507,6 +507,91 @@ let logistic_probabilities_are_complementary =
               in
               valid 0))
 
+let ridge_classifier_binary_scores_are_opposites =
+  QCheck.Test.make ~count:300
+    ~name:"binary ridge-classifier scores are finite opposites"
+    QCheck.(pair (array (int_range (-50) 50)) (int_range 0 100))
+    (fun (raw, raw_alpha) ->
+      let rows = 4 + Array.length raw in
+      let x =
+        Result.get_ok
+          (Matrix.init ~rows ~columns:2 (fun row column ->
+               let value =
+                 if row < Array.length raw then raw.(row) else (row * 7) - 11
+               in
+               if column = 0 then Float.of_int value
+               else Float.of_int (value * value mod 29)))
+      in
+      let feature_schema = Result.get_ok (Feature_schema.of_matrix x) in
+      let target =
+        Target.classification
+          (Array.init rows (fun row -> if row mod 2 = 0 then -7 else 12))
+      in
+      let alpha = 0.1 +. (Float.of_int raw_alpha /. 10.0) in
+      match
+        Result.bind (Ridge_classifier.create ~alpha ()) (fun specification ->
+            Ridge_classifier.fit specification ~rng:(linear_model_rng ())
+              ~feature_schema ~x ~y:target ())
+      with
+      | Error _ -> false
+      | Ok fitted -> (
+          match
+            Ridge_classifier.decision_function fitted ~feature_schema ~x
+          with
+          | Error _ -> false
+          | Ok scores ->
+              let rec valid row =
+                row = rows
+                ||
+                let left = Matrix.get scores row 0 in
+                let right = Matrix.get scores row 1 in
+                Float.is_finite left && Float.is_finite right
+                && Float.abs (left +. right) <= 1e-9
+                && valid (row + 1)
+              in
+              Ridge_classifier.classes fitted = [| -7; 12 |] && valid 0))
+
+let ridge_classifier_is_equivariant_to_ordered_label_renaming =
+  QCheck.Test.make ~count:200
+    ~name:"ridge classification preserves ordered label renaming"
+    QCheck.(int_range 0 100)
+    (fun raw_alpha ->
+      let x =
+        Result.get_ok
+          (Matrix.of_arrays
+             [|
+               [| 2.0; 0.0 |];
+               [| 3.0; 0.0 |];
+               [| 0.0; 2.0 |];
+               [| 0.0; 3.0 |];
+               [| -2.0; -2.0 |];
+               [| -3.0; -3.0 |];
+             |])
+      in
+      let feature_schema = Result.get_ok (Feature_schema.of_matrix x) in
+      let alpha = 0.1 +. (Float.of_int raw_alpha /. 10.0) in
+      let specification = Result.get_ok (Ridge_classifier.create ~alpha ()) in
+      let fit labels =
+        Ridge_classifier.fit specification ~rng:(linear_model_rng ())
+          ~feature_schema ~x
+          ~y:(Target.classification labels)
+          ()
+      in
+      match (fit [| 0; 0; 1; 1; 2; 2 |], fit [| -5; -5; 7; 7; 99; 99 |]) with
+      | Ok original, Ok renamed -> (
+          match
+            ( Ridge_classifier.predict original ~feature_schema ~x,
+              Ridge_classifier.predict renamed ~feature_schema ~x )
+          with
+          | Ok original, Ok renamed ->
+              let original = Target.classification_values original in
+              let renamed = Target.classification_values renamed in
+              Array.for_all2
+                (fun original renamed -> renamed = [| -5; 7; 99 |].(original))
+                original renamed
+          | Error _, _ | _, Error _ -> false)
+      | Error _, _ | _, Error _ -> false)
+
 let splitter_rng () = Rng.create (Seed.of_int 37)
 
 let k_fold_partitions_every_sample_once =
@@ -843,6 +928,8 @@ let () =
         lasso_matches_one_dimensional_soft_threshold;
         regularization_paths_are_descending_and_warm_started;
         logistic_probabilities_are_complementary;
+        ridge_classifier_binary_scores_are_opposites;
+        ridge_classifier_is_equivariant_to_ordered_label_renaming;
         k_fold_partitions_every_sample_once;
         stratified_folds_balance_each_class;
         time_series_folds_never_train_on_the_future;

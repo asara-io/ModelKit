@@ -32,8 +32,9 @@ regression use the portable rank-revealing QR solver. Weighted binary logistic
 regression uses stable sigmoid and softplus formulas with deterministic damped
 Newton iterations. Weighted lasso and elastic-net regression use deterministic
 cyclic coordinate descent and can fit descending warm-started regularization
-paths. Each fitted estimator exposes coefficients, an intercept, and a
-{!Modelkit.Solver_report}. K-fold, stratified K-fold, group K-fold, and
+paths. Weighted binary and multiclass ridge classification solves one ridge
+problem per class. Each fitted estimator exposes coefficients, intercepts, and
+{!Modelkit.Solver_report} values. K-fold, stratified K-fold, group K-fold, and
 expanding-window time-series splitters produce validated source-row views;
 {!Modelkit.Split.materialize} is the explicit boundary for copying train and
 test selections into aligned datasets. Weighted regression and binary
@@ -173,6 +174,45 @@ val path : Lasso_path.fitted = <abstr>
 # Lasso_path.model path ~index:1 |> Result.get_ok
   |> Lasso_regression.coefficients |> Vector.length;;
 - : int = 1
+]}
+
+{1 Ridge classification}
+
+{!Modelkit.Ridge_classifier} fits one weighted ridge problem per ascending
+positively weighted class, encoding that class as [+1] and every other class as
+[-1]. Its coefficient matrix, intercept vector, decision-score columns, and
+solver-report array all use the same class order. The decision function always
+returns a [samples * classes] matrix for a uniform binary and multiclass API.
+Prediction selects the first maximum, so exact ties resolve to the lowest class
+label.
+
+The classifier implements the common classifier protocol and supports direct
+and pipeline prediction. Pass [~classes:Ridge_classifier.classes] to
+{!val:Modelkit.Pipeline.estimator} to retain terminal class metadata. The
+current pipeline decision capability is vector-valued, so obtain this
+classifier's matrix-valued scores directly from
+{!val:Modelkit.Ridge_classifier.decision_function}. Input is currently dense,
+and artifact codecs remain deferred for this development estimator.
+
+{@ocaml[
+# open Modelkit;;
+# let x =
+    Matrix.of_arrays
+      [|[|-2.|]; [|-1.|]; [|1.|]; [|2.|]|] |> Result.get_ok;;
+val x : Matrix.t = <abstr>
+# let schema = Feature_schema.of_matrix x |> Result.get_ok;;
+val schema : Feature_schema.t = <abstr>
+# let fitted =
+    Ridge_classifier.fit (Ridge_classifier.create () |> Result.get_ok)
+      ~rng:(Rng.create (Seed.of_int 42)) ~feature_schema:schema ~x
+      ~y:(Target.classification [|10; 10; 20; 20|]) ()
+    |> Result.get_ok;;
+val fitted : Ridge_classifier.fitted = <abstr>
+# Ridge_classifier.classes fitted;;
+- : int array = [|10; 20|]
+# Ridge_classifier.decision_function fitted ~feature_schema:schema ~x
+  |> Result.get_ok |> Matrix.shape;;
+- : int * int = (4, 2)
 ]}
 
 {1 Executable example}

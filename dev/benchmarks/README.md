@@ -86,6 +86,47 @@ The raw report is
 toolchain versions, thread limits, output signatures, allocations, and the full
 scenario.
 
+## Dense ridge classification v1
+
+`ridge_classifier_dense_v1` fits weighted binary and three-class ridge
+classifiers and predicts scores and classes on the same deterministic 10,000 by
+12 float64 matrix in ModelKit and scikit-learn. ModelKit uses one portable
+column-pivoted Householder QR ridge solve per class; scikit-learn uses its SVD
+solver. Both workers are sequential. Selected binary and multiclass decision
+scores and predictions must agree within `1e-7` absolute and relative tolerance
+before a report is written.
+
+The harness performs one warmup and three interleaved measured runs in fresh
+processes, so timings include runtime startup, deterministic data generation,
+both fits, and prediction. Peak RSS is sampled every millisecond, and the
+ModelKit worker reports OCaml heap allocation words.
+
+The committed macOS arm64 report recorded these medians:
+
+| Implementation | Wall time | Peak RSS |
+| --- | ---: | ---: |
+| ModelKit 0.4.0-dev / OCaml 5.3.0 | 0.125 s | 16,187,392 bytes |
+| scikit-learn 1.9.0 / Python 3.14.3 | 0.731 s | 132,202,496 bytes |
+
+This scenario is `claim_eligible: false`. It combines binary and multiclass
+fits and includes process startup and data generation, so it does not isolate
+solver throughput. It is local development evidence for parity, deterministic
+output, allocations, and gross regressions, not support for a comparative
+performance claim.
+
+Build and run it from the repository root:
+
+```sh
+opam exec -- dune build bench/ocaml/ridge_classifier_worker.exe
+env/bin/python dev/benchmarks/run.py \
+  --scenario dev/benchmarks/scenarios/ridge_classifier_dense.json
+```
+
+The raw report is
+`results/ridge_classifier_dense_v1.darwin-arm64.json`; it records every raw
+run, toolchain versions, thread limits, output signatures, allocations, and the
+full scenario.
+
 ## Dense splitters v1
 
 `splitters_dense_v1` generates five folds from the same deterministic 100,000
