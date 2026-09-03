@@ -2,6 +2,38 @@ open Modelkit_data
 open Modelkit_protocols
 
 module Preprocessing_internal : sig
+  val reject_sample_weight :
+    string -> Sample_weight.t option -> (unit, Error.t) result
+
+  val validate_fit_input :
+    operation:string ->
+    allow_nan:bool ->
+    Feature_schema.t ->
+    Matrix.t ->
+    (unit, Error.t) result
+
+  val validate_transform_input :
+    operation:string ->
+    allow_nan:bool ->
+    expected_schema:Feature_schema.t ->
+    Feature_schema.t ->
+    Matrix.t ->
+    (unit, Error.t) result
+
+  val validate_values :
+    operation:string -> allow_nan:bool -> Matrix.t -> (unit, Error.t) result
+
+  val no_observations : operation:string -> Feature_schema.t -> int -> Error.t
+
+  val numerical_error :
+    operation:string -> Feature_schema.t -> int -> string -> Error.t
+
+  val matrix :
+    rows:int ->
+    columns:int ->
+    (int -> int -> float) ->
+    (Matrix.t, Error.t) result
+
   val subset_schema :
     Feature_schema.t -> int array -> (Feature_schema.t, Error.t) result
 end

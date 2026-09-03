@@ -739,6 +739,272 @@ module Variance_threshold : sig
        and type rng = Rng.t
 end
 
+(** Per-feature affine scaling into a configured finite range.
+
+    Fitting learns finite minima, maxima, scales, and offsets. Constant features
+    use a unit denominator and therefore map to the range's lower bound. When
+    [clip] is true, values transformed outside the training range are clipped to
+    the configured bounds. Sample weights are rejected. *)
+module Min_max_scaler : sig
+  type params = { feature_range : float * float; clip : bool }
+  type t
+  type fitted
+
+  val create :
+    ?feature_range:float * float -> ?clip:bool -> unit -> (t, Error.t) result
+
+  val data_min : fitted -> Vector.t
+  val data_max : fitted -> Vector.t
+  val data_range : fitted -> Vector.t
+  val scale : fitted -> Vector.t
+  val offset : fitted -> Vector.t
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Per-feature scaling by the largest absolute training value.
+
+    Zero-valued features use a scale of one and remain zero. Input values must
+    be finite, fitted schemas are checked during transform, and sample weights
+    are rejected. *)
+module Max_abs_scaler : sig
+  type params = unit
+  type t
+  type fitted
+
+  val create : unit -> t
+  val max_abs : fitted -> Vector.t
+  val scale : fitted -> Vector.t
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Median centering and percentile-range scaling.
+
+    Quantiles use linear interpolation over sorted training values. A zero
+    percentile range is replaced by one. Centering and scaling can be disabled
+    independently; input values and quantile bounds must be finite, and sample
+    weights are rejected. *)
+module Robust_scaler : sig
+  type params = {
+    with_centering : bool;
+    with_scaling : bool;
+    quantile_range : float * float;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?with_centering:bool ->
+    ?with_scaling:bool ->
+    ?quantile_range:float * float ->
+    unit ->
+    (t, Error.t) result
+
+  val center : fitted -> Vector.t
+  val scale : fitted -> Vector.t
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Independent L1, L2, or maximum-norm scaling of each sample.
+
+    This transform learns only the fitted input schema. Each finite row is
+    divided by its selected norm, while a zero-norm row remains unchanged.
+    Sample weights are rejected. *)
+module Normalizer : sig
+  type norm = L1 | L2 | Max
+  type params = { norm : norm }
+  type t
+  type fitted
+
+  val create : ?norm:norm -> unit -> t
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Encoding of finite float64 categories as dense or CSR indicator columns.
+
+    Categories are learned independently per feature and sorted ascending.
+    Output columns follow input-feature order, then category order. [Reject]
+    reports a category absent during fitting; [Ignore] emits an all-zero group
+    for that feature. [max_output_features] bounds the fitted output width, and
+    sample weights are rejected. *)
+module One_hot_encoder : sig
+  type unknown_category = Reject | Ignore
+
+  type params = {
+    unknown_category : unknown_category;
+    max_output_features : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?unknown_category:unknown_category ->
+    ?max_output_features:int ->
+    unit ->
+    (t, Error.t) result
+
+  val categories : fitted -> Vector.t array
+
+  val transform_csr :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Csr_matrix.t, Error.t) result
+  (** Applies the fitted encoder directly into canonical checked CSR storage
+      without allocating the equivalent dense indicator matrix. *)
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Encoding of finite float64 categories as ordered integer-valued columns.
+
+    Each feature's categories are sorted ascending and encoded from zero.
+    Unknown values either fail or map to a caller-selected finite value that
+    must not collide with a learned integer code. Sample weights are rejected.
+*)
+module Ordinal_encoder : sig
+  type unknown_category = Reject | Use_encoded_value of float
+  type params = { unknown_category : unknown_category }
+  type t
+  type fitted
+
+  val create : ?unknown_category:unknown_category -> unit -> (t, Error.t) result
+  val categories : fitted -> Vector.t array
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Reversible sorted encoding of integer classification targets.
+
+    Fitting records ascending distinct class labels. [transform] maps them to
+    contiguous codes starting at zero; [inverse_transform] rejects invalid codes
+    and restores the original labels. This target-specific utility is
+    deliberately separate from the matrix transformer protocol. *)
+module Label_encoder : sig
+  type t
+  type fitted
+
+  val create : unit -> t
+  val fit : t -> y:Target.classification Target.t -> (fitted, Error.t) result
+
+  val transform :
+    fitted ->
+    Target.classification Target.t ->
+    (Target.classification Target.t, Error.t) result
+
+  val inverse_transform :
+    fitted ->
+    Target.classification Target.t ->
+    (Target.classification Target.t, Error.t) result
+
+  val classes : fitted -> int array
+end
+
+(** Deterministically ordered polynomial and interaction feature expansion.
+
+    Terms follow scikit-learn's degree-major combinations-with-replacement
+    order, or strictly distinct combinations when [interaction_only] is true.
+    [include_bias] controls the degree-zero constant column and
+    [max_output_features] bounds allocation. Finite input is required and sample
+    weights are rejected. *)
+module Polynomial_features : sig
+  type params = {
+    degree : int;
+    include_bias : bool;
+    interaction_only : bool;
+    max_output_features : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?degree:int ->
+    ?include_bias:bool ->
+    ?interaction_only:bool ->
+    ?max_output_features:int ->
+    unit ->
+    (t, Error.t) result
+
+  val terms : fitted -> int array array
+  (** Returns one source-feature index sequence for every output column. *)
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Binary indicators for NaN missing-value markers.
+
+    [Missing_only] learns columns containing NaN during fitting; [All] emits one
+    indicator per input feature. With [error_on_new], transformation fails when
+    NaN appears in a previously complete, unselected column. Infinities are
+    rejected and sample weights are not accepted. *)
+module Missing_indicator : sig
+  type features = Missing_only | All
+  type params = { features : features; error_on_new : bool }
+  type t
+  type fitted
+
+  val create : ?features:features -> ?error_on_new:bool -> unit -> t
+
+  val selected_features : fitted -> int array
+  (** Returns source-column indices in output order. *)
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
 (** Immutable sequential composition of fitted preprocessing and an estimator.
 
     Transformer stages are fitted only from the matrix supplied to [fit]. Their
