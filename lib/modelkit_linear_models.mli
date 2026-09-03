@@ -38,6 +38,12 @@ module Linear_model_internal : sig
     Matrix.t ->
     (unit, Error.t) result
 
+  val validate_prediction_input :
+    schema:Feature_schema.t ->
+    Feature_schema.t ->
+    Matrix.t ->
+    (unit, Error.t) result
+
   val validate_target_length : Matrix.t -> int -> (unit, Error.t) result
 
   val validate_sample_weight :

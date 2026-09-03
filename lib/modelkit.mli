@@ -1365,6 +1365,50 @@ module Elastic_net_path : sig
     fitted -> index:int -> (Elastic_net_regression.fitted, Error.t) result
 end
 
+(** Weighted binary and multiclass classification through ridge regression.
+
+    Fitting sorts positively weighted classes and solves one [-1 versus +1]
+    ridge problem per class. Coefficients and intercepts have one row or entry
+    per ascending class, including for binary classification.
+    [decision_function] consequently always returns a [samples * classes]
+    matrix. Prediction takes the first maximum score, making an exact tie select
+    the lowest class label.
+
+    [alpha] is finite and non-negative, coefficients but not intercepts are
+    penalized, and each class fit has its own direct {!Solver_report.t}. At
+    least two positively weighted classes are required. For [k] classes, [n]
+    samples, and [p] features, fitting costs [O(k * (n * p squared + p cubed))]
+    with dense QR solves and stores [O(k * p)] fitted parameters; prediction
+    costs [O(n * k * p)]. *)
+module Ridge_classifier : sig
+  type params = { alpha : float; fit_intercept : bool }
+  type t
+  type fitted
+
+  val create :
+    ?alpha:float -> ?fit_intercept:bool -> unit -> (t, Error.t) result
+
+  val coefficients : fitted -> Matrix.t
+  (** Returns a [classes * features] matrix in {!classes} order. *)
+
+  val intercepts : fitted -> Vector.t
+  val classes : fitted -> int array
+  val reports : fitted -> Solver_report.t array
+
+  val decision_function :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  include
+    CLASSIFIER
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
 (** Weighted binary logistic regression with an L2 coefficient penalty.
 
     Exactly two positively weighted integer classes are supported and stored in

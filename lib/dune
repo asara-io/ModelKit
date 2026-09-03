@@ -4,6 +4,7 @@
  (private_modules
   modelkit_artifact
   modelkit_data
+  modelkit_linear_classifiers
   modelkit_linear_models
   modelkit_metrics
   modelkit_model_selection
