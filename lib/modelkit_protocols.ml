@@ -141,6 +141,12 @@ module type NUMERICAL_BACKEND = sig
 
   val transposed_matrix_vector_product :
     Matrix.t -> Vector.t -> (Vector.t, Error.t) result
+
+  val feature_matrix_vector_product :
+    Feature_matrix.t -> Vector.t -> (Vector.t, Error.t) result
+
+  val transposed_feature_matrix_vector_product :
+    Feature_matrix.t -> Vector.t -> (Vector.t, Error.t) result
 end
 
 module Seed = struct
@@ -355,4 +361,52 @@ module Reference_backend = struct
                  (Matrix.get matrix row column *. Vector.get vector row)
              done;
              Accumulator.value accumulator))
+
+  let csr_matrix_vector_product matrix vector =
+    vector_result
+      (Vector.init ~length:(Csr_matrix.rows matrix) (fun row ->
+           let accumulator = Accumulator.create () in
+           Csr_matrix.iter_row matrix ~row ~f:(fun ~column ~value ->
+               Accumulator.add accumulator (value *. Vector.get vector column));
+           Accumulator.value accumulator))
+
+  let transposed_csr_matrix_vector_product matrix vector =
+    let accumulators =
+      Array.init (Csr_matrix.columns matrix) (fun _ -> Accumulator.create ())
+    in
+    for row = 0 to Csr_matrix.rows matrix - 1 do
+      let factor = Vector.get vector row in
+      Csr_matrix.iter_row matrix ~row ~f:(fun ~column ~value ->
+          Accumulator.add accumulators.(column) (value *. factor))
+    done;
+    vector_result
+      (Vector.init ~length:(Csr_matrix.columns matrix) (fun column ->
+           Accumulator.value accumulators.(column)))
+
+  let feature_matrix_vector_product matrix vector =
+    let expected = Feature_matrix.columns matrix in
+    let observed = Vector.length vector in
+    if expected <> observed then
+      Error
+        (length_error ~name:"feature-matrix-vector operand" ~expected ~observed)
+    else
+      match matrix with
+      | Feature_matrix.Dense_matrix matrix ->
+          matrix_vector_product matrix vector
+      | Feature_matrix.Csr_matrix matrix ->
+          csr_matrix_vector_product matrix vector
+
+  let transposed_feature_matrix_vector_product matrix vector =
+    let expected = Feature_matrix.rows matrix in
+    let observed = Vector.length vector in
+    if expected <> observed then
+      Error
+        (length_error ~name:"transposed-feature-matrix-vector operand" ~expected
+           ~observed)
+    else
+      match matrix with
+      | Feature_matrix.Dense_matrix matrix ->
+          transposed_matrix_vector_product matrix vector
+      | Feature_matrix.Csr_matrix matrix ->
+          transposed_csr_matrix_vector_product matrix vector
 end

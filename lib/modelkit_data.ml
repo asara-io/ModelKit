@@ -17,6 +17,18 @@ module Data_error = struct
         first_index : int;
         duplicate_index : int;
       }
+    | Csr_row_offset_mismatch of {
+        position : int;
+        expected : int;
+        observed : int;
+      }
+    | Invalid_csr_row_offset of {
+        position : int;
+        previous : int;
+        observed : int;
+        nonzero_count : int;
+      }
+    | Invalid_csr_column_order of { row : int; previous : int; observed : int }
 
   let pp formatter = function
     | Negative_dimension { name; value } ->
@@ -48,6 +60,20 @@ module Data_error = struct
         Format.fprintf formatter
           "feature name %S at index %d duplicates index %d" name duplicate_index
           first_index
+    | Csr_row_offset_mismatch { position; expected; observed } ->
+        Format.fprintf formatter
+          "CSR row offset at position %d is %d; expected %d" position observed
+          expected
+    | Invalid_csr_row_offset { position; previous; observed; nonzero_count } ->
+        Format.fprintf formatter
+          "CSR row offset at position %d is %d; expected a value from %d \
+           through %d"
+          position observed previous nonzero_count
+    | Invalid_csr_column_order { row; previous; observed } ->
+        Format.fprintf formatter
+          "CSR column index %d in row %d must be greater than the preceding \
+           index %d"
+          observed row previous
 
   let to_string error = Format.asprintf "%a" pp error
 end
@@ -224,6 +250,387 @@ let check_view_alignment ~name ~length view =
   let observed = Row_view.source_size view in
   if observed = length then Ok ()
   else Error (Data_error.Length_mismatch { name; expected = length; observed })
+
+module Matrix_memory = struct
+  type t = {
+    value_bytes : int64;
+    column_index_bytes : int64;
+    row_offset_bytes : int64;
+    total_bytes : int64;
+    dense_equivalent_bytes : int64 option;
+  }
+end
+
+let bytes_per_float = 8L
+let bytes_per_int = Int64.of_int (Sys.word_size / 8)
+
+let checked_product left right =
+  let left = Int64.of_int left in
+  let right = Int64.of_int right in
+  if
+    Int64.equal left 0L
+    || Int64.compare right (Int64.div Int64.max_int left) <= 0
+  then Some (Int64.mul left right)
+  else None
+
+let dense_equivalent_bytes ~rows ~columns =
+  match checked_product rows columns with
+  | None -> None
+  | Some elements ->
+      if Int64.compare elements (Int64.div Int64.max_int bytes_per_float) <= 0
+      then Some (Int64.mul elements bytes_per_float)
+      else None
+
+module Csr_matrix = struct
+  type t = {
+    row_count : int;
+    column_count : int;
+    row_offsets : int array;
+    column_indices : int array;
+    values : Vector.t;
+  }
+
+  type view = { source : t; selection : Row_view.t }
+
+  type view_memory = {
+    allocated_bytes : int64;
+    shared_bytes : int64;
+    materialized_bytes : int64;
+  }
+
+  let dimensions_error ~rows ~columns =
+    if rows < 0 then
+      Some
+        (Data_error.Negative_dimension
+           { name = "CSR matrix rows"; value = rows })
+    else if rows = max_int then
+      Some
+        (Data_error.Index_out_of_bounds
+           { name = "CSR matrix rows"; index = rows; upper_bound = max_int })
+    else if columns < 0 then
+      Some
+        (Data_error.Negative_dimension
+           { name = "CSR matrix columns"; value = columns })
+    else None
+
+  let validate_row_offsets ~rows ~nonzero_count row_offsets =
+    let observed = Array.length row_offsets in
+    let expected = rows + 1 in
+    if observed <> expected then
+      Error
+        (Data_error.Length_mismatch
+           { name = "CSR row offsets"; expected; observed })
+    else if row_offsets.(0) <> 0 then
+      Error
+        (Data_error.Csr_row_offset_mismatch
+           { position = 0; expected = 0; observed = row_offsets.(0) })
+    else if rows = 0 then
+      if nonzero_count = 0 then Ok ()
+      else
+        Error
+          (Data_error.Csr_row_offset_mismatch
+             { position = 0; expected = nonzero_count; observed = 0 })
+    else
+      let rec validate position previous =
+        if position = rows then
+          let observed = row_offsets.(position) in
+          if observed = nonzero_count then Ok ()
+          else
+            Error
+              (Data_error.Csr_row_offset_mismatch
+                 { position; expected = nonzero_count; observed })
+        else
+          let observed = row_offsets.(position) in
+          if observed < previous || observed > nonzero_count then
+            Error
+              (Data_error.Invalid_csr_row_offset
+                 { position; previous; observed; nonzero_count })
+          else validate (position + 1) observed
+      in
+      validate 1 0
+
+  let validate_columns ~rows ~columns ~row_offsets column_indices =
+    let rec validate_row row =
+      if row = rows then Ok ()
+      else
+        let start = row_offsets.(row) in
+        let stop = row_offsets.(row + 1) in
+        let rec validate_entry entry previous =
+          if entry = stop then validate_row (row + 1)
+          else
+            let observed = column_indices.(entry) in
+            if observed < 0 || observed >= columns then
+              Error
+                (Data_error.Index_out_of_bounds
+                   {
+                     name = "CSR column";
+                     index = observed;
+                     upper_bound = columns;
+                   })
+            else
+              match previous with
+              | Some previous when observed <= previous ->
+                  Error
+                    (Data_error.Invalid_csr_column_order
+                       { row; previous; observed })
+              | _ -> validate_entry (entry + 1) (Some observed)
+        in
+        validate_entry start None
+    in
+    validate_row 0
+
+  let create ~rows ~columns ~row_offsets ~column_indices ~values =
+    match dimensions_error ~rows ~columns with
+    | Some error -> Error error
+    | None -> (
+        let nonzero_count = Vector.length values in
+        let observed = Array.length column_indices in
+        if observed <> nonzero_count then
+          Error
+            (Data_error.Length_mismatch
+               {
+                 name = "CSR column indices";
+                 expected = nonzero_count;
+                 observed;
+               })
+        else
+          match validate_row_offsets ~rows ~nonzero_count row_offsets with
+          | Error _ as error -> error
+          | Ok () -> (
+              match
+                validate_columns ~rows ~columns ~row_offsets column_indices
+              with
+              | Error _ as error -> error
+              | Ok () ->
+                  Ok
+                    {
+                      row_count = rows;
+                      column_count = columns;
+                      row_offsets = Array.copy row_offsets;
+                      column_indices = Array.copy column_indices;
+                      values;
+                    }))
+
+  let of_arrays ~rows ~columns ~row_offsets ~column_indices ~values =
+    create ~rows ~columns ~row_offsets ~column_indices
+      ~values:(Vector.of_array values)
+
+  let rows matrix = matrix.row_count
+  let columns matrix = matrix.column_count
+  let shape matrix = (matrix.row_count, matrix.column_count)
+  let nonzero_count (matrix : t) = Vector.length matrix.values
+  let row_offsets (matrix : t) = Array.copy matrix.row_offsets
+  let column_indices (matrix : t) = Array.copy matrix.column_indices
+  let values (matrix : t) = matrix.values
+
+  let get (matrix : t) row column =
+    check_index ~name:"CSR matrix row" ~length:matrix.row_count row;
+    check_index ~name:"CSR matrix column" ~length:matrix.column_count column;
+    let rec search lower upper =
+      if lower >= upper then 0.0
+      else
+        let middle = lower + ((upper - lower) / 2) in
+        let observed = matrix.column_indices.(middle) in
+        if observed = column then Vector.get matrix.values middle
+        else if observed < column then search (middle + 1) upper
+        else search lower middle
+    in
+    search matrix.row_offsets.(row) matrix.row_offsets.(row + 1)
+
+  let iter_row (matrix : t) ~row ~f =
+    check_index ~name:"CSR matrix row" ~length:matrix.row_count row;
+    for entry = matrix.row_offsets.(row) to matrix.row_offsets.(row + 1) - 1 do
+      f
+        ~column:matrix.column_indices.(entry)
+        ~value:(Vector.get matrix.values entry)
+    done
+
+  let of_dense matrix =
+    let rows = Matrix.rows matrix in
+    let columns = Matrix.columns matrix in
+    let nonzero_count = ref 0 in
+    for row = 0 to rows - 1 do
+      for column = 0 to columns - 1 do
+        if Matrix.get matrix row column <> 0.0 then incr nonzero_count
+      done
+    done;
+    let row_offsets = Array.make (rows + 1) 0 in
+    let column_indices = Array.make !nonzero_count 0 in
+    let values = Array.make !nonzero_count 0.0 in
+    let entry = ref 0 in
+    for row = 0 to rows - 1 do
+      for column = 0 to columns - 1 do
+        let value = Matrix.get matrix row column in
+        if value <> 0.0 then (
+          column_indices.(!entry) <- column;
+          values.(!entry) <- value;
+          incr entry)
+      done;
+      row_offsets.(row + 1) <- !entry
+    done;
+    {
+      row_count = rows;
+      column_count = columns;
+      row_offsets;
+      column_indices;
+      values = Vector.of_array values;
+    }
+
+  let to_dense matrix =
+    let dense =
+      Matrix.unsafe_init ~rows:matrix.row_count ~columns:matrix.column_count
+        (fun _ _ -> 0.0)
+    in
+    for row = 0 to matrix.row_count - 1 do
+      iter_row matrix ~row ~f:(fun ~column ~value ->
+          Bigarray.Array2.set dense row column value)
+    done;
+    dense
+
+  let memory (matrix : t) =
+    let value_bytes =
+      Int64.mul (Int64.of_int (nonzero_count matrix)) bytes_per_float
+    in
+    let column_index_bytes =
+      Int64.mul
+        (Int64.of_int (Array.length matrix.column_indices))
+        bytes_per_int
+    in
+    let row_offset_bytes =
+      Int64.mul (Int64.of_int (Array.length matrix.row_offsets)) bytes_per_int
+    in
+    {
+      Matrix_memory.value_bytes;
+      column_index_bytes;
+      row_offset_bytes;
+      total_bytes =
+        Int64.add value_bytes (Int64.add column_index_bytes row_offset_bytes);
+      dense_equivalent_bytes =
+        dense_equivalent_bytes ~rows:matrix.row_count
+          ~columns:matrix.column_count;
+    }
+
+  let view (matrix : t) rows =
+    match
+      check_view_alignment ~name:"CSR matrix row view" ~length:matrix.row_count
+        rows
+    with
+    | Error _ as error -> error
+    | Ok () -> Ok { source = matrix; selection = rows }
+
+  let all (matrix : t) =
+    match Row_view.all ~source_size:matrix.row_count with
+    | Ok selection -> { source = matrix; selection }
+    | Error _ -> assert false
+
+  let view_rows view = Row_view.length view.selection
+  let view_columns view = view.source.column_count
+  let row_view view = view.selection
+
+  let source_row view row =
+    check_index ~name:"CSR view row" ~length:(view_rows view) row;
+    Row_view.get view.selection row
+
+  let view_get view ~row ~column = get view.source (source_row view row) column
+
+  let view_nonzero_count view =
+    let count = ref 0 in
+    for row = 0 to view_rows view - 1 do
+      let source_row = Row_view.get view.selection row in
+      count :=
+        !count
+        + view.source.row_offsets.(source_row + 1)
+        - view.source.row_offsets.(source_row)
+    done;
+    !count
+
+  let materialize view =
+    let rows = view_rows view in
+    let nonzero_count = view_nonzero_count view in
+    let row_offsets = Array.make (rows + 1) 0 in
+    let column_indices = Array.make nonzero_count 0 in
+    let values = Array.make nonzero_count 0.0 in
+    let target_entry = ref 0 in
+    for row = 0 to rows - 1 do
+      let source_row = Row_view.get view.selection row in
+      for
+        source_entry = view.source.row_offsets.(source_row)
+        to view.source.row_offsets.(source_row + 1) - 1
+      do
+        column_indices.(!target_entry) <-
+          view.source.column_indices.(source_entry);
+        values.(!target_entry) <- Vector.get view.source.values source_entry;
+        incr target_entry
+      done;
+      row_offsets.(row + 1) <- !target_entry
+    done;
+    {
+      row_count = rows;
+      column_count = view.source.column_count;
+      row_offsets;
+      column_indices;
+      values = Vector.of_array values;
+    }
+
+  let view_memory view =
+    let source_memory = memory view.source in
+    let nonzero_count = view_nonzero_count view in
+    let value_bytes = Int64.mul (Int64.of_int nonzero_count) bytes_per_float in
+    let column_index_bytes =
+      Int64.mul (Int64.of_int nonzero_count) bytes_per_int
+    in
+    let row_offset_bytes =
+      Int64.mul (Int64.of_int (view_rows view + 1)) bytes_per_int
+    in
+    {
+      allocated_bytes = Int64.mul (Int64.of_int (view_rows view)) bytes_per_int;
+      shared_bytes = source_memory.Matrix_memory.total_bytes;
+      materialized_bytes =
+        Int64.add value_bytes (Int64.add column_index_bytes row_offset_bytes);
+    }
+end
+
+module Feature_matrix = struct
+  type format = Dense | Csr
+  type t = Dense_matrix of Matrix.t | Csr_matrix of Csr_matrix.t
+
+  let dense matrix = Dense_matrix matrix
+  let csr matrix = Csr_matrix matrix
+  let format = function Dense_matrix _ -> Dense | Csr_matrix _ -> Csr
+
+  let rows = function
+    | Dense_matrix matrix -> Matrix.rows matrix
+    | Csr_matrix matrix -> Csr_matrix.rows matrix
+
+  let columns = function
+    | Dense_matrix matrix -> Matrix.columns matrix
+    | Csr_matrix matrix -> Csr_matrix.columns matrix
+
+  let shape matrix = (rows matrix, columns matrix)
+
+  let get matrix row column =
+    match matrix with
+    | Dense_matrix matrix -> Matrix.get matrix row column
+    | Csr_matrix matrix -> Csr_matrix.get matrix row column
+
+  let memory = function
+    | Csr_matrix matrix -> Csr_matrix.memory matrix
+    | Dense_matrix matrix ->
+        let rows = Matrix.rows matrix in
+        let columns = Matrix.columns matrix in
+        let value_bytes =
+          match dense_equivalent_bytes ~rows ~columns with
+          | Some bytes -> bytes
+          | None -> assert false
+        in
+        {
+          Matrix_memory.value_bytes;
+          column_index_bytes = 0L;
+          row_offset_bytes = 0L;
+          total_bytes = value_bytes;
+          dense_equivalent_bytes = Some value_bytes;
+        }
+end
 
 module Target = struct
   (* Closed markers make the GADT indices provably disjoint to exhaustiveness checking. *)

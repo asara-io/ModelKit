@@ -23,6 +23,18 @@ module Data_error : sig
         first_index : int;
         duplicate_index : int;
       }
+    | Csr_row_offset_mismatch of {
+        position : int;
+        expected : int;
+        observed : int;
+      }
+    | Invalid_csr_row_offset of {
+        position : int;
+        previous : int;
+        observed : int;
+        nonzero_count : int;
+      }
+    | Invalid_csr_column_order of { row : int; previous : int; observed : int }
 
   val pp : Format.formatter -> t -> unit
   val to_string : t -> string
@@ -104,6 +116,100 @@ module Row_view : sig
       Raises [Invalid_argument] if [position] is outside the view. *)
 
   val indices : t -> int array
+end
+
+(** Payload memory used by dense or CSR matrix storage.
+
+    Counts exclude OCaml and Bigarray headers and allocator overhead. The dense
+    equivalent is [None] only when its byte count exceeds [Int64.max_int]. *)
+module Matrix_memory : sig
+  type t = {
+    value_bytes : int64;
+    column_index_bytes : int64;
+    row_offset_bytes : int64;
+    total_bytes : int64;
+    dense_equivalent_bytes : int64 option;
+  }
+end
+
+(** Immutable checked compressed sparse row storage.
+
+    Row offsets must begin at zero, end at the stored-value count, and be
+    nondecreasing. Column indices must be in bounds and strictly increasing
+    within each row. Admission copies index arrays; [of_arrays] also copies
+    values. Explicit stored zeroes are retained. *)
+module Csr_matrix : sig
+  type t
+  type view
+
+  type view_memory = {
+    allocated_bytes : int64;
+    shared_bytes : int64;
+    materialized_bytes : int64;
+  }
+
+  val create :
+    rows:int ->
+    columns:int ->
+    row_offsets:int array ->
+    column_indices:int array ->
+    values:Vector.t ->
+    (t, Data_error.t) result
+
+  val of_arrays :
+    rows:int ->
+    columns:int ->
+    row_offsets:int array ->
+    column_indices:int array ->
+    values:float array ->
+    (t, Data_error.t) result
+
+  val of_dense : Matrix.t -> t
+  val to_dense : t -> Matrix.t
+  val rows : t -> int
+  val columns : t -> int
+  val shape : t -> int * int
+  val nonzero_count : t -> int
+  val row_offsets : t -> int array
+  val column_indices : t -> int array
+  val values : t -> Vector.t
+
+  val get : t -> int -> int -> float
+  (** Raises [Invalid_argument] if either index is outside the matrix. *)
+
+  val iter_row : t -> row:int -> f:(column:int -> value:float -> unit) -> unit
+  (** Iterates stored entries in ascending column order without allocating.
+      Raises [Invalid_argument] if [row] is outside the matrix. *)
+
+  val memory : t -> Matrix_memory.t
+  val all : t -> view
+  val view : t -> Row_view.t -> (view, Data_error.t) result
+  val view_rows : view -> int
+  val view_columns : view -> int
+  val view_nonzero_count : view -> int
+  val row_view : view -> Row_view.t
+  val source_row : view -> int -> int
+  val view_get : view -> row:int -> column:int -> float
+  val materialize : view -> t
+
+  val view_memory : view -> view_memory
+  (** Reports bytes allocated for row indices, bytes shared with the source, and
+      the payload bytes that explicit materialization would require. *)
+end
+
+(** A dense or CSR feature matrix selected explicitly at an API boundary. *)
+module Feature_matrix : sig
+  type format = Dense | Csr
+  type t = Dense_matrix of Matrix.t | Csr_matrix of Csr_matrix.t
+
+  val dense : Matrix.t -> t
+  val csr : Csr_matrix.t -> t
+  val format : t -> format
+  val rows : t -> int
+  val columns : t -> int
+  val shape : t -> int * int
+  val get : t -> int -> int -> float
+  val memory : t -> Matrix_memory.t
 end
 
 (** Regression or classification targets aligned by sample.
@@ -492,6 +598,15 @@ module type NUMERICAL_BACKEND = sig
 
   val transposed_matrix_vector_product :
     Matrix.t -> Vector.t -> (Vector.t, Error.t) result
+
+  val feature_matrix_vector_product :
+    Feature_matrix.t -> Vector.t -> (Vector.t, Error.t) result
+  (** Dispatches to dense or CSR storage without densifying sparse input. CSR
+      kernels visit stored entries only; dense and CSR results agree for finite
+      operands representing the same matrix. *)
+
+  val transposed_feature_matrix_vector_product :
+    Feature_matrix.t -> Vector.t -> (Vector.t, Error.t) result
 end
 
 (** Stable, platform-independent seed values.
