@@ -1183,6 +1183,188 @@ module Ridge_regression : sig
        and type rng = Rng.t
 end
 
+(** Weighted L1-regularized scalar regression.
+
+    The portable solver uses deterministic cyclic coordinate descent to minimize
+    weighted mean squared error plus [alpha] times the L1 coefficient norm. The
+    optional intercept is not penalized. [alpha] is finite and non-negative;
+    [tolerance] and [max_iterations] control checked convergence. Iteration
+    exhaustion returns a typed convergence error. *)
+module Lasso_regression : sig
+  type params = {
+    alpha : float;
+    fit_intercept : bool;
+    tolerance : float;
+    max_iterations : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?alpha:float ->
+    ?fit_intercept:bool ->
+    ?tolerance:float ->
+    ?max_iterations:int ->
+    unit ->
+    (t, Error.t) result
+
+  val coefficients : fitted -> Vector.t
+  val intercept : fitted -> float
+  val report : fitted -> Solver_report.t
+
+  include
+    REGRESSOR
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Weighted scalar regression with combined L1 and L2 regularization.
+
+    The minimized penalty is [alpha * l1_ratio * L1] plus
+    [0.5 * alpha * (1 - l1_ratio) * L2 squared]. [l1_ratio] is in [[0, 1]]; one
+    is lasso and zero is a pure L2 penalty. The optional intercept remains
+    unpenalized. Deterministic cyclic coordinate descent returns a
+    {!Solver_report.t} or a typed convergence failure. *)
+module Elastic_net_regression : sig
+  type params = {
+    alpha : float;
+    l1_ratio : float;
+    fit_intercept : bool;
+    tolerance : float;
+    max_iterations : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?alpha:float ->
+    ?l1_ratio:float ->
+    ?fit_intercept:bool ->
+    ?tolerance:float ->
+    ?max_iterations:int ->
+    unit ->
+    (t, Error.t) result
+
+  val coefficients : fitted -> Vector.t
+  val intercept : fitted -> float
+  val report : fitted -> Solver_report.t
+
+  include
+    REGRESSOR
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** A descending lasso regularization path fitted with deterministic warm
+    starts.
+
+    Without explicit [alphas], [fit] constructs [count] logarithmically spaced
+    values from the smallest alpha producing the all-zero centered solution to
+    [epsilon] times that value. Explicit alphas are copied, validated, and
+    sorted descending. Coefficient-matrix rows, intercepts, reports, and model
+    indices all use this same order. *)
+module Lasso_path : sig
+  type params = {
+    fit_intercept : bool;
+    epsilon : float;
+    count : int;
+    tolerance : float;
+    max_iterations : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?fit_intercept:bool ->
+    ?epsilon:float ->
+    ?count:int ->
+    ?tolerance:float ->
+    ?max_iterations:int ->
+    unit ->
+    (t, Error.t) result
+
+  val fit :
+    t ->
+    ?alphas:Vector.t ->
+    ?sample_weight:Sample_weight.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:Target.regression Target.t ->
+    unit ->
+    (fitted, Error.t) result
+
+  val params : t -> params
+  val alphas : fitted -> Vector.t
+
+  val coefficients : fitted -> Matrix.t
+  (** Returns one coefficient row per descending alpha. *)
+
+  val intercepts : fitted -> Vector.t
+  val reports : fitted -> Solver_report.t array
+  val model : fitted -> index:int -> (Lasso_regression.fitted, Error.t) result
+end
+
+(** A descending elastic-net regularization path with deterministic warm starts.
+
+    Path ordering and access follow {!Lasso_path}. Automatic alpha generation
+    requires positive [l1_ratio], because a pure L2 penalty has no finite alpha
+    at which every coefficient is forced to zero; explicit alphas remain valid
+    when [l1_ratio] is zero. *)
+module Elastic_net_path : sig
+  type params = {
+    l1_ratio : float;
+    fit_intercept : bool;
+    epsilon : float;
+    count : int;
+    tolerance : float;
+    max_iterations : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?l1_ratio:float ->
+    ?fit_intercept:bool ->
+    ?epsilon:float ->
+    ?count:int ->
+    ?tolerance:float ->
+    ?max_iterations:int ->
+    unit ->
+    (t, Error.t) result
+
+  val fit :
+    t ->
+    ?alphas:Vector.t ->
+    ?sample_weight:Sample_weight.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:Target.regression Target.t ->
+    unit ->
+    (fitted, Error.t) result
+
+  val params : t -> params
+  val alphas : fitted -> Vector.t
+
+  val coefficients : fitted -> Matrix.t
+  (** Returns one coefficient row per descending alpha. *)
+
+  val intercepts : fitted -> Vector.t
+  val reports : fitted -> Solver_report.t array
+
+  val model :
+    fitted -> index:int -> (Elastic_net_regression.fitted, Error.t) result
+end
+
 (** Weighted binary logistic regression with an L2 coefficient penalty.
 
     Exactly two positively weighted integer classes are supported and stored in

@@ -26,6 +26,38 @@ module Solver_report : sig
     t
 end
 
+module Linear_model_internal : sig
+  val validation : name:string -> reason:string -> remediation:string -> Error.t
+
+  val numerical :
+    operation:string -> reason:string -> remediation:string -> Error.t
+
+  val validate_matrix :
+    ?require_samples:bool ->
+    Feature_schema.t ->
+    Matrix.t ->
+    (unit, Error.t) result
+
+  val validate_target_length : Matrix.t -> int -> (unit, Error.t) result
+
+  val validate_sample_weight :
+    Matrix.t -> Sample_weight.t option -> (unit, Error.t) result
+
+  val weight : Sample_weight.t option -> int -> float
+
+  val weighted_means :
+    Matrix.t -> Vector.t -> Sample_weight.t option -> float array * float
+
+  val regression_prediction :
+    operation:string ->
+    schema:Feature_schema.t ->
+    coefficients:float array ->
+    intercept:float ->
+    Feature_schema.t ->
+    Matrix.t ->
+    (Target.regression Target.t, Error.t) result
+end
+
 module Linear_regression : sig
   type params = { fit_intercept : bool }
   type t = params

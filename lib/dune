@@ -10,5 +10,6 @@
   modelkit_pipeline
   modelkit_preprocessing
   modelkit_protocols
+  modelkit_regularized_linear
   modelkit_splitting
   modelkit_transforms))

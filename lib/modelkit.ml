@@ -48,6 +48,13 @@ module Solver_report = Modelkit_linear_models.Solver_report
 module Linear_regression = Modelkit_linear_models.Linear_regression
 module Ridge_regression = Modelkit_linear_models.Ridge_regression
 module Logistic_regression = Modelkit_linear_models.Logistic_regression
+module Lasso_regression = Modelkit_regularized_linear.Lasso_regression
+
+module Elastic_net_regression =
+  Modelkit_regularized_linear.Elastic_net_regression
+
+module Lasso_path = Modelkit_regularized_linear.Lasso_path
+module Elastic_net_path = Modelkit_regularized_linear.Elastic_net_path
 module Split = Modelkit_splitting.Split
 module K_fold = Modelkit_splitting.K_fold
 module Stratified_k_fold = Modelkit_splitting.Stratified_k_fold
