@@ -27,3 +27,47 @@ module Ridge_classifier : sig
        and type fitted := fitted
        and type rng = Rng.t
 end
+
+module Multinomial_logistic_regression : sig
+  type params = {
+    c : float;
+    fit_intercept : bool;
+    tolerance : float;
+    max_iterations : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?c:float ->
+    ?fit_intercept:bool ->
+    ?tolerance:float ->
+    ?max_iterations:int ->
+    unit ->
+    (t, Error.t) result
+
+  val coefficients : fitted -> Matrix.t
+  val intercepts : fitted -> Vector.t
+  val classes : fitted -> int array
+  val report : fitted -> Modelkit_linear_models.Solver_report.t
+
+  val decision_function :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val predict_proba :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  include
+    CLASSIFIER
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end

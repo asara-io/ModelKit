@@ -27,6 +27,11 @@ module Solver_report : sig
 end
 
 module Linear_model_internal : sig
+  type least_squares_solution = {
+    least_squares_coefficients : float array;
+    least_squares_rank : int;
+  }
+
   val validation : name:string -> reason:string -> remediation:string -> Error.t
 
   val numerical :
@@ -50,6 +55,12 @@ module Linear_model_internal : sig
     Matrix.t -> Sample_weight.t option -> (unit, Error.t) result
 
   val weight : Sample_weight.t option -> int -> float
+
+  val solve_least_squares :
+    operation:string ->
+    float array array ->
+    float array ->
+    (least_squares_solution, Error.t) result
 
   val weighted_means :
     Matrix.t -> Vector.t -> Sample_weight.t option -> float array * float

@@ -1409,6 +1409,68 @@ module Ridge_classifier : sig
        and type rng = Rng.t
 end
 
+(** Weighted multinomial logistic regression with an L2 coefficient penalty.
+
+    At least three positively weighted integer classes are required and stored
+    in ascending order. The solver jointly minimizes stable softmax
+    cross-entropy and the coefficient penalty under a sum-to-zero class-score
+    constraint; intercepts are not penalized. [c] is the positive inverse
+    regularization strength. Deterministic damped Newton iterations stop on
+    gradient or step tolerance, and iteration exhaustion is a typed convergence
+    failure.
+
+    Coefficient rows, intercept entries, decision columns, and probability
+    columns all follow ascending class order. Exact prediction ties select the
+    lowest label. For [k] classes, [n] samples, and [p] augmented features,
+    fitting costs
+    [O(iterations * (n * k squared * p squared + k cubed * p cubed))];
+    prediction costs [O(n * k * p)]. *)
+module Multinomial_logistic_regression : sig
+  type params = {
+    c : float;
+    fit_intercept : bool;
+    tolerance : float;
+    max_iterations : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?c:float ->
+    ?fit_intercept:bool ->
+    ?tolerance:float ->
+    ?max_iterations:int ->
+    unit ->
+    (t, Error.t) result
+
+  val coefficients : fitted -> Matrix.t
+  (** Returns a [classes * features] matrix in {!classes} order. *)
+
+  val intercepts : fitted -> Vector.t
+  val classes : fitted -> int array
+  val report : fitted -> Solver_report.t
+
+  val decision_function :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val predict_proba :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  include
+    CLASSIFIER
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
 (** Weighted binary logistic regression with an L2 coefficient penalty.
 
     Exactly two positively weighted integer classes are supported and stored in

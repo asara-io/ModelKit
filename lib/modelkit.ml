@@ -56,6 +56,10 @@ module Elastic_net_regression =
 module Lasso_path = Modelkit_regularized_linear.Lasso_path
 module Elastic_net_path = Modelkit_regularized_linear.Elastic_net_path
 module Ridge_classifier = Modelkit_linear_classifiers.Ridge_classifier
+
+module Multinomial_logistic_regression =
+  Modelkit_linear_classifiers.Multinomial_logistic_regression
+
 module Split = Modelkit_splitting.Split
 module K_fold = Modelkit_splitting.K_fold
 module Stratified_k_fold = Modelkit_splitting.Stratified_k_fold
