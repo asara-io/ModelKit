@@ -332,6 +332,47 @@ val fitted : Sgd_classifier.fitted = <abstr>
 - : int * int = (4, 2)
 ]}
 
+{1 Multiclass scoring}
+
+{!Modelkit.Multiclass_classification_metrics} scores predictions with any
+number of integer labels. The confusion matrix uses ascending truth rows and
+prediction columns, or an explicit label order, and weights every cell by
+sample weight. Accuracy, balanced accuracy, per-class scores, and [Micro],
+[Macro], and [Weighted] averages of precision, recall, and F1 follow
+scikit-learn's definitions: micro averaging pools counts, macro averaging
+weights every class equally, weighted averaging uses truth support, and a
+class without predictions or support follows the undefined-metric policy with
+a zero fallback. Log loss consumes a probability matrix with its declared class
+order.
+
+{!Modelkit.Multiclass_classification_scorer} carries the averaging mode in its
+name, so [f1_macro] and [f1_weighted] can share one grid-search report.
+{!Modelkit.Cross_validation.Multiclass_classification} and
+{!Modelkit.Grid_search.Multiclass_classification} accept any pipeline whose
+terminal declares two or more classes and request probabilities only when a
+scorer needs them.
+
+{@ocaml[
+# open Modelkit;;
+# let truth = Target.classification [|0; 0; 1; 1; 2; 2|];;
+val truth : Target.classification Target.t = <abstr>
+# let prediction = Target.classification [|0; 1; 1; 1; 2; 0|];;
+val prediction : Target.classification Target.t = <abstr>
+# Multiclass_classification_metrics.confusion_matrix ~truth ~prediction ()
+  |> Result.get_ok
+  |> fun confusion ->
+     Matrix.to_arrays confusion.Multiclass_classification_metrics.counts;;
+- : float array array = [|[|1.; 1.; 0.|]; [|0.; 2.; 0.|]; [|1.; 0.; 1.|]|]
+# Multiclass_classification_metrics.f1
+    ~average:Multiclass_classification_metrics.Macro ~truth ~prediction ()
+  |> Result.get_ok |> Printf.sprintf "%.4f";;
+- : string = "0.6556"
+# Multiclass_classification_scorer.name
+    (Multiclass_classification_scorer.recall
+       ~average:Multiclass_classification_metrics.Weighted ());;
+- : string = "recall_weighted"
+]}
+
 {1 Executable example}
 
 Dataset admission permits NaN missing markers only when explicitly requested:
