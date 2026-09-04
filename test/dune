@@ -23,6 +23,12 @@
  (libraries modelkit alcotest))
 
 (test
+ (name class_weight_test)
+ (modules class_weight_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
  (name pipeline_test)
  (modules pipeline_test)
  (package modelkit)
@@ -253,6 +259,18 @@
   (setenv
    MODELKIT_SKLEARN_SGD_CLASSIFIER_FIXTURE
    %{dep:fixtures/sklearn/sgd_classifier_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name sklearn_class_weight_fixture_test)
+ (modules sklearn_class_weight_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/class_weight_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_SKLEARN_CLASS_WEIGHT_FIXTURE
+   %{dep:fixtures/sklearn/class_weight_v1.tsv}
    (run %{test}))))
 
 (test

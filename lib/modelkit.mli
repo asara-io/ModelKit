@@ -694,8 +694,10 @@ end
 
     Fitting and transformation require finite inputs. Constant features use a
     scale of one, so centering maps them to zero without division by zero.
-    Sample weights are rejected. Fit and transform are [O(rows * columns)] and
-    transform allocates one dense output matrix. *)
+    Optional sample weights give weighted means and weighted population
+    variances over positively weighted rows; an all-zero weight vector is a
+    typed error. Fit and transform are [O(rows * columns)] and transform
+    allocates one dense output matrix. *)
 module Standard_scaler : sig
   type params = { with_mean : bool; with_std : bool }
   type t
@@ -1005,6 +1007,44 @@ module Missing_indicator : sig
        and type rng = Rng.t
 end
 
+(** Class-weight specifications resolved into per-row sample weights.
+
+    [Balanced] weights every class by [total / (classes * class_total)] over
+    weighted class frequencies, so rarer classes receive larger weights and the
+    weighted total is preserved. [Explicit] assigns listed labels their weight
+    and every other label one. Resolution multiplies the class weight into the
+    supplied sample weight, or into one when no sample weight is given; rows
+    with zero weight stay zero and classes with no positive weight are absent
+    from {!Class_weight.class_weights}. Labels listed by [Explicit] but absent
+    from the rows are ignored rather than rejected, so fold-local training
+    subsets that miss a rare class still resolve.
+
+    {!Pipeline.classifier} resolves a class weight on each fit's own rows, which
+    keeps balanced weights fold-local under cross-validation. Resolution is
+    [O(rows)] time and space. *)
+module Class_weight : sig
+  type t = Balanced | Explicit of (int * float) array
+
+  val balanced : t
+
+  val explicit : (int * float) list -> (t, Error.t) result
+  (** Validates distinct labels and finite non-negative weights. *)
+
+  val class_weights :
+    t ->
+    ?sample_weight:Sample_weight.t ->
+    Target.classification Target.t ->
+    ((int * float) array, Error.t) result
+  (** Returns the effective weight of each positively weighted class in
+      ascending label order. *)
+
+  val resolve :
+    t ->
+    ?sample_weight:Sample_weight.t ->
+    Target.classification Target.t ->
+    (Sample_weight.t, Error.t) result
+end
+
 (** Immutable sequential composition of fitted preprocessing and an estimator.
 
     Transformer stages are fitted only from the matrix supplied to [fit]. Their
@@ -1013,10 +1053,11 @@ end
     unique across the whole pipeline, and failures carry the responsible
     [Error.Stage] context.
 
-    Current transformers are unsupervised and do not receive targets or sample
-    weights. Sample weights route to the terminal estimator. Each stage receives
-    a child RNG derived from its logical name and position. Fit and inference
-    are sequential and allocate one dense matrix per transformer stage. *)
+    Current transformers are unsupervised and do not receive targets. Sample
+    weights always route to the terminal estimator and reach a transformer stage
+    only when it was packaged with [route_sample_weight]. Each stage receives a
+    child RNG derived from its logical name and position. Fit and inference are
+    sequential and allocate one dense matrix per transformer stage. *)
 module Pipeline : sig
   type transformer
   type builder
@@ -1026,6 +1067,7 @@ module Pipeline : sig
   type capabilities = { decision_function : bool; predict_proba : bool }
 
   val transformer :
+    ?route_sample_weight:bool ->
     name:string ->
     (module TRANSFORMER
        with type t = 'specification
@@ -1034,7 +1076,10 @@ module Pipeline : sig
         and type rng = Rng.t) ->
     'specification ->
     (transformer, Error.t) result
-  (** Packages an unsupervised transformer specification as a named stage. *)
+  (** Packages an unsupervised transformer specification as a named stage.
+      Sample weights reach the stage's [fit] only when [route_sample_weight] is
+      true; by default the stage fits unweighted, matching transformers that
+      declare no weight support. *)
 
   val estimator :
     name:string ->
@@ -1060,6 +1105,32 @@ module Pipeline : sig
   (** Packages a terminal estimator and its explicitly supported capabilities.
       When supplied, [classes] declares the class label corresponding to each
       [predict_proba] column. *)
+
+  val classifier :
+    ?class_weight:Class_weight.t ->
+    name:string ->
+    (module ESTIMATOR
+       with type t = 'specification
+        and type target = Target.classification Target.t
+        and type prediction = 'prediction
+        and type fitted = 'fitted
+        and type rng = Rng.t) ->
+    ?decision_function:
+      ('fitted ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      (Vector.t, Error.t) result) ->
+    ?predict_proba:
+      ('fitted ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      (Matrix.t, Error.t) result) ->
+    ?classes:('fitted -> int array) ->
+    'specification ->
+    ((Target.classification Target.t, 'prediction) estimator, Error.t) result
+  (** Packages a classification terminal like {!val:estimator} and, when
+      [class_weight] is supplied, resolves it on each fit's own labels and
+      sample weights before the estimator sees them. *)
 
   val empty : builder
   val add_transformer : builder -> transformer -> (builder, Error.t) result
@@ -2559,7 +2630,10 @@ module Artifact : sig
     name:string -> Simple_imputer.t -> (Pipeline.transformer, Error.t) result
 
   val standard_scaler_stage :
-    name:string -> Standard_scaler.t -> (Pipeline.transformer, Error.t) result
+    ?route_sample_weight:bool ->
+    name:string ->
+    Standard_scaler.t ->
+    (Pipeline.transformer, Error.t) result
 
   val variance_threshold_stage :
     name:string ->
@@ -2581,6 +2655,7 @@ module Artifact : sig
     result
 
   val logistic_regression_estimator :
+    ?class_weight:Class_weight.t ->
     name:string ->
     Logistic_regression.t ->
     ( ( Target.classification Target.t,

@@ -556,8 +556,9 @@ module Artifact = struct
       (module Simple_imputer)
       specification
 
-  let standard_scaler_stage ~name specification =
-    Pipeline.transformer_internal ~encode:encode_standard_scaler ~name
+  let standard_scaler_stage ?route_sample_weight ~name specification =
+    Pipeline.transformer_internal ~encode:encode_standard_scaler
+      ?route_sample_weight ~name
       (module Standard_scaler)
       specification
 
@@ -576,8 +577,9 @@ module Artifact = struct
       (module Ridge_regression)
       specification
 
-  let logistic_regression_estimator ~name specification =
-    Pipeline.estimator_internal ~encode:encode_logistic_regression ~name
+  let logistic_regression_estimator ?class_weight ~name specification =
+    Pipeline.classifier_internal ~encode:encode_logistic_regression
+      ?class_weight ~name
       (module Logistic_regression)
       ~decision_function:Logistic_regression.decision_function
       ~predict_proba:Logistic_regression.predict_proba

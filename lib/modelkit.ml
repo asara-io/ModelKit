@@ -43,6 +43,7 @@ module Ordinal_encoder = Modelkit_transforms.Ordinal_encoder
 module Label_encoder = Modelkit_transforms.Label_encoder
 module Polynomial_features = Modelkit_transforms.Polynomial_features
 module Missing_indicator = Modelkit_transforms.Missing_indicator
+module Class_weight = Modelkit_class_weight.Class_weight
 module Pipeline = Modelkit_pipeline.Pipeline
 module Solver_report = Modelkit_linear_models.Solver_report
 module Linear_regression = Modelkit_linear_models.Linear_regression

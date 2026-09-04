@@ -24,6 +24,7 @@ module Pipeline = struct
   type transformer = {
     transformer_name : string;
     fit_transform :
+      sample_weight:Sample_weight.t option ->
       rng:Rng.t ->
       feature_schema:Feature_schema.t ->
       x:Matrix.t ->
@@ -158,16 +159,19 @@ module Pipeline = struct
   let with_stage name result =
     Result.map_error (Error.with_context (Error.Stage name)) result
 
-  let transformer_internal (type specification fitted) ?encode ~name
+  let transformer_internal (type specification fitted) ?encode
+      ?(route_sample_weight = false) ~name
       (module Transformer : TRANSFORMER
         with type t = specification
          and type target = unit
          and type fitted = fitted
          and type rng = Rng.t) (specification : specification) =
     let* () = validate_name name in
-    let fit_transform ~rng ~feature_schema ~x =
+    let fit_transform ~sample_weight ~rng ~feature_schema ~x =
+      let sample_weight = if route_sample_weight then sample_weight else None in
       let* fitted =
-        Transformer.fit specification ~rng ~feature_schema ~x ~y:None ()
+        Transformer.fit specification ?sample_weight ~rng ~feature_schema ~x
+          ~y:None ()
       in
       let* () =
         validate_fitted_schema ~stage:name ~expected:feature_schema
@@ -190,11 +194,11 @@ module Pipeline = struct
     in
     Ok { transformer_name = name; fit_transform }
 
-  let transformer ~name transformer specification =
-    transformer_internal ~name transformer specification
+  let transformer ?route_sample_weight ~name transformer specification =
+    transformer_internal ?route_sample_weight ~name transformer specification
 
   let estimator_internal (type specification target prediction fitted) ?encode
-      ~name
+      ?resolve_weights ~name
       (module Estimator : ESTIMATOR
         with type t = specification
          and type target = target
@@ -210,6 +214,11 @@ module Pipeline = struct
       }
     in
     let fit ?sample_weight ~rng ~feature_schema ~x ~y () =
+      let* sample_weight =
+        match resolve_weights with
+        | None -> Ok sample_weight
+        | Some resolve -> resolve ?sample_weight y
+      in
       let* fitted =
         Estimator.fit specification ?sample_weight ~rng ~feature_schema ~x ~y ()
       in
@@ -244,6 +253,21 @@ module Pipeline = struct
       specification =
     estimator_internal ~name estimator ?decision_function ?predict_proba
       ?classes specification
+
+  let class_weight_resolver class_weight ?sample_weight y =
+    Result.map Option.some
+      (Modelkit_class_weight.Class_weight.resolve class_weight ?sample_weight y)
+
+  let classifier_internal ?encode ?class_weight ~name estimator
+      ?decision_function ?predict_proba ?classes specification =
+    estimator_internal ?encode
+      ?resolve_weights:(Option.map class_weight_resolver class_weight)
+      ~name estimator ?decision_function ?predict_proba ?classes specification
+
+  let classifier ?class_weight ~name estimator ?decision_function ?predict_proba
+      ?classes specification =
+    classifier_internal ?class_weight ~name estimator ?decision_function
+      ?predict_proba ?classes specification
 
   let empty = { reversed_transformers = []; names = [] }
 
@@ -300,7 +324,7 @@ module Pipeline = struct
         in
         let* fitted, transformed, output_schema =
           with_stage transformer.transformer_name
-            (transformer.fit_transform ~rng:stage_rng
+            (transformer.fit_transform ~sample_weight ~rng:stage_rng
                ~feature_schema:current_schema ~x:current_x)
         in
         fit_transformers (index + 1) output_schema transformed

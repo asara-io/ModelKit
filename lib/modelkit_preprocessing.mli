@@ -5,6 +5,9 @@ module Preprocessing_internal : sig
   val reject_sample_weight :
     string -> Sample_weight.t option -> (unit, Error.t) result
 
+  val validate_sample_weight :
+    string -> Matrix.t -> Sample_weight.t option -> (unit, Error.t) result
+
   val validate_fit_input :
     operation:string ->
     allow_nan:bool ->

@@ -51,7 +51,10 @@ module Artifact : sig
     name:string -> Simple_imputer.t -> (Pipeline.transformer, Error.t) result
 
   val standard_scaler_stage :
-    name:string -> Standard_scaler.t -> (Pipeline.transformer, Error.t) result
+    ?route_sample_weight:bool ->
+    name:string ->
+    Standard_scaler.t ->
+    (Pipeline.transformer, Error.t) result
 
   val variance_threshold_stage :
     name:string ->
@@ -73,6 +76,7 @@ module Artifact : sig
     result
 
   val logistic_regression_estimator :
+    ?class_weight:Modelkit_class_weight.Class_weight.t ->
     name:string ->
     Logistic_regression.t ->
     ( ( Target.classification Target.t,

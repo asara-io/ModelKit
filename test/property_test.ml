@@ -1301,6 +1301,39 @@ let sgd_ordered_batches_compose =
       | Ok regression, Ok classification -> regression && classification
       | Error _, _ | _, Error _ -> false)
 
+let balanced_class_weights_equalize_class_mass =
+  QCheck.Test.make ~count:300
+    ~name:"balanced class weights give every class equal total weight"
+    QCheck.(pair (array nat_small) (int_range 2 4))
+    (fun (raw, class_count) ->
+      let samples = class_count + Array.length raw in
+      let labels =
+        Array.init samples (fun row ->
+            if row < class_count then row
+            else raw.(row - class_count) mod class_count)
+      in
+      let sample_weight =
+        Result.get_ok
+          (Sample_weight.of_array ~expected_length:samples
+             (Array.init samples (fun row -> 1.0 +. Float.of_int (row mod 3))))
+      in
+      let y = Target.classification labels in
+      match Class_weight.resolve Class_weight.balanced ~sample_weight y with
+      | Error _ -> false
+      | Ok resolved ->
+          let totals = Array.make class_count 0.0 in
+          let original = ref 0.0 in
+          Array.iteri
+            (fun row label ->
+              totals.(label) <- totals.(label) +. Sample_weight.get resolved row;
+              original := !original +. Sample_weight.get sample_weight row)
+            labels;
+          let resolved_total = Array.fold_left ( +. ) 0.0 totals in
+          Array.for_all
+            (fun total -> Float.abs (total -. totals.(0)) <= 1e-9 *. totals.(0))
+            totals
+          && Float.abs (resolved_total -. !original) <= 1e-9 *. !original)
+
 let ranking_curves_are_monotone =
   QCheck.Test.make ~count:500
     ~name:"ROC and precision-recall curve axes are monotone"
@@ -1381,6 +1414,7 @@ let () =
         sgd_classifier_fit_matches_checkpoint_continuation;
         sgd_log_loss_probabilities_are_simplex;
         sgd_ordered_batches_compose;
+        balanced_class_weights_equalize_class_mass;
         logistic_probabilities_are_complementary;
         ridge_classifier_binary_scores_are_opposites;
         ridge_classifier_is_equivariant_to_ordered_label_renaming;

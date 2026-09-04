@@ -340,6 +340,11 @@ def generate_preprocessing_fixture(fixture_dir: Path) -> None:
     threshold = 1.5
     selector = VarianceThreshold(threshold=threshold).fit(mean_output)
     selected_output = selector.transform(mean_output)
+    scaler_sample_weight = np.array([1.0, 2.0, 0.5, 3.0, 0.0], dtype=np.float64)
+    weighted_scaler = StandardScaler().fit(
+        mean_output, sample_weight=scaler_sample_weight
+    )
+    weighted_scaled_output = weighted_scaler.transform(mean_output)
 
     rows = ["# ModelKit sklearn preprocessing reference fixture v1"]
 
@@ -365,6 +370,11 @@ def generate_preprocessing_fixture(fixture_dir: Path) -> None:
     add_vector("feature_variances", selector.variances_)
     add_vector("selected_indices", np.flatnonzero(selector.get_support()))
     add_matrix("selected_output", selected_output)
+    add_vector("scaler_sample_weight", scaler_sample_weight)
+    add_vector("weighted_scaler_mean", weighted_scaler.mean_)
+    add_vector("weighted_scaler_variance", weighted_scaler.var_)
+    add_vector("weighted_scaler_scale", weighted_scaler.scale_)
+    add_matrix("weighted_scaled_output", weighted_scaled_output)
 
     data_path = fixture_dir / "preprocessing_v1.tsv"
     metadata_path = fixture_dir / "preprocessing_v1.metadata.json"
@@ -1306,6 +1316,155 @@ def generate_sgd_classifier_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_class_weight_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.linear_model import LogisticRegression, RidgeClassifier
+    from sklearn.utils.class_weight import compute_class_weight
+
+    x_train = np.array(
+        [
+            [-2.0, 0.5, 1.0],
+            [-1.0, -1.5, 0.0],
+            [0.0, 2.0, -0.5],
+            [1.0, -0.5, 2.0],
+            [2.0, 1.5, 1.0],
+            [3.0, -2.0, -1.0],
+            [4.0, 0.25, 0.5],
+            [5.0, 2.5, -2.0],
+        ],
+        dtype=np.float64,
+    )
+    x_predict = np.array(
+        [
+            [-1.5, 0.0, 0.5],
+            [0.5, 1.0, -1.0],
+            [2.5, -1.0, 1.5],
+            [6.0, 0.75, -0.25],
+        ],
+        dtype=np.float64,
+    )
+    binary = np.array([-4, -4, -4, 2, -4, -4, 2, -4], dtype=np.int64)
+    multiclass = np.array([-4, -4, 2, 2, 9, -4, 9, 9], dtype=np.int64)
+    sample_weight = np.array(
+        [1.0, 2.0, 0.5, 3.0, 1.5, 0.75, 2.5, 1.25], dtype=np.float64
+    )
+    explicit = {-4: 0.5, 2: 3.0}
+    c = 1.7
+    tolerance = 1e-12
+    max_iterations = 1000
+    alpha = 0.7
+
+    rows = ["# ModelKit sklearn class-weight reference fixture v1"]
+
+    def add_matrix(name: str, matrix) -> None:
+        for index, row in enumerate(matrix):
+            rows.append(f"{name}\t{index}\t{float_values(row)}")
+
+    def add_vector(name: str, values) -> None:
+        rows.append(f"{name}\t{float_values(values)}")
+
+    def logistic(class_weight):
+        return LogisticRegression(
+            C=c,
+            fit_intercept=True,
+            solver="lbfgs",
+            tol=tolerance,
+            max_iter=max_iterations,
+            class_weight=class_weight,
+        )
+
+    add_matrix("x_train", x_train)
+    add_matrix("x_predict", x_predict)
+    add_vector("binary_target", binary)
+    add_vector("multiclass_target", multiclass)
+    add_vector("sample_weight", sample_weight)
+    add_vector("explicit_classes", list(explicit.keys()))
+    add_vector("explicit_weights", list(explicit.values()))
+    add_vector("c", [c])
+    add_vector("tolerance", [tolerance])
+    add_vector("max_iterations", [max_iterations])
+    add_vector("alpha", [alpha])
+    add_vector(
+        "balanced_class_weights",
+        compute_class_weight(
+            "balanced", classes=np.unique(binary), y=binary, sample_weight=sample_weight
+        ),
+    )
+    add_vector(
+        "unweighted_balanced_class_weights",
+        compute_class_weight("balanced", classes=np.unique(binary), y=binary),
+    )
+    balanced_logistic = logistic("balanced").fit(
+        x_train, binary, sample_weight=sample_weight
+    )
+    add_matrix("balanced_logistic_coefficients", balanced_logistic.coef_)
+    add_vector("balanced_logistic_intercept", balanced_logistic.intercept_)
+    add_matrix(
+        "balanced_logistic_probabilities",
+        balanced_logistic.predict_proba(x_predict),
+    )
+    explicit_logistic = logistic(explicit).fit(
+        x_train, binary, sample_weight=sample_weight
+    )
+    add_matrix("explicit_logistic_coefficients", explicit_logistic.coef_)
+    add_vector("explicit_logistic_intercept", explicit_logistic.intercept_)
+    add_matrix(
+        "explicit_logistic_probabilities",
+        explicit_logistic.predict_proba(x_predict),
+    )
+    balanced_multinomial = logistic("balanced").fit(
+        x_train, multiclass, sample_weight=sample_weight
+    )
+    add_matrix("balanced_multinomial_coefficients", balanced_multinomial.coef_)
+    add_vector("balanced_multinomial_intercepts", balanced_multinomial.intercept_)
+    add_matrix(
+        "balanced_multinomial_probabilities",
+        balanced_multinomial.predict_proba(x_predict),
+    )
+    # RidgeClassifier derives balanced weights from unweighted counts, so the
+    # ridge case is generated without sample weights where both definitions
+    # agree.
+    balanced_ridge = RidgeClassifier(alpha=alpha, class_weight="balanced").fit(
+        x_train, multiclass
+    )
+    add_matrix("balanced_ridge_coefficients", balanced_ridge.coef_)
+    add_vector("balanced_ridge_intercepts", balanced_ridge.intercept_)
+    add_matrix("balanced_ridge_decisions", balanced_ridge.decision_function(x_predict))
+
+    data_path = fixture_dir / "class_weight_v1.tsv"
+    metadata_path = fixture_dir / "class_weight_v1.metadata.json"
+    data_path.write_text("\n".join(rows) + "\n", encoding="utf-8", newline="\n")
+    metadata = {
+        "configuration": {
+            "alpha": alpha,
+            "c": c,
+            "explicit_class_weight": {str(k): v for k, v in explicit.items()},
+            "features": x_train.shape[1],
+            "max_iterations": max_iterations,
+            "prediction_samples": x_predict.shape[0],
+            "samples": x_train.shape[0],
+            "solver": "lbfgs",
+            "tolerance": tolerance,
+            "weighted": True,
+        },
+        "environment": environment.metadata(),
+        "fixture": "class_weight_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.linear_model.LogisticRegression",
+            "sklearn.linear_model.RidgeClassifier",
+            "sklearn.utils.class_weight.compute_class_weight",
+        ],
+        "schema_version": 1,
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
@@ -1322,6 +1481,7 @@ def main() -> None:
     generate_glm_fixture(fixture_dir)
     generate_sgd_regressor_fixture(fixture_dir)
     generate_sgd_classifier_fixture(fixture_dir)
+    generate_class_weight_fixture(fixture_dir)
 
 
 if __name__ == "__main__":

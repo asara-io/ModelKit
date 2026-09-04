@@ -20,6 +20,19 @@ module Preprocessing_internal = struct
         (Error.make ~remediation:"provide features with the fitted schema"
            (Error.Feature_schema_mismatch { expected; observed }))
 
+  let validate_sample_weight transformer x = function
+    | None -> Ok ()
+    | Some weights ->
+        let expected = Matrix.rows x in
+        let observed = Sample_weight.length weights in
+        if expected = observed then Ok ()
+        else
+          Error
+            (Error.of_data_error
+               ~remediation:"provide one sample weight per training row"
+               (Data_error.Length_mismatch
+                  { name = transformer ^ " sample weights"; expected; observed }))
+
   let reject_sample_weight transformer = function
     | None -> Ok ()
     | Some _ ->
@@ -119,36 +132,81 @@ module Preprocessing_internal = struct
           (numerical_error ~operation schema column
              "the fitted mean is not finite")
 
-  let column_moments ~operation schema x column =
+  (* Weighted West/Welford moments over positively weighted rows; the
+     unweighted path keeps the historical arithmetic so fitted values remain
+     byte-stable. *)
+  let weighted_column_moments ~operation schema weights x column =
     let rows = Matrix.rows x in
-    if rows = 0 then Error (no_observations ~operation schema column)
+    let maximum = ref 0.0 in
+    let total = ref 0.0 in
+    for row = 0 to rows - 1 do
+      if Sample_weight.get weights row > 0.0 then (
+        total := !total +. Sample_weight.get weights row;
+        maximum := Float.max !maximum (Float.abs (Matrix.get x row column)))
+    done;
+    if !total <= 0.0 then Error (no_observations ~operation schema column)
+    else if !maximum = 0.0 then Ok (0.0, 0.0)
     else
-      let maximum = ref 0.0 in
+      let mean = ref 0.0 in
+      let m2 = ref 0.0 in
+      let accumulated = ref 0.0 in
       for row = 0 to rows - 1 do
-        maximum := Float.max !maximum (Float.abs (Matrix.get x row column))
-      done;
-      if !maximum = 0.0 then Ok (0.0, 0.0)
-      else
-        let mean = ref 0.0 in
-        let m2 = ref 0.0 in
-        for row = 0 to rows - 1 do
-          let count = Float.of_int (row + 1) in
+        let weight = Sample_weight.get weights row in
+        if weight > 0.0 then (
+          accumulated := !accumulated +. weight;
           let value = Matrix.get x row column /. !maximum in
           let delta = value -. !mean in
-          mean := !mean +. (delta /. count);
-          let delta_after_update = value -. !mean in
-          m2 := !m2 +. (delta *. delta_after_update)
-        done;
-        let mean = !mean *. !maximum in
-        let normalized_variance = Float.max 0.0 (!m2 /. Float.of_int rows) in
-        let standard_deviation = Float.sqrt normalized_variance *. !maximum in
-        let variance = standard_deviation *. standard_deviation in
-        if Float.is_finite mean && Float.is_finite variance then
-          Ok (mean, variance)
+          mean := !mean +. (weight /. !accumulated *. delta);
+          m2 := !m2 +. (weight *. delta *. (value -. !mean)))
+      done;
+      let mean = !mean *. !maximum in
+      let normalized_variance = Float.max 0.0 (!m2 /. !accumulated) in
+      let standard_deviation = Float.sqrt normalized_variance *. !maximum in
+      let variance = standard_deviation *. standard_deviation in
+      if Float.is_finite mean && Float.is_finite variance then
+        Ok (mean, variance)
+      else
+        Error
+          (numerical_error ~operation schema column
+             "weighted moments overflowed")
+
+  let column_moments ?sample_weight ~operation schema x column =
+    let rows = Matrix.rows x in
+    match sample_weight with
+    | Some weights -> weighted_column_moments ~operation schema weights x column
+    | None ->
+        if rows = 0 then Error (no_observations ~operation schema column)
         else
-          Error
-            (numerical_error ~operation schema column
-               "the fitted mean or variance is not finite")
+          let maximum = ref 0.0 in
+          for row = 0 to rows - 1 do
+            maximum := Float.max !maximum (Float.abs (Matrix.get x row column))
+          done;
+          if !maximum = 0.0 then Ok (0.0, 0.0)
+          else
+            let mean = ref 0.0 in
+            let m2 = ref 0.0 in
+            for row = 0 to rows - 1 do
+              let count = Float.of_int (row + 1) in
+              let value = Matrix.get x row column /. !maximum in
+              let delta = value -. !mean in
+              mean := !mean +. (delta /. count);
+              let delta_after_update = value -. !mean in
+              m2 := !m2 +. (delta *. delta_after_update)
+            done;
+            let mean = !mean *. !maximum in
+            let normalized_variance =
+              Float.max 0.0 (!m2 /. Float.of_int rows)
+            in
+            let standard_deviation =
+              Float.sqrt normalized_variance *. !maximum
+            in
+            let variance = standard_deviation *. standard_deviation in
+            if Float.is_finite mean && Float.is_finite variance then
+              Ok (mean, variance)
+            else
+              Error
+                (numerical_error ~operation schema column
+                   "the fitted mean or variance is not finite")
 
   let matrix ~rows ~columns f =
     match Matrix.init ~rows ~columns f with
@@ -309,11 +367,11 @@ module Standard_scaler = struct
 
   let fit specification ?sample_weight ~rng:_ ~feature_schema ~x ~y:_ () =
     let open Preprocessing_internal in
-    let* () = reject_sample_weight "standard scaler" sample_weight in
     let* () =
       validate_fit_input ~operation:"standard scaler" ~allow_nan:false
         feature_schema x
     in
+    let* () = validate_sample_weight "standard scaler" x sample_weight in
     let columns = Matrix.columns x in
     let means = Array.make columns 0.0 in
     let variances = Array.make columns 0.0 in
@@ -322,8 +380,8 @@ module Standard_scaler = struct
       if column = columns then Ok ()
       else
         let* mean, variance =
-          column_moments ~operation:"standard scaler fit" feature_schema x
-            column
+          column_moments ?sample_weight ~operation:"standard scaler fit"
+            feature_schema x column
         in
         means.(column) <- mean;
         variances.(column) <- variance;
