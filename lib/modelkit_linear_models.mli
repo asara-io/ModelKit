@@ -55,6 +55,8 @@ module Linear_model_internal : sig
     Matrix.t -> Sample_weight.t option -> (unit, Error.t) result
 
   val weight : Sample_weight.t option -> int -> float
+  val stable_sigmoid : float -> float
+  val softplus : float -> float
 
   val solve_least_squares :
     operation:string ->

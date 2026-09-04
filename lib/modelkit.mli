@@ -1475,6 +1475,167 @@ module Sgd_regressor : sig
        and type rng = Rng.t
 end
 
+(** Incremental linear classification trained by stochastic gradient descent.
+
+    Penalties, learning-rate schedules, stopping reasons, batch semantics, and
+    checkpoint immutability follow {!Sgd_regressor}; the shared variant types
+    are re-exported so schedule values interoperate. [start] additionally
+    registers the complete class set for the stream: labels are sorted into
+    ascending order, must be distinct, and must number at least two. Every
+    positively weighted row of a later batch must carry a registered class or
+    [partial_fit] returns a typed validation error; zero-weight rows are never
+    inspected because they cannot change the parameters. [fit] registers the
+    positively weighted classes of its single matrix, matching the other
+    built-in classifiers.
+
+    Two registered classes train one model whose positive class is the higher
+    label; three or more train one one-versus-rest model per ascending class.
+    All models share the update counter, learning rate, and per-batch
+    permutation, and each row updates every model before the counter advances.
+    [Hinge] uses the margin loss [max 0 (1 - y * score)] with [y] in [-1, +1];
+    [Log_loss] uses the stable binomial deviance with gradient
+    [sigmoid score - y] for [y] in [0, 1]. Sample weights scale the loss
+    gradient without normalizing individual updates; intercepts are never
+    penalized. The reported objective is the weighted mean over rows of the
+    summed per-model loss plus the declared penalty over all coefficient rows.
+
+    {!Sgd_classifier.coefficients} has one row for binary problems and one row
+    per class otherwise, and {!Sgd_classifier.decision_function} returns one
+    column per model in the same order. Binary prediction selects the higher
+    class when its score is strictly positive; multiclass prediction takes the
+    first maximum score, so exact ties select the lowest label.
+    {!Sgd_classifier.binary_decision_function} exposes the single binary score
+    column as a vector for pipeline dispatch and returns a typed compatibility
+    error for multiclass models. {!Sgd_classifier.predict_proba} is available
+    only for [Log_loss]: binary probabilities are the sigmoid of the score and
+    its complement, and multiclass probabilities normalize the one-versus-rest
+    sigmoids, becoming uniform when every sigmoid underflows.
+
+    One batch costs [O(n * m * p)] time and [O(n + m * p)] temporary storage for
+    [n] samples, [m] models, and [p] features. Checkpoints and fitted values
+    store [O(m * p)] data and are in-memory training state, not a persistent
+    artifact format. *)
+module Sgd_classifier : sig
+  type penalty = Sgd_regressor.penalty = No_penalty | L1 | L2 | Elastic_net
+
+  type learning_rate = Sgd_regressor.learning_rate =
+    | Constant
+    | Inverse_scaling of { power_t : float }
+
+  type stopping_reason = Sgd_regressor.stopping_reason =
+    | Epoch_limit
+    | Step_tolerance
+    | Partial_fit
+
+  type loss = Hinge | Log_loss
+
+  type report = {
+    converged : bool;
+    batches_processed : int;
+    updates : int;
+    objective : float;
+    stopping_reason : stopping_reason;
+  }
+
+  type params = {
+    loss : loss;
+    penalty : penalty;
+    alpha : float;
+    l1_ratio : float;
+    fit_intercept : bool;
+    learning_rate : learning_rate;
+    eta0 : float;
+    max_epochs : int;
+    tolerance : float option;
+    shuffle : bool;
+  }
+
+  type t
+  type fitted
+  type checkpoint
+
+  val create :
+    ?loss:loss ->
+    ?penalty:penalty ->
+    ?alpha:float ->
+    ?l1_ratio:float ->
+    ?fit_intercept:bool ->
+    ?learning_rate:learning_rate ->
+    ?eta0:float ->
+    ?max_epochs:int ->
+    ?tolerance:float ->
+    ?shuffle:bool ->
+    unit ->
+    (t, Error.t) result
+
+  val start :
+    t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    classes:int array ->
+    (checkpoint, Error.t) result
+  (** Registers the distinct class labels and starts a zero-initialized
+      checkpoint without consuming the RNG. *)
+
+  val partial_fit :
+    checkpoint ->
+    ?sample_weight:Sample_weight.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:Target.classification Target.t ->
+    unit ->
+    (checkpoint, Error.t) result
+
+  val to_fitted : checkpoint -> (fitted, Error.t) result
+  (** Returns a prediction-ready snapshot after at least one batch. *)
+
+  val checkpoint : fitted -> checkpoint
+  (** Returns an independent checkpoint suitable for further training. *)
+
+  val checkpoint_classes : checkpoint -> int array
+  val checkpoint_updates : checkpoint -> int
+  val checkpoint_batches_processed : checkpoint -> int
+
+  val classes : fitted -> int array
+  (** Returns the registered labels in ascending order. *)
+
+  val coefficients : fitted -> Matrix.t
+  (** Returns a [1 * features] matrix for two classes and a [classes * features]
+      matrix in {!classes} order otherwise. *)
+
+  val intercepts : fitted -> Vector.t
+  val report : fitted -> report
+
+  val decision_function :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+  (** Returns one score column per model: a single column for two classes and
+      one column per ascending class otherwise. *)
+
+  val binary_decision_function :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Vector.t, Error.t) result
+
+  val predict_proba :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+  (** Returns a [samples * classes] matrix for [Log_loss] and a typed
+      compatibility error for [Hinge]. *)
+
+  include
+    CLASSIFIER
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
 (** Weighted binary and multiclass classification through ridge regression.
 
     Fitting sorts positively weighted classes and solves one [-1 versus +1]

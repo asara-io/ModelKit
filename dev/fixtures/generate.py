@@ -1177,6 +1177,135 @@ def generate_sgd_regressor_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_sgd_classifier_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.linear_model import SGDClassifier
+
+    x_train = np.array(
+        [
+            [-2.0, 0.5, 1.0],
+            [-1.0, -1.5, 0.0],
+            [0.0, 2.0, -0.5],
+            [1.0, -0.5, 2.0],
+            [2.0, 1.5, 1.0],
+            [3.0, -2.0, -1.0],
+            [4.0, 0.25, 0.5],
+            [5.0, 2.5, -2.0],
+        ],
+        dtype=np.float64,
+    )
+    x_predict = np.array(
+        [
+            [-1.5, 0.0, 0.5],
+            [0.5, 1.0, -1.0],
+            [2.5, -1.0, 1.5],
+            [6.0, 0.75, -0.25],
+        ],
+        dtype=np.float64,
+    )
+    sample_weight = np.array(
+        [1.0, 2.0, 0.5, 3.0, 1.5, 0.75, 2.5, 1.25], dtype=np.float64
+    )
+    targets = {
+        "binary": np.array([-4, -4, 2, 2, -4, 2, 2, -4], dtype=np.int64),
+        "multiclass": np.array([-4, -4, 2, 2, 9, -4, 9, 9], dtype=np.int64),
+    }
+    eta0 = 0.05
+    epochs = 6
+    cases = [
+        ("binary_hinge", "binary", "hinge"),
+        ("binary_log", "binary", "log_loss"),
+        ("multiclass_hinge", "multiclass", "hinge"),
+        ("multiclass_log", "multiclass", "log_loss"),
+    ]
+
+    rows = ["# ModelKit sklearn SGD-classifier reference fixture v1"]
+
+    def add_matrix(name: str, matrix) -> None:
+        for index, row in enumerate(matrix):
+            rows.append(f"{name}\t{index}\t{float_values(row)}")
+
+    def add_vector(name: str, values) -> None:
+        rows.append(f"{name}\t{float_values(values)}")
+
+    def add_model(prefix: str, model, loss: str) -> None:
+        decisions = model.decision_function(x_predict)
+        if decisions.ndim == 1:
+            decisions = decisions[:, np.newaxis]
+        add_matrix(f"{prefix}_coefficients", model.coef_)
+        add_vector(f"{prefix}_intercepts", model.intercept_)
+        add_matrix(f"{prefix}_decisions", decisions)
+        if loss == "log_loss":
+            add_matrix(f"{prefix}_probabilities", model.predict_proba(x_predict))
+        add_vector(f"{prefix}_predictions", model.predict(x_predict))
+
+    add_matrix("x_train", x_train)
+    add_matrix("x_predict", x_predict)
+    add_vector("sample_weight", sample_weight)
+    add_vector("eta0", [eta0])
+    add_vector("epochs", [epochs])
+    for name, target in targets.items():
+        add_vector(f"{name}_target", target)
+    for case, target_name, loss in cases:
+        target = targets[target_name]
+        configuration = {
+            "loss": loss,
+            "penalty": None,
+            "alpha": 0.0,
+            "fit_intercept": True,
+            "max_iter": epochs,
+            "tol": None,
+            "shuffle": False,
+            "learning_rate": "constant",
+            "eta0": eta0,
+            "average": False,
+        }
+        fitted = SGDClassifier(**configuration).fit(
+            x_train, target, sample_weight=sample_weight
+        )
+        incremental = SGDClassifier(**configuration)
+        classes = np.unique(target)
+        for _ in range(epochs):
+            incremental.partial_fit(
+                x_train, target, classes=classes, sample_weight=sample_weight
+            )
+        add_vector(f"{case}_classes", fitted.classes_)
+        add_model(f"{case}_fit", fitted, loss)
+        add_model(f"{case}_partial", incremental, loss)
+
+    data_path = fixture_dir / "sgd_classifier_v1.tsv"
+    metadata_path = fixture_dir / "sgd_classifier_v1.metadata.json"
+    data_path.write_text("\n".join(rows) + "\n", encoding="utf-8", newline="\n")
+    metadata = {
+        "configuration": {
+            "average": False,
+            "cases": [case for case, _, _ in cases],
+            "epochs": epochs,
+            "eta0": eta0,
+            "features": x_train.shape[1],
+            "fit_intercept": True,
+            "learning_rate": "constant",
+            "losses": ["hinge", "log_loss"],
+            "penalty": None,
+            "prediction_samples": x_predict.shape[0],
+            "samples": x_train.shape[0],
+            "shuffle": False,
+            "weighted": True,
+        },
+        "environment": environment.metadata(),
+        "fixture": "sgd_classifier_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "reference": "sklearn.linear_model.SGDClassifier",
+        "schema_version": 1,
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
@@ -1192,6 +1321,7 @@ def main() -> None:
     generate_multinomial_logistic_fixture(fixture_dir)
     generate_glm_fixture(fixture_dir)
     generate_sgd_regressor_fixture(fixture_dir)
+    generate_sgd_classifier_fixture(fixture_dir)
 
 
 if __name__ == "__main__":

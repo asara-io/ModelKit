@@ -1,0 +1,15 @@
+{
+  "claim_eligible": false,
+  "dataset": {
+    "features": 16,
+    "samples": 5000,
+    "seed": 2026
+  },
+  "epochs": 20,
+  "eta0": 0.001,
+  "measured_runs": 5,
+  "scenario": "sgd_classification_dense_v1",
+  "thread_limit": 1,
+  "warmup_runs": 1,
+  "workload": "sgd_classification"
+}

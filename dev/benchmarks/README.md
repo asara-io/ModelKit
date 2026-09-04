@@ -163,6 +163,48 @@ The raw report is `results/sgd_regression_dense_v1.darwin-arm64.json`; it
 records every raw run, toolchain versions, thread limits, output signatures,
 allocations, and the full scenario.
 
+## Dense SGD classification v1
+
+`sgd_classification_dense_v1` trains three weighted stochastic-gradient
+workflows on the same deterministic 5,000 by 16 float64 matrix in ModelKit and
+scikit-learn: a 20-epoch binary hinge fit with decision scores and predictions,
+a 20-epoch three-class log-loss fit with one-versus-rest probabilities and
+predictions, and the equivalent chain of 20 three-class log-loss `partial_fit`
+calls with the classes registered up front. All use input row order, no
+penalty, a constant learning rate, and unaveraged parameters. Selected update
+counts, coefficients, intercepts, decision scores, probabilities, and
+predictions must agree within `1e-7` absolute and relative tolerance before a
+report is written.
+
+The harness performs one warmup and five interleaved measured runs in fresh
+processes. Timings include runtime startup, deterministic data generation, all
+three training workflows, and inference. Peak RSS is sampled every
+millisecond, and the ModelKit worker reports OCaml heap allocation words.
+
+The committed macOS arm64 report recorded these medians:
+
+| Implementation | Wall time | Peak RSS |
+| --- | ---: | ---: |
+| ModelKit 0.4.0-dev / OCaml 5.3.0 | 0.896 s | 11,976,704 bytes |
+| scikit-learn 1.9.0 / Python 3.14.3 | 0.777 s | 127,516,672 bytes |
+
+The ModelKit worker allocated 333,347,875 OCaml words in each measured run.
+This scenario is `claim_eligible: false`: it includes process startup and data
+generation, tests one aligned learning configuration per loss, and has not run
+on the independent CI targets required for a comparative performance claim.
+
+Build and run it from the repository root:
+
+```sh
+opam exec -- dune build bench/ocaml/sgd_classifier_worker.exe
+env/bin/python dev/benchmarks/run.py \
+  --scenario dev/benchmarks/scenarios/sgd_classification_dense.json
+```
+
+The raw report is `results/sgd_classification_dense_v1.darwin-arm64.json`; it
+records every raw run, toolchain versions, thread limits, output signatures,
+allocations, and the full scenario.
+
 ## Dense ridge classification v1
 
 `ridge_classifier_dense_v1` fits weighted binary and three-class ridge

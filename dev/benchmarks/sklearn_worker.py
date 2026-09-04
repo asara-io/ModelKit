@@ -486,6 +486,91 @@ def sgd_regression(scenario: dict[str, object]) -> dict[str, object]:
     }
 
 
+def sgd_classification(scenario: dict[str, object]) -> dict[str, object]:
+    import numpy as np
+    from sklearn.linear_model import SGDClassifier
+
+    dataset = scenario["dataset"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    x = (
+        (rows * (17 + columns * 12) + columns * 31 + dataset["seed"]) % 1000
+    ).astype(np.float64)
+    x = (x / 100.0) - 5.0
+    binary = np.where(x[:, 0] + 0.25 * x[:, 1] > 1.0, 9, -4)
+    multiclass = np.where(
+        x[:, 0] + 0.25 * x[:, 1] > 1.0,
+        9,
+        np.where(x[:, 2] - 0.2 * x[:, 3] > 0.0, 2, -4),
+    )
+    sample_weight = 1.0 + (rows[:, 0] % 5).astype(np.float64) * 0.25
+
+    def configuration(loss: str) -> dict[str, object]:
+        return {
+            "loss": loss,
+            "penalty": None,
+            "alpha": 0.0,
+            "fit_intercept": True,
+            "max_iter": scenario["epochs"],
+            "tol": None,
+            "shuffle": False,
+            "learning_rate": "constant",
+            "eta0": scenario["eta0"],
+            "average": False,
+        }
+
+    hinge = SGDClassifier(**configuration("hinge")).fit(
+        x, binary, sample_weight=sample_weight
+    )
+    log_loss = SGDClassifier(**configuration("log_loss")).fit(
+        x, multiclass, sample_weight=sample_weight
+    )
+    incremental = SGDClassifier(**configuration("log_loss"))
+    classes = np.array([-4, 2, 9], dtype=np.int64)
+    for _ in range(scenario["epochs"]):
+        incremental.partial_fit(
+            x, multiclass, classes=classes, sample_weight=sample_weight
+        )
+    hinge_decisions = hinge.decision_function(x)
+    hinge_predictions = hinge.predict(x)
+    probabilities = log_loss.predict_proba(x)
+    predictions = log_loss.predict(x)
+    incremental_probabilities = incremental.predict_proba(x)
+    signature = np.asarray(
+        [
+            hinge.coef_[0, 0],
+            hinge.intercept_[0],
+            hinge_decisions[0],
+            hinge_decisions[-1],
+            hinge_predictions[0],
+            hinge_predictions[-1],
+            log_loss.coef_[0, 0],
+            log_loss.intercept_[0],
+            *probabilities[0],
+            *probabilities[-1],
+            predictions[0],
+            predictions[-1],
+            incremental_probabilities[-1, 2],
+            log_loss.t_ - 1.0,
+            incremental.t_ - 1.0,
+        ],
+        dtype="<f8",
+    )
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "features": x.shape[1],
+        "operations": [
+            "weighted_binary_hinge_sgd_fit_decision_predict",
+            "weighted_multiclass_log_loss_sgd_fit_proba_predict",
+            "weighted_multiclass_log_loss_sgd_partial_fit_proba",
+        ],
+        "samples": x.shape[0],
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
 def splitters(scenario: dict[str, object]) -> dict[str, object]:
     import numpy as np
     from sklearn.model_selection import (
@@ -857,6 +942,8 @@ def main() -> None:
         result = regularized_linear(scenario)
     elif workload == "sgd_regression":
         result = sgd_regression(scenario)
+    elif workload == "sgd_classification":
+        result = sgd_classification(scenario)
     elif workload == "splitters":
         result = splitters(scenario)
     elif workload == "metrics":

@@ -27,6 +27,10 @@
  (libraries modelkit))
 
 (executable
+ (name sgd_classifier_worker)
+ (libraries modelkit))
+
+(executable
  (name splitters_worker)
  (libraries modelkit))
 
