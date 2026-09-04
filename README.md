@@ -13,6 +13,7 @@ The full documentation is available via: [https://ocaml.org/p/modelkit/latest/do
 - Reproducible foundations with deterministic random streams and stable reference numerical operations across supported platforms, OCaml versions, and execution schedules.
 - Typed extension contracts separate immutable estimator specifications from fitted models and return actionable errors.
 - Immutable, validated float64 data primitives catch shape, feature-order, and sample-alignment problems before model code runs.
+- The optional `modelkit-nx` package admits explicitly typed Nx tensors with checked shapes, names, null masks, groups, weights, and observable copy/allocation behavior without making Raven a core dependency.
 - Checked immutable CSR matrices provide canonical sparse storage, zero-copy indexed row views, explicit materialization and payload-memory accounting, and portable dense/CSR numerical-kernel dispatch.
 - Dense datasets admit aligned features, targets, weights, groups, and names under an explicit finiteness policy; stable schema fingerprints and copy/view reports make compatibility and allocation behavior observable.
 - Immutable preprocessing specifications fit mean, median, or constant imputation, population standardization, and variance-based feature filtering without changing or losing feature identities.
@@ -59,6 +60,27 @@ let product =
 The current estimators, datasets, pipelines, and model-selection workflows still accept dense `Matrix.t` feature inputs. `One_hot_encoder.transform_csr` can produce checked sparse output directly, but sparse estimator and workflow integration is scheduled in the remaining 0.4.0 work.
 
 Dataset row views preserve ordering and duplicates without packing feature or metadata buffers. Use `Dataset.materialize` when an algorithm requires contiguous selected rows; its access report identifies the resulting copies.
+
+Development toward 0.4.0 also introduces the optional `modelkit-nx` package for moving Raven Nx tensors into these portable data contracts. It accepts rank-two float64 features, rank-one float64 regression targets and weights, rank-one int64 classification targets and groups, Boolean feature null masks, and ordered feature names. Both contiguous tensors and strided views are read in logical order. Every returned ModelKit value owns its immutable storage, and `Conversion_report` makes the retained numeric payload and any full-size staging payload explicit. Install the adapter alongside the core with `opam install modelkit-nx`; code using it opens `Modelkit_nx` separately.
+
+```ocaml
+let admitted =
+  Modelkit_nx.classification_dataset
+    ~names:[| "temperature"; "pressure" |]
+    ~feature_null_mask:nulls
+    ~sample_weight:weights
+    ~groups
+    ~x
+    ~y
+    ()
+  |> Result.get_ok
+
+let dataset = admitted.dataset
+let null_mask = admitted.feature_null_mask
+let allocation = admitted.dataset_reports
+```
+
+Explicit feature nulls are written as NaN in the admitted matrix for compatibility with existing missing-value transforms, while the separately returned `Null_mask.t` preserves which positions were source nulls rather than genuine IEEE NaNs. Unmasked infinities, null-mask shape mismatches, invalid names, non-finite targets or weights, negative weights, all-zero weights, and int64 labels outside the current platform's OCaml `int` range return typed errors. Nx remains pinned to the tested `1.0.0~alpha3` release while Raven's API is alpha; Talon admission is not implemented yet.
 
 The 0.3.2 API also provides `Simple_imputer`, `Standard_scaler`, and `Variance_threshold`. Imputation learns only from the supplied training matrix and treats NaN as the missing-value marker. Scaling uses population variance and maps constant centered features to zero with a scale of one. Variance filtering keeps columns whose variance is strictly greater than its threshold and preserves selected names in input order. These transformers reject infinities with typed errors rather than silently continuing.
 
@@ -251,7 +273,7 @@ The portable implementation is organized by responsibility:
 | `modelkit_artifact` | Versioned fitted-pipeline persistence and built-in component codecs |
 | `modelkit.ml` | Public façade retaining the stable `Modelkit.*` namespace |
 
-These units remain within the portable `modelkit` package under `lib/`; they are not separately installable packages or additional public namespaces. Dependencies flow from higher-level workflows toward data and protocol foundations. The optional `modelkit-parallel` package lives under `backends/parallel/` and depends inward on the portable core. Other ecosystem adapters and accelerated numerical backends remain reserved under `adapters/` and `backends/` as separate future packages.
+These units remain within the portable `modelkit` package under `lib/`; they are not separately installable packages or additional public namespaces. Dependencies flow from higher-level workflows toward data and protocol foundations. The optional `modelkit-parallel` package lives under `backends/parallel/` and the optional `modelkit-nx` package lives under `adapters/nx/`; both depend inward on the portable core. The Nx adapter exposes the separate `Modelkit_nx` namespace and does not add Raven to `modelkit` itself. Talon and accelerated numerical backends remain reserved under `adapters/` and `backends/` as separate future packages.
 
 ## Development
 
@@ -267,6 +289,7 @@ opam install ocamlformat.0.29.0
 opam exec -- dune build @all @runtest @doc @fmt @opam @install --auto-promote
 opam lint modelkit.opam
 opam lint modelkit-parallel.opam
+opam lint modelkit-nx.opam
 ```
 
 ### Windows

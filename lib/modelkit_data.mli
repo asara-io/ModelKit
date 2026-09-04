@@ -96,6 +96,26 @@ module Matrix : sig
   val to_bigarray : t -> bigarray
 end
 
+(** Immutable rank-two missing-value identity aligned to a feature matrix.
+
+    [true] identifies a source null. The mask is kept separately from feature
+    values so adapters can preserve the distinction between an explicit null and
+    a genuine IEEE NaN. *)
+module Null_mask : sig
+  type t
+
+  val init :
+    rows:int -> columns:int -> (int -> int -> bool) -> (t, Data_error.t) result
+
+  val of_arrays : bool array array -> (t, Data_error.t) result
+  val rows : t -> int
+  val columns : t -> int
+  val shape : t -> int * int
+  val get : t -> int -> int -> bool
+  val null_count : t -> int
+  val to_arrays : t -> bool array array
+end
+
 (** An immutable ordered selection of rows from an aligned source.
 
     Construction copies and validates the indices. Order and duplicates are
@@ -420,6 +440,33 @@ module Error : sig
 
   val pp : Format.formatter -> t -> unit
   val to_string : t -> string
+end
+
+(** Numeric payload allocation performed by one adapter conversion.
+
+    Byte counts exclude OCaml headers, allocator metadata, names, and the
+    adapter result record. [temporary_payload_bytes] counts full-size staging
+    payloads discarded after admission; [retained_payload_bytes] counts the
+    immutable payload retained by ModelKit. *)
+module Conversion_report : sig
+  type t
+
+  val create :
+    source:string ->
+    source_dtype:string ->
+    source_shape:int array ->
+    source_contiguous:bool option ->
+    temporary_payload_bytes:int64 ->
+    retained_payload_bytes:int64 ->
+    (t, Error.t) result
+
+  val source : t -> string
+  val source_dtype : t -> string
+  val source_shape : t -> int array
+  val source_contiguous : t -> bool option
+  val temporary_payload_bytes : t -> int64
+  val retained_payload_bytes : t -> int64
+  val allocated_payload_bytes : t -> int64
 end
 
 (** Shared convention for immutable configured components.

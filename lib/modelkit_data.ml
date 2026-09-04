@@ -206,6 +206,62 @@ module Matrix = struct
   let to_bigarray values = of_bigarray values
 end
 
+module Null_mask = struct
+  type t = bool array array
+
+  let dimensions_error ~rows ~columns =
+    if rows < 0 then
+      Some
+        (Data_error.Negative_dimension { name = "null-mask rows"; value = rows })
+    else if columns < 0 then
+      Some
+        (Data_error.Negative_dimension
+           { name = "null-mask columns"; value = columns })
+    else None
+
+  let init ~rows ~columns f =
+    match dimensions_error ~rows ~columns with
+    | Some error -> Error error
+    | None ->
+        Ok
+          (Array.init rows (fun row ->
+               Array.init columns (fun column -> f row column)))
+
+  let of_arrays values =
+    let rows = Array.length values in
+    let columns = if rows = 0 then 0 else Array.length values.(0) in
+    let rec validate row =
+      if row = rows then Ok (Array.map Array.copy values)
+      else
+        let observed_columns = Array.length values.(row) in
+        if observed_columns <> columns then
+          Error
+            (Data_error.Ragged_matrix
+               { row; expected_columns = columns; observed_columns })
+        else validate (row + 1)
+    in
+    validate 0
+
+  let rows = Array.length
+  let columns mask = if rows mask = 0 then 0 else Array.length mask.(0)
+  let shape mask = (rows mask, columns mask)
+
+  let get mask row column =
+    check_index ~name:"null-mask row" ~length:(rows mask) row;
+    check_index ~name:"null-mask column" ~length:(columns mask) column;
+    mask.(row).(column)
+
+  let null_count mask =
+    Array.fold_left
+      (fun count row ->
+        Array.fold_left
+          (fun count is_null -> if is_null then count + 1 else count)
+          count row)
+      0 mask
+
+  let to_arrays mask = Array.map Array.copy mask
+end
+
 module Row_view = struct
   type t = { source_size : int; indices : int array }
 
@@ -1218,4 +1274,70 @@ module Error = struct
     Format.fprintf formatter ". Remediation: %s" error.remediation
 
   let to_string error = Format.asprintf "%a" pp error
+end
+
+module Conversion_report = struct
+  type t = {
+    source : string;
+    source_dtype : string;
+    source_shape : int array;
+    source_contiguous : bool option;
+    temporary_payload_bytes : int64;
+    retained_payload_bytes : int64;
+  }
+
+  let invalid ~name ~reason =
+    Error
+      (Error.make
+         ~remediation:
+           "Provide non-empty source metadata and non-negative payload sizes."
+         (Error.Validation { name; reason }))
+
+  let create ~source ~source_dtype ~source_shape ~source_contiguous
+      ~temporary_payload_bytes ~retained_payload_bytes =
+    if String.length source = 0 then
+      invalid ~name:"conversion source" ~reason:"must not be empty"
+    else if String.length source_dtype = 0 then
+      invalid ~name:"conversion source dtype" ~reason:"must not be empty"
+    else
+      match Array.find_index (fun dimension -> dimension < 0) source_shape with
+      | Some index ->
+          invalid ~name:"conversion source shape"
+            ~reason:
+              (Format.sprintf "dimension %d is negative (%d)" index
+                 source_shape.(index))
+      | None ->
+          if Int64.compare temporary_payload_bytes 0L < 0 then
+            invalid ~name:"temporary payload bytes"
+              ~reason:"must not be negative"
+          else if Int64.compare retained_payload_bytes 0L < 0 then
+            invalid ~name:"retained payload bytes"
+              ~reason:"must not be negative"
+          else if
+            Int64.compare temporary_payload_bytes
+              (Int64.sub Int64.max_int retained_payload_bytes)
+            > 0
+          then
+            invalid ~name:"allocated payload bytes"
+              ~reason:"temporary and retained byte counts overflow int64"
+          else
+            Ok
+              {
+                source;
+                source_dtype;
+                source_shape = Array.copy source_shape;
+                source_contiguous;
+                temporary_payload_bytes;
+                retained_payload_bytes;
+              }
+
+  let source report = report.source
+  let source_dtype report = report.source_dtype
+  let source_shape report = Array.copy report.source_shape
+  let source_contiguous report = report.source_contiguous
+  let temporary_payload_bytes report = report.temporary_payload_bytes
+  let retained_payload_bytes report = report.retained_payload_bytes
+
+  let allocated_payload_bytes report =
+    Int64.add report.temporary_payload_bytes report.retained_payload_bytes
 end

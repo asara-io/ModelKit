@@ -7,6 +7,10 @@ let get_ok = function
   | Ok value -> value
   | Error error -> fail (Data_error.to_string error)
 
+let get_error_ok = function
+  | Ok value -> value
+  | Error error -> fail (Error.to_string error)
+
 type error_kind =
   | Negative_dimension
   | Ragged_matrix
@@ -68,6 +72,40 @@ let test_matrix_ownership () =
   let exported = Matrix.to_bigarray matrix in
   Bigarray.Array2.set exported 0 0 9.0;
   check (Matrix.get matrix 0 0 = 3.0) "matrix export exposed internal storage"
+
+let test_null_mask () =
+  let source = [| [| false; true |]; [| true; false |] |] in
+  let mask = get_ok (Null_mask.of_arrays source) in
+  source.(0).(1) <- false;
+  check (Null_mask.shape mask = (2, 2)) "null-mask shape is incorrect";
+  check (Null_mask.null_count mask = 2) "null-mask count is incorrect";
+  check (Null_mask.get mask 0 1) "null mask retained caller mutation";
+  let exported = Null_mask.to_arrays mask in
+  exported.(1).(0) <- false;
+  check (Null_mask.get mask 1 0) "null-mask export exposed internal storage";
+  expect_error Ragged_matrix
+    (Null_mask.of_arrays [| [| true |]; [| false; true |] |])
+
+let test_conversion_report () =
+  let source_shape = [| 2; 3 |] in
+  let report =
+    Conversion_report.create ~source:"features" ~source_dtype:"float64"
+      ~source_shape ~source_contiguous:(Some false) ~temporary_payload_bytes:8L
+      ~retained_payload_bytes:48L
+    |> get_error_ok
+  in
+  source_shape.(0) <- 9;
+  check
+    (Conversion_report.source_shape report = [| 2; 3 |])
+    "conversion report retained caller mutation";
+  let exported_shape = Conversion_report.source_shape report in
+  exported_shape.(1) <- 9;
+  check
+    (Conversion_report.source_shape report = [| 2; 3 |])
+    "conversion report exposed its shape";
+  check
+    (Conversion_report.allocated_payload_bytes report = 56L)
+    "conversion report total is incorrect"
 
 let test_row_view () =
   let indices = [| 2; 0; 2 |] in
@@ -445,6 +483,8 @@ let () =
           Alcotest.test_case "vector ownership" `Quick test_vector_ownership;
           Alcotest.test_case "matrix values" `Quick test_matrix;
           Alcotest.test_case "matrix ownership" `Quick test_matrix_ownership;
+          Alcotest.test_case "null masks" `Quick test_null_mask;
+          Alcotest.test_case "conversion reports" `Quick test_conversion_report;
           Alcotest.test_case "row views" `Quick test_row_view;
           Alcotest.test_case "CSR admission" `Quick test_csr_admission;
           Alcotest.test_case "CSR validation" `Quick test_csr_validation;

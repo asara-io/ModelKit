@@ -62,7 +62,7 @@ jobs:
         run: opam install . --deps-only
 
       - name: Verify production package build
-        run: opam exec -- dune build -p modelkit,modelkit-parallel @install
+        run: opam exec -- dune build -p modelkit,modelkit-parallel,modelkit-nx @install
 
       - name: Install test and documentation dependencies
         run: opam install . --deps-only --with-test --with-doc
@@ -71,4 +71,4 @@ jobs:
         run: opam exec -- dune build @all @runtest @doc @install
 
       - name: Verify package build
-        run: opam exec -- dune build -p modelkit,modelkit-parallel @install @runtest @doc
+        run: opam exec -- dune build -p modelkit,modelkit-parallel,modelkit-nx @install @runtest @doc

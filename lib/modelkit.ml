@@ -1,6 +1,7 @@
 module Data_error = Modelkit_data.Data_error
 module Vector = Modelkit_data.Vector
 module Matrix = Modelkit_data.Matrix
+module Null_mask = Modelkit_data.Null_mask
 module Row_view = Modelkit_data.Row_view
 module Matrix_memory = Modelkit_data.Matrix_memory
 module Csr_matrix = Modelkit_data.Csr_matrix
@@ -14,6 +15,7 @@ module Schema_fingerprint = Modelkit_data.Schema_fingerprint
 module Feature_schema = Modelkit_data.Feature_schema
 module Dataset = Modelkit_data.Dataset
 module Error = Modelkit_data.Error
+module Conversion_report = Modelkit_data.Conversion_report
 
 module type SPECIFICATION = Modelkit_protocols.SPECIFICATION
 module type ESTIMATOR = Modelkit_protocols.ESTIMATOR

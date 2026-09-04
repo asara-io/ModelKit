@@ -38,3 +38,16 @@
   (modelkit (= :version))
   (domainslib (>= 0.5.2))
   (alcotest (and :with-test (>= 1.9.0)))))
+
+(package
+ (name modelkit-nx)
+ (synopsis "Checked Nx tensor admission for ModelKit")
+ (description
+  "ModelKit Nx converts explicitly typed Nx tensors into immutable ModelKit features, targets, masks, groups, names, and weights with typed validation and allocation reports.")
+ (tags
+  (data-science machine-learning adapters tensors))
+ (depends
+  (ocaml (>= 5.2))
+  (modelkit (= :version))
+  (nx (= 1.0.0~alpha3))
+  (alcotest (and :with-test (>= 1.9.0)))))
