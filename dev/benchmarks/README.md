@@ -125,6 +125,44 @@ The raw report is
 run, toolchain versions, thread limits, output signatures, allocations, and the
 full scenario.
 
+## Dense SGD regression v1
+
+`sgd_regression_dense_v1` runs both a 20-epoch weighted squared-error fit and
+the equivalent chain of 20 `partial_fit` calls on the same deterministic 5,000
+by 16 float64 matrix in ModelKit and scikit-learn. Both use input row order, no
+penalty, a constant learning rate, and unaveraged parameters. Selected update
+counts, coefficients, intercepts, and predictions must agree within `1e-7`
+absolute and relative tolerance before a report is written.
+
+The harness performs one warmup and five interleaved measured runs in fresh
+processes. Timings include runtime startup, deterministic data generation,
+both training workflows, and prediction. Peak RSS is sampled every millisecond,
+and the ModelKit worker reports OCaml heap allocation words.
+
+The committed macOS arm64 report recorded these medians:
+
+| Implementation | Wall time | Peak RSS |
+| --- | ---: | ---: |
+| ModelKit 0.4.0-dev / OCaml 5.3.0 | 0.266 s | 8,454,144 bytes |
+| scikit-learn 1.9.0 / Python 3.14.3 | 0.730 s | 126,451,712 bytes |
+
+The ModelKit worker allocated 93,146,578 OCaml words in each measured run.
+This scenario is `claim_eligible: false`: it includes process startup and data
+generation, tests one aligned learning configuration, and has not run on the
+independent CI targets required for a comparative performance claim.
+
+Build and run it from the repository root:
+
+```sh
+opam exec -- dune build bench/ocaml/sgd_regressor_worker.exe
+env/bin/python dev/benchmarks/run.py \
+  --scenario dev/benchmarks/scenarios/sgd_regression_dense.json
+```
+
+The raw report is `results/sgd_regression_dense_v1.darwin-arm64.json`; it
+records every raw run, toolchain versions, thread limits, output signatures,
+allocations, and the full scenario.
+
 ## Dense ridge classification v1
 
 `ridge_classifier_dense_v1` fits weighted binary and three-class ridge

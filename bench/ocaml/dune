@@ -23,6 +23,10 @@
  (libraries modelkit))
 
 (executable
+ (name sgd_regressor_worker)
+ (libraries modelkit))
+
+(executable
  (name splitters_worker)
  (libraries modelkit))
 

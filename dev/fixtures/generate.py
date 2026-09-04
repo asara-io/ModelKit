@@ -1070,6 +1070,113 @@ def generate_glm_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_sgd_regressor_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.linear_model import SGDRegressor
+
+    x_train = np.array(
+        [
+            [-2.0, 0.5, 1.0],
+            [-1.0, -1.5, 0.0],
+            [0.0, 2.0, -0.5],
+            [1.0, -0.5, 2.0],
+            [2.0, 1.5, 1.0],
+            [3.0, -2.0, -1.0],
+            [4.0, 0.25, 0.5],
+            [5.0, 2.5, -2.0],
+        ],
+        dtype=np.float64,
+    )
+    target = np.array(
+        [-1.15, 0.4, -2.25, 2.6, 2.85, 8.3, 7.175, 4.0], dtype=np.float64
+    )
+    sample_weight = np.array(
+        [1.0, 2.0, 0.5, 3.0, 1.5, 0.75, 2.5, 1.25], dtype=np.float64
+    )
+    x_predict = np.array(
+        [
+            [-1.5, 0.0, 0.5],
+            [0.5, 1.0, -1.0],
+            [2.5, -1.0, 1.5],
+            [6.0, 0.75, -0.25],
+        ],
+        dtype=np.float64,
+    )
+    eta0 = 0.01
+    epochs = 6
+    configuration = {
+        "loss": "squared_error",
+        "penalty": None,
+        "alpha": 0.0,
+        "fit_intercept": True,
+        "max_iter": epochs,
+        "tol": None,
+        "shuffle": False,
+        "learning_rate": "constant",
+        "eta0": eta0,
+        "average": False,
+    }
+    fitted = SGDRegressor(**configuration).fit(
+        x_train, target, sample_weight=sample_weight
+    )
+    incremental = SGDRegressor(**configuration)
+    for _ in range(epochs):
+        incremental.partial_fit(x_train, target, sample_weight=sample_weight)
+
+    rows = ["# ModelKit sklearn SGD-regressor reference fixture v1"]
+
+    def add_matrix(name: str, matrix) -> None:
+        for index, row in enumerate(matrix):
+            rows.append(f"{name}\t{index}\t{float_values(row)}")
+
+    def add_vector(name: str, values) -> None:
+        rows.append(f"{name}\t{float_values(values)}")
+
+    add_matrix("x_train", x_train)
+    add_matrix("x_predict", x_predict)
+    add_vector("target", target)
+    add_vector("sample_weight", sample_weight)
+    add_vector("eta0", [eta0])
+    add_vector("epochs", [epochs])
+    add_vector("fit_coefficients", fitted.coef_)
+    add_vector("fit_intercept", fitted.intercept_)
+    add_vector("fit_prediction", fitted.predict(x_predict))
+    add_vector("partial_coefficients", incremental.coef_)
+    add_vector("partial_intercept", incremental.intercept_)
+    add_vector("partial_prediction", incremental.predict(x_predict))
+
+    data_path = fixture_dir / "sgd_regressor_v1.tsv"
+    metadata_path = fixture_dir / "sgd_regressor_v1.metadata.json"
+    data_path.write_text("\n".join(rows) + "\n", encoding="utf-8", newline="\n")
+    metadata = {
+        "configuration": {
+            "average": False,
+            "epochs": epochs,
+            "features": x_train.shape[1],
+            "fit_intercept": True,
+            "learning_rate": "constant",
+            "loss": "squared_error",
+            "penalty": None,
+            "prediction_samples": x_predict.shape[0],
+            "samples": x_train.shape[0],
+            "shuffle": False,
+            "weighted": True,
+            "eta0": eta0,
+        },
+        "environment": environment.metadata(),
+        "fixture": "sgd_regressor_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "reference": "sklearn.linear_model.SGDRegressor",
+        "schema_version": 1,
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
@@ -1084,6 +1191,7 @@ def main() -> None:
     generate_ridge_classifier_fixture(fixture_dir)
     generate_multinomial_logistic_fixture(fixture_dir)
     generate_glm_fixture(fixture_dir)
+    generate_sgd_regressor_fixture(fixture_dir)
 
 
 if __name__ == "__main__":

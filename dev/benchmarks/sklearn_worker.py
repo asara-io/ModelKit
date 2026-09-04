@@ -418,6 +418,74 @@ def regularized_linear(scenario: dict[str, object]) -> dict[str, object]:
     }
 
 
+def sgd_regression(scenario: dict[str, object]) -> dict[str, object]:
+    import numpy as np
+    from sklearn.linear_model import SGDRegressor
+
+    dataset = scenario["dataset"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    x = (
+        (rows * (17 + columns * 12) + columns * 31 + dataset["seed"]) % 1000
+    ).astype(np.float64)
+    x = (x / 100.0) - 5.0
+    target = (
+        2.0
+        + 1.5 * x[:, 0]
+        - 0.8 * x[:, 1]
+        + 0.3 * x[:, 2]
+        + ((rows[:, 0] % 7).astype(np.float64) - 3.0) * 0.02
+    )
+    sample_weight = 1.0 + (rows[:, 0] % 5).astype(np.float64) * 0.25
+    configuration = {
+        "loss": "squared_error",
+        "penalty": None,
+        "alpha": 0.0,
+        "fit_intercept": True,
+        "max_iter": scenario["epochs"],
+        "tol": None,
+        "shuffle": False,
+        "learning_rate": "constant",
+        "eta0": scenario["eta0"],
+        "average": False,
+    }
+    fitted = SGDRegressor(**configuration).fit(
+        x, target, sample_weight=sample_weight
+    )
+    incremental = SGDRegressor(**configuration)
+    for _ in range(scenario["epochs"]):
+        incremental.partial_fit(x, target, sample_weight=sample_weight)
+    predictions = fitted.predict(x)
+    incremental_predictions = incremental.predict(x)
+    signature = np.asarray(
+        [
+            fitted.coef_[0],
+            fitted.intercept_[0],
+            predictions[0],
+            predictions[-1],
+            incremental.coef_[0],
+            incremental.intercept_[0],
+            incremental_predictions[0],
+            incremental_predictions[-1],
+            fitted.t_ - 1.0,
+            incremental.t_ - 1.0,
+        ],
+        dtype="<f8",
+    )
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "features": x.shape[1],
+        "operations": [
+            "weighted_sgd_regressor_fit_predict",
+            "weighted_sgd_regressor_partial_fit_predict",
+        ],
+        "samples": x.shape[0],
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
 def splitters(scenario: dict[str, object]) -> dict[str, object]:
     import numpy as np
     from sklearn.model_selection import (
@@ -787,6 +855,8 @@ def main() -> None:
         result = glm(scenario)
     elif workload == "regularized_linear":
         result = regularized_linear(scenario)
+    elif workload == "sgd_regression":
+        result = sgd_regression(scenario)
     elif workload == "splitters":
         result = splitters(scenario)
     elif workload == "metrics":

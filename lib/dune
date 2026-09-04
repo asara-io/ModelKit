@@ -13,5 +13,6 @@
   modelkit_preprocessing
   modelkit_protocols
   modelkit_regularized_linear
+  modelkit_sgd
   modelkit_splitting
   modelkit_transforms))

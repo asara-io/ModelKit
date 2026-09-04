@@ -1372,6 +1372,109 @@ module Elastic_net_path : sig
     fitted -> index:int -> (Elastic_net_regression.fitted, Error.t) result
 end
 
+(** Incremental scalar regression trained by stochastic gradient descent.
+
+    A specification is immutable. [start] creates an opaque zero-initialized
+    checkpoint that owns its RNG continuation, and each [partial_fit] call
+    processes the supplied non-empty batch exactly once before returning a new
+    checkpoint. The input checkpoint remains unchanged. When [shuffle] is false,
+    rows retain input order and the RNG is not advanced; when true, each batch
+    uses a deterministic Fisher-Yates permutation from the checkpoint's current
+    stream and stores the successor stream.
+
+    [fit] implements the common estimator protocol by processing one matrix for
+    at most [max_epochs] passes. Omitting [tolerance] requests exactly that
+    fixed epoch budget. Supplying it stops when the largest parameter change in
+    an epoch is at most [tolerance] times the largest absolute parameter or one;
+    exhaustion then returns a typed convergence error. A fitted value produced
+    from a checkpoint reports [Partial_fit] and remains resumable through
+    [checkpoint].
+
+    The squared-error data gradient is multiplied by the sample weight without
+    normalizing individual online updates. The reported objective uses weighted
+    mean half-squared error plus the declared coefficient penalty. Intercepts
+    are never penalized. [No_penalty], [L1], [L2], and [Elastic_net] use a
+    proximal per-sample update; [l1_ratio] controls the L1 share only for
+    [Elastic_net].
+
+    One batch costs [O(n * p)] time and [O(n + p)] temporary storage for [n]
+    samples and [p] features. Checkpoints and fitted values store [O(p)] data.
+    Checkpoints are in-memory training state, not a persistent artifact format.
+*)
+module Sgd_regressor : sig
+  type penalty = No_penalty | L1 | L2 | Elastic_net
+  type learning_rate = Constant | Inverse_scaling of { power_t : float }
+  type stopping_reason = Epoch_limit | Step_tolerance | Partial_fit
+
+  type report = {
+    converged : bool;
+    batches_processed : int;
+    updates : int;
+    objective : float;
+    stopping_reason : stopping_reason;
+  }
+
+  type params = {
+    penalty : penalty;
+    alpha : float;
+    l1_ratio : float;
+    fit_intercept : bool;
+    learning_rate : learning_rate;
+    eta0 : float;
+    max_epochs : int;
+    tolerance : float option;
+    shuffle : bool;
+  }
+
+  type t
+  type fitted
+  type checkpoint
+
+  val create :
+    ?penalty:penalty ->
+    ?alpha:float ->
+    ?l1_ratio:float ->
+    ?fit_intercept:bool ->
+    ?learning_rate:learning_rate ->
+    ?eta0:float ->
+    ?max_epochs:int ->
+    ?tolerance:float ->
+    ?shuffle:bool ->
+    unit ->
+    (t, Error.t) result
+
+  val start : t -> rng:Rng.t -> feature_schema:Feature_schema.t -> checkpoint
+  (** Starts a zero-initialized checkpoint without consuming the RNG. *)
+
+  val partial_fit :
+    checkpoint ->
+    ?sample_weight:Sample_weight.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:Target.regression Target.t ->
+    unit ->
+    (checkpoint, Error.t) result
+
+  val to_fitted : checkpoint -> (fitted, Error.t) result
+  (** Returns a prediction-ready snapshot after at least one batch. *)
+
+  val checkpoint : fitted -> checkpoint
+  (** Returns an independent checkpoint suitable for further training. *)
+
+  val checkpoint_updates : checkpoint -> int
+  val checkpoint_batches_processed : checkpoint -> int
+  val coefficients : fitted -> Vector.t
+  val intercept : fitted -> float
+  val report : fitted -> report
+
+  include
+    REGRESSOR
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
 (** Weighted binary and multiclass classification through ridge regression.
 
     Fitting sorts positively weighted classes and solves one [-1 versus +1]
