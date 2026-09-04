@@ -437,7 +437,11 @@ val positive_probabilities : Vector.t = <abstr>
 ]}
 
 The current pipeline routes targets and sample weights to its terminal
-estimator. Its unsupervised preprocessing stages receive neither. External
+estimator. Its unsupervised preprocessing stages receive no targets and receive
+sample weights only when packaged with [~route_sample_weight:true]; the
+standard scaler then fits weighted moments. {!Modelkit.Pipeline.classifier}
+additionally resolves an optional {!Modelkit.Class_weight.t} on each fit's own
+rows before the terminal classifier sees the weights. External
 estimators can also participate by implementing {!Modelkit.ESTIMATOR}. Because
 arbitrary extension modules may close over behavior that has no reviewed data
 codec, pipelines intended for persistence use the artifact-aware built-in

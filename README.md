@@ -177,7 +177,19 @@ let restored =
 
 `Artifact.save_binary_classification` and `Artifact.load_binary_classification` provide file convenience functions; regression has matching APIs. Artifacts retain fitted values, feature schemas, solver reports, and optional non-secret training metadata, but never training observations, closures, commands, or `Marshal` data. The versioned binary format uses canonical big-endian integers and IEEE-754 values, a declared MD5 corruption checksum, and configurable byte, component, feature, string, and metadata limits. MD5 is used only to detect accidental corruption and does not authenticate or encrypt an artifact. The format is experimental during ModelKit 0.x, with a committed golden reader retained for each released schema. Pipelines assembled through the general extension constructors remain usable in memory; encoding returns a typed error when any component has no reviewed artifact codec.
 
-In the current pipeline contract, sample weights route to the terminal estimator and are not passed to the current unsupervised transformers. General transformer metadata routing remains planned for a later milestone.
+Sample weights always route to the terminal estimator. A transformer stage receives them only when packaged with `~route_sample_weight:true`, which keeps stages that reject weights, such as the imputer, from failing on weighted datasets while letting `Standard_scaler` fit weighted means and population variances; the artifact-aware `Artifact.standard_scaler_stage` accepts the same flag. General metadata routing through nested consumers remains planned for a later milestone.
+
+`Class_weight` turns a `Balanced` or `Explicit` class-weight specification into per-row sample weights. `Pipeline.classifier` and `Artifact.logistic_regression_estimator` accept `~class_weight` and resolve it on each fit's own labels and sample weights, so balanced weights under cross-validation and grid search are computed from the training fold alone. Balanced weights follow scikit-learn's `total / (classes * class_total)` rule over weighted class frequencies, explicit weights default unlisted labels to one, and zero-weight rows stay zero.
+
+```ocaml
+let balanced =
+  Pipeline.classifier ~class_weight:Class_weight.balanced ~name:"model"
+    ~predict_proba:Logistic_regression.predict_proba
+    ~classes:Logistic_regression.classes
+    (module Logistic_regression)
+    (Logistic_regression.create ~c:1.0 () |> Result.get_ok)
+  |> Result.get_ok
+```
 
 `K_fold`, `Stratified_k_fold`, `Group_k_fold`, and `Time_series_split` now provide the portable splitting primitives needed by evaluation workflows. K-fold variants balance test sizes; stratification balances each integer class; group splitting prevents a group from crossing train/test boundaries; and time-series splitting uses expanding chronological training prefixes with optional gaps. Shuffled variants use ModelKit’s immutable deterministic RNG and retain source-row order in emitted views.
 
