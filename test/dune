@@ -65,6 +65,12 @@
  (libraries modelkit alcotest))
 
 (test
+ (name glm_test)
+ (modules glm_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
  (name splitter_test)
  (modules splitter_test)
  (package modelkit)
@@ -223,4 +229,16 @@
   (setenv
    MODELKIT_SKLEARN_MULTINOMIAL_LOGISTIC_FIXTURE
    %{dep:fixtures/sklearn/multinomial_logistic_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name sklearn_glm_fixture_test)
+ (modules sklearn_glm_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/glm_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_SKLEARN_GLM_FIXTURE
+   %{dep:fixtures/sklearn/glm_v1.tsv}
    (run %{test}))))

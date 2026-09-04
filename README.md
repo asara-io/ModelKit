@@ -18,7 +18,7 @@ The full documentation is available via: [https://ocaml.org/p/modelkit/latest/do
 - Immutable preprocessing specifications fit mean, median, or constant imputation, population standardization, and variance-based feature filtering without changing or losing feature identities.
 - Portable numeric, categorical, target, interaction, and missingness transforms cover min-max, max-absolute, robust, per-sample normalization, one-hot, ordinal, label, polynomial, and missing-indicator workflows.
 - Sequential pipelines fit preprocessing only on their training input, preserve schemas through ordered stages, and dispatch prediction, decision, and probability operations through an explicitly capable terminal estimator.
-- Portable weighted ordinary least squares, ridge, lasso, elastic-net, binary and multinomial logistic regression, plus binary and multiclass ridge classification keep immutable specifications separate from fitted coefficients and solver diagnostics.
+- Portable weighted ordinary least squares, ridge, lasso, elastic-net, binary and multinomial logistic regression, Poisson and Tweedie generalized linear models, plus binary and multiclass ridge classification keep immutable specifications separate from fitted coefficients and solver diagnostics.
 - Deterministic K-fold, stratified K-fold, group K-fold, and expanding-window time-series splitters produce validated row views that can be explicitly materialized as aligned datasets.
 - Weighted regression and binary classification metrics provide immutable higher-is-better scorers, plotting-neutral residual, ROC, and precision–recall data, stable score aggregation, and an explicit undefined-result policy.
 - Cross-validation fits pipelines within deterministic folds and reports ordered train/test scores, CPU timings, optional fitted models and indices, and typed failures; the optional `modelkit-parallel` package adds bounded Domainslib fold execution.
@@ -84,7 +84,21 @@ Development toward 0.4.0 adds `Lasso_regression` and `Elastic_net_regression` fo
 
 `Multinomial_logistic_regression` jointly fits three or more positively weighted classes using stable softmax cross-entropy and an L2 coefficient penalty. A sum-to-zero score constraint removes softmax's non-identifiable common direction while leaving intercepts unpenalized. Coefficient rows, intercepts, decision columns, probability columns, and ascending class labels remain aligned; probabilities stay finite and normalized even when score differences are extreme. Its deterministic damped Newton solver returns one report for the joint optimization.
 
-Lasso, elastic-net, ridge classification, and multinomial logistic regression currently accept dense `Matrix.t` input through the common estimator and pipeline contracts. They do not yet have built-in artifact constructors or codecs; generally packaged pipelines remain usable in memory and return a typed unsupported-component error if artifact encoding is attempted. Multinomial logistic pipelines support prediction, probabilities, and class metadata. The current pipeline decision-function capability is vector-valued for binary estimators, so matrix-valued ridge and multinomial-logistic scores are obtained directly from their respective `decision_function` functions.
+`Poisson_regression` fits non-negative responses through a log link, while `Tweedie_regression` covers finite powers with `Auto`, `Identity`, and `Log` link selection. Automatic link selection uses identity for nonpositive powers and log for positive powers. Target validation follows the power's mathematical domain: real values for nonpositive powers, non-negative values below power two, and strictly positive values from power two onward. Both estimators normalize optional sample weights, apply `alpha` only to coefficients, expose fitted coefficients, intercepts, and solver reports, and use deterministic damped IRLS. Prediction returns a typed numerical error when the inverse link would overflow or produce an invalid mean.
+
+```ocaml
+let poisson = Poisson_regression.create ~alpha:0.1 () |> Result.get_ok
+
+let fitted =
+  Poisson_regression.fit poisson ~rng ~feature_schema ~x ~y ()
+  |> Result.get_ok
+
+let expected_counts =
+  Poisson_regression.predict fitted ~feature_schema ~x:future_x
+  |> Result.get_ok
+```
+
+Lasso, elastic-net, ridge classification, multinomial logistic regression, Poisson regression, and Tweedie regression currently accept dense `Matrix.t` input through the common estimator and pipeline contracts. They do not yet have built-in artifact constructors or codecs; generally packaged pipelines remain usable in memory and return a typed unsupported-component error if artifact encoding is attempted. Multinomial logistic pipelines support prediction, probabilities, and class metadata. The current pipeline decision-function capability is vector-valued for binary estimators, so matrix-valued ridge and multinomial-logistic scores are obtained directly from their respective `decision_function` functions.
 
 Built-in logistic regression can be installed as a pipeline terminal with its optional capabilities:
 
@@ -220,7 +234,7 @@ python dev/fixtures/generate.py
 python dev/benchmarks/run.py
 ```
 
-The committed smoke benchmark validates the measurement workflow only. The development preprocessing, dense-linear-model, ridge-classifier, multinomial-logistic, splitter, metrics, sequential and bounded-parallel cross-validation, and finite grid-search benchmarks compare ModelKit operations with pinned scikit-learn references on deterministic workloads. Build the corresponding OCaml worker and select a scenario under `dev/benchmarks/scenarios/`; the parallel cross-validation scenario records sequential and four-worker results for both runtimes so speedup, efficiency, wall time, and peak RSS can be compared. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for declared parity tolerances, scope, raw-result links, and limitations. Release comparisons will use the product plan's independent-CI benchmark contract.
+The committed smoke benchmark validates the measurement workflow only. The development preprocessing, dense-linear-model, ridge-classifier, multinomial-logistic, generalized-linear-model, splitter, metrics, sequential and bounded-parallel cross-validation, and finite grid-search benchmarks compare ModelKit operations with pinned scikit-learn references on deterministic workloads. Build the corresponding OCaml worker and select a scenario under `dev/benchmarks/scenarios/`; the parallel cross-validation scenario records sequential and four-worker results for both runtimes so speedup, efficiency, wall time, and peak RSS can be compared. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for declared parity tolerances, scope, raw-result links, and limitations. Release comparisons will use the product plan's independent-CI benchmark contract.
 
 ## Project Policies
 

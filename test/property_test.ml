@@ -723,6 +723,72 @@ let multinomial_integer_weights_match_row_replication =
             weighted duplicated
       | Error _, _ | _, Error _ -> false)
 
+let poisson_integer_weights_match_row_replication =
+  QCheck.Test.make ~count:100
+    ~name:"Poisson integer sample weights equal row replication"
+    QCheck.(triple (int_range 1 3) (int_range 1 3) (int_range 1 3))
+    (fun (first_weight, second_weight, third_weight) ->
+      let source =
+        [|
+          ([| -1.0 |], 0.5, first_weight);
+          ([| 0.0 |], 1.0, second_weight);
+          ([| 1.0 |], 2.5, third_weight);
+        |]
+      in
+      let x =
+        Array.map (fun (features, _, _) -> features) source
+        |> Matrix.of_arrays |> Result.get_ok
+      in
+      let target =
+        Array.map (fun (_, value, _) -> value) source
+        |> Vector.of_array |> Target.regression |> Result.get_ok
+      in
+      let sample_weight =
+        Array.map (fun (_, _, weight) -> Float.of_int weight) source
+        |> Sample_weight.of_array ~expected_length:(Array.length source)
+        |> Result.get_ok
+      in
+      let replicated =
+        Array.to_list source
+        |> List.concat_map (fun ((_, _, weight) as row) ->
+            List.init weight (fun _ -> row))
+        |> Array.of_list
+      in
+      let replicated_x =
+        Array.map (fun (features, _, _) -> features) replicated
+        |> Matrix.of_arrays |> Result.get_ok
+      in
+      let replicated_target =
+        Array.map (fun (_, value, _) -> value) replicated
+        |> Vector.of_array |> Target.regression |> Result.get_ok
+      in
+      let specification =
+        Poisson_regression.create ~alpha:0.3 ~tolerance:1e-10 ()
+        |> Result.get_ok
+      in
+      let fit x y sample_weight =
+        let feature_schema = Result.get_ok (Feature_schema.of_matrix x) in
+        Poisson_regression.fit specification ?sample_weight
+          ~rng:(linear_model_rng ()) ~feature_schema ~x ~y ()
+      in
+      match
+        ( fit x target (Some sample_weight),
+          fit replicated_x replicated_target None )
+      with
+      | Ok weighted, Ok repeated ->
+          let weighted_coefficient =
+            Vector.get (Poisson_regression.coefficients weighted) 0
+          in
+          let repeated_coefficient =
+            Vector.get (Poisson_regression.coefficients repeated) 0
+          in
+          Float.abs (weighted_coefficient -. repeated_coefficient) <= 1e-7
+          && Float.abs
+               (Poisson_regression.intercept weighted
+               -. Poisson_regression.intercept repeated)
+             <= 1e-7
+      | Error _, _ | _, Error _ -> false)
+
 let splitter_rng () = Rng.create (Seed.of_int 37)
 
 let k_fold_partitions_every_sample_once =
@@ -1063,6 +1129,7 @@ let () =
         ridge_classifier_is_equivariant_to_ordered_label_renaming;
         multinomial_probabilities_are_simplex_and_scores_are_centered;
         multinomial_integer_weights_match_row_replication;
+        poisson_integer_weights_match_row_replication;
         k_fold_partitions_every_sample_once;
         stratified_folds_balance_each_class;
         time_series_folds_never_train_on_the_future;
