@@ -1048,6 +1048,58 @@ let regularization_paths_are_descending_and_warm_started =
           && Float.abs (Matrix.get coefficients 0 0) <= 1e-10
           && aligned 0)
 
+let sgd_fit_matches_checkpoint_continuation =
+  QCheck.Test.make ~count:200
+    ~name:"SGD fit equals the same immutable checkpoint stream"
+    QCheck.(pair (array nat_small) (int_range 1 6))
+    (fun (raw, epochs) ->
+      let samples = 1 + Array.length raw in
+      let x =
+        Result.get_ok
+          (Matrix.init ~rows:samples ~columns:2 (fun row column ->
+               let value =
+                 if row < Array.length raw then raw.(row) else 17 + row
+               in
+               Float.of_int (((value + (column * 13)) mod 21) - 10) /. 10.0))
+      in
+      let feature_schema = Result.get_ok (Feature_schema.of_matrix x) in
+      let y =
+        Result.get_ok
+          (Target.regression
+             (Result.get_ok
+                (Vector.init ~length:samples (fun row ->
+                     0.5
+                     +. (1.2 *. Matrix.get x row 0)
+                     -. (0.4 *. Matrix.get x row 1)))))
+      in
+      let specification =
+        Result.get_ok
+          (Sgd_regressor.create ~penalty:Sgd_regressor.Elastic_net ~alpha:0.01
+             ~l1_ratio:0.25
+             ~learning_rate:(Sgd_regressor.Inverse_scaling { power_t = 0.2 })
+             ~eta0:0.01 ~max_epochs:epochs ~shuffle:true ())
+      in
+      let rng = Rng.create (Seed.of_int 2026) in
+      let rec train remaining checkpoint =
+        if remaining = 0 then Ok checkpoint
+        else
+          Result.bind
+            (Sgd_regressor.partial_fit checkpoint ~feature_schema ~x ~y ())
+            (train (remaining - 1))
+      in
+      match
+        ( Sgd_regressor.fit specification ~rng ~feature_schema ~x ~y (),
+          Result.bind
+            (train epochs
+               (Sgd_regressor.start specification ~rng ~feature_schema))
+            Sgd_regressor.to_fitted )
+      with
+      | Ok fitted, Ok resumed ->
+          Vector.to_array (Sgd_regressor.coefficients fitted)
+          = Vector.to_array (Sgd_regressor.coefficients resumed)
+          && Sgd_regressor.intercept fitted = Sgd_regressor.intercept resumed
+      | Error _, _ | _, Error _ -> false)
+
 let ranking_curves_are_monotone =
   QCheck.Test.make ~count:500
     ~name:"ROC and precision-recall curve axes are monotone"
@@ -1124,6 +1176,7 @@ let () =
         ordinary_least_squares_recovers_exact_lines;
         lasso_matches_one_dimensional_soft_threshold;
         regularization_paths_are_descending_and_warm_started;
+        sgd_fit_matches_checkpoint_continuation;
         logistic_probabilities_are_complementary;
         ridge_classifier_binary_scores_are_opposites;
         ridge_classifier_is_equivariant_to_ordered_label_renaming;
