@@ -15,6 +15,10 @@
  (libraries modelkit))
 
 (executable
+ (name glm_worker)
+ (libraries modelkit))
+
+(executable
  (name splitters_worker)
  (libraries modelkit))
 

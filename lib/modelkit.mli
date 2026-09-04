@@ -1524,6 +1524,94 @@ module Logistic_regression : sig
        and type rng = Rng.t
 end
 
+(** Weighted Poisson regression with a stable log link.
+
+    Targets must be finite and non-negative, with a positive effective mean when
+    fitting an intercept. [alpha] applies an L2 penalty to coefficients but not
+    the intercept. Deterministic damped IRLS iterations return typed numerical
+    or convergence failures rather than non-finite fitted values. Prediction
+    returns finite, strictly positive means or a typed error. *)
+module Poisson_regression : sig
+  type params = {
+    alpha : float;
+    fit_intercept : bool;
+    tolerance : float;
+    max_iterations : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?alpha:float ->
+    ?fit_intercept:bool ->
+    ?tolerance:float ->
+    ?max_iterations:int ->
+    unit ->
+    (t, Error.t) result
+
+  val coefficients : fitted -> Vector.t
+  val intercept : fitted -> float
+  val report : fitted -> Solver_report.t
+
+  include
+    REGRESSOR
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Weighted Tweedie generalized linear regression.
+
+    [power <= 0] accepts real targets, [0 < power < 2] accepts non-negative
+    targets, and [power >= 2] requires positive targets. [Auto] selects the
+    identity link for nonpositive powers and the log link for positive powers.
+    An identity-linked nonzero-power model also requires positive fitted means.
+    [alpha] penalizes coefficients but not the intercept. The portable,
+    deterministic damped IRLS solver reports checked convergence and prediction
+    rejects inverse-link overflow or out-of-domain means. *)
+module Tweedie_regression : sig
+  type link = Auto | Identity | Log
+
+  type params = {
+    power : float;
+    alpha : float;
+    fit_intercept : bool;
+    link : link;
+    tolerance : float;
+    max_iterations : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?power:float ->
+    ?alpha:float ->
+    ?fit_intercept:bool ->
+    ?link:link ->
+    ?tolerance:float ->
+    ?max_iterations:int ->
+    unit ->
+    (t, Error.t) result
+
+  val coefficients : fitted -> Vector.t
+  val intercept : fitted -> float
+
+  val resolved_link : fitted -> link
+  (** Returns [Identity] or [Log]; a fitted model never retains [Auto]. *)
+
+  val report : fitted -> Solver_report.t
+
+  include
+    REGRESSOR
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
 (** A validated train/test selection over one aligned source.
 
     Train and test rows must be non-empty, unique within each partition,

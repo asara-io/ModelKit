@@ -279,6 +279,61 @@ def multinomial_logistic(scenario: dict[str, object]) -> dict[str, object]:
     }
 
 
+def glm(scenario: dict[str, object]) -> dict[str, object]:
+    import numpy as np
+    from sklearn.linear_model import PoissonRegressor, TweedieRegressor
+
+    dataset = scenario["dataset"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    x = (
+        (rows * (17 + columns * 12) + columns * 31 + dataset["seed"]) % 1000
+    ).astype(np.float64)
+    x = (x / 100.0) - 5.0
+    raw = 0.2 + 0.08 * x[:, 0] - 0.04 * x[:, 1] + 0.03 * x[:, 2]
+    target = np.exp(raw) * (0.8 + (rows[:, 0] % 5).astype(np.float64) * 0.1)
+    sample_weight = 1.0 + (rows[:, 0] % 5).astype(np.float64) * 0.25
+    common = {
+        "alpha": scenario["alpha"],
+        "solver": scenario["solver"],
+        "tol": scenario["tolerance"],
+        "max_iter": scenario["max_iterations"],
+    }
+    poisson = PoissonRegressor(**common).fit(
+        x, target, sample_weight=sample_weight
+    )
+    tweedie = TweedieRegressor(
+        power=scenario["power"], link="log", **common
+    ).fit(x, target, sample_weight=sample_weight)
+    poisson_predictions = poisson.predict(x)
+    tweedie_predictions = tweedie.predict(x)
+    signature = np.asarray(
+        [
+            poisson.coef_[0],
+            poisson.intercept_,
+            poisson_predictions[0],
+            poisson_predictions[-1],
+            tweedie.coef_[0],
+            tweedie.intercept_,
+            tweedie_predictions[0],
+            tweedie_predictions[-1],
+        ],
+        dtype="<f8",
+    )
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "features": x.shape[1],
+        "operations": [
+            "weighted_poisson_fit_predict",
+            "weighted_tweedie_fit_predict",
+        ],
+        "samples": x.shape[0],
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
 def splitters(scenario: dict[str, object]) -> dict[str, object]:
     import numpy as np
     from sklearn.model_selection import (
@@ -644,6 +699,8 @@ def main() -> None:
         result = ridge_classifier(scenario)
     elif workload == "multinomial_logistic":
         result = multinomial_logistic(scenario)
+    elif workload == "glm":
+        result = glm(scenario)
     elif workload == "splitters":
         result = splitters(scenario)
     elif workload == "metrics":

@@ -151,6 +151,26 @@ def worker_commands(scenario: dict[str, object], scenario_path: Path) -> dict[st
             str(scenario["tolerance"]),
             str(scenario["max_iterations"]),
         ]
+    elif workload == "glm":
+        modelkit_worker = (
+            ROOT / "_build" / "default" / "bench" / "ocaml" / "glm_worker.exe"
+        )
+        if not modelkit_worker.exists():
+            raise RuntimeError(
+                "ModelKit GLM benchmark worker is missing; run `opam exec -- "
+                "dune build bench/ocaml/glm_worker.exe`"
+            )
+        dataset = scenario["dataset"]
+        commands["modelkit"] = [
+            str(modelkit_worker),
+            str(dataset["samples"]),
+            str(dataset["features"]),
+            str(dataset["seed"]),
+            str(scenario["alpha"]),
+            str(scenario["power"]),
+            str(scenario["tolerance"]),
+            str(scenario["max_iterations"]),
+        ]
     elif workload == "splitters":
         modelkit_worker = (
             ROOT / "_build" / "default" / "bench" / "ocaml" / "splitters_worker.exe"
@@ -358,6 +378,7 @@ def main() -> None:
         "linear_models": 1e-7,
         "ridge_classifier": 1e-7,
         "multinomial_logistic": 1e-7,
+        "glm": 1e-6,
         "splitters": 0.0,
         "metrics": 1e-7,
         "cross_validation": 1e-7,

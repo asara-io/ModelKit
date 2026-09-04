@@ -167,6 +167,44 @@ The raw report is
 run, toolchain versions, thread limits, output signatures, allocations, and the
 full scenario.
 
+## Dense generalized linear models v1
+
+`glm_dense_v1` fits and predicts with weighted Poisson and power-1.5 Tweedie
+regressors on the same deterministic 3,000 by 12 float64 matrix in ModelKit and
+scikit-learn. ModelKit uses its portable damped IRLS solver with QR linear
+solves; scikit-learn uses L-BFGS. Both workers are sequential. Selected
+coefficients, intercepts, and predictions must agree within `1e-6` absolute and
+relative tolerance before a report is written.
+
+The harness performs one warmup and five interleaved measured runs in fresh
+processes, so timings include runtime startup, deterministic data generation,
+both fits, and both prediction passes. Peak RSS is sampled every millisecond,
+and the ModelKit worker reports OCaml heap allocation words.
+
+The committed macOS arm64 report recorded these medians:
+
+| Implementation | Wall time | Peak RSS |
+| --- | ---: | ---: |
+| ModelKit 0.4.0-dev / OCaml 5.3.0 | 0.069 s | 6,389,760 bytes |
+| scikit-learn 1.9.0 / Python 3.14.3 | 0.723 s | 125,009,920 bytes |
+
+This scenario is `claim_eligible: false`. It includes process startup and data
+generation, compares different solvers, and has not run on independent CI
+targets. It records parity, deterministic output, allocations, and gross
+regressions, not support for a comparative performance claim.
+
+Build and run it from the repository root:
+
+```sh
+opam exec -- dune build bench/ocaml/glm_worker.exe
+env/bin/python dev/benchmarks/run.py \
+  --scenario dev/benchmarks/scenarios/glm_dense.json
+```
+
+The raw report is `results/glm_dense_v1.darwin-arm64.json`; it records every
+raw run, toolchain versions, thread limits, output signatures, allocations, and
+the full scenario.
+
 ## Dense splitters v1
 
 `splitters_dense_v1` generates five folds from the same deterministic 100,000

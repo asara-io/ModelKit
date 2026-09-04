@@ -48,6 +48,8 @@ module Solver_report = Modelkit_linear_models.Solver_report
 module Linear_regression = Modelkit_linear_models.Linear_regression
 module Ridge_regression = Modelkit_linear_models.Ridge_regression
 module Logistic_regression = Modelkit_linear_models.Logistic_regression
+module Poisson_regression = Modelkit_glm.Poisson_regression
+module Tweedie_regression = Modelkit_glm.Tweedie_regression
 module Lasso_regression = Modelkit_regularized_linear.Lasso_regression
 
 module Elastic_net_regression =

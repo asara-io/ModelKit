@@ -972,6 +972,104 @@ def generate_multinomial_logistic_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_glm_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.linear_model import PoissonRegressor, TweedieRegressor
+
+    x_train = np.array(
+        [
+            [-2.0, 0.5],
+            [-1.0, -1.5],
+            [0.0, 2.0],
+            [1.0, -0.5],
+            [2.0, 1.5],
+            [3.0, -2.0],
+            [4.0, 0.25],
+            [5.0, 2.5],
+        ],
+        dtype=np.float64,
+    )
+    x_predict = np.array(
+        [[-1.5, 0.0], [0.5, 1.0], [2.5, -1.0], [6.0, 0.75]],
+        dtype=np.float64,
+    )
+    target = np.array([0.25, 0.8, 1.3, 2.1, 4.2, 5.5, 9.0, 15.0])
+    sample_weight = np.array([1.0, 2.0, 0.5, 3.0, 1.5, 0.75, 2.5, 1.25])
+    alpha = 0.35
+    tolerance = 1e-12
+    max_iterations = 1000
+    poisson = PoissonRegressor(
+        alpha=alpha,
+        tol=tolerance,
+        max_iter=max_iterations,
+    ).fit(x_train, target, sample_weight=sample_weight)
+    power = 1.5
+    tweedie = TweedieRegressor(
+        power=power,
+        alpha=alpha,
+        link="log",
+        tol=tolerance,
+        max_iter=max_iterations,
+    ).fit(x_train, target, sample_weight=sample_weight)
+
+    rows = ["# ModelKit sklearn generalized-linear-model reference fixture v1"]
+
+    def add_matrix(name: str, values) -> None:
+        for index, row in enumerate(values):
+            rows.append(f"{name}\t{index}\t{float_values(row)}")
+
+    def add_vector(name: str, values) -> None:
+        rows.append(f"{name}\t{float_values(values)}")
+
+    add_matrix("x_train", x_train)
+    add_matrix("x_predict", x_predict)
+    add_vector("target", target)
+    add_vector("sample_weight", sample_weight)
+    add_vector("alpha", [alpha])
+    add_vector("tolerance", [tolerance])
+    add_vector("max_iterations", [max_iterations])
+    add_vector("poisson_coefficients", poisson.coef_)
+    add_vector("poisson_intercept", [poisson.intercept_])
+    add_vector("poisson_predictions", poisson.predict(x_predict))
+    add_vector("tweedie_power", [power])
+    add_vector("tweedie_coefficients", tweedie.coef_)
+    add_vector("tweedie_intercept", [tweedie.intercept_])
+    add_vector("tweedie_predictions", tweedie.predict(x_predict))
+
+    data_path = fixture_dir / "glm_v1.tsv"
+    metadata_path = fixture_dir / "glm_v1.metadata.json"
+    data_path.write_text("\n".join(rows) + "\n", encoding="utf-8", newline="\n")
+    metadata = {
+        "configuration": {
+            "alpha": alpha,
+            "features": x_train.shape[1],
+            "fit_intercept": True,
+            "max_iterations": max_iterations,
+            "prediction_samples": x_predict.shape[0],
+            "samples": x_train.shape[0],
+            "solver": "lbfgs",
+            "tolerance": tolerance,
+            "tweedie_link": "log",
+            "tweedie_power": power,
+            "weighted": True,
+        },
+        "environment": environment.metadata(),
+        "fixture": "glm_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.linear_model.PoissonRegressor",
+            "sklearn.linear_model.TweedieRegressor",
+        ],
+        "schema_version": 1,
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
@@ -985,6 +1083,7 @@ def main() -> None:
     generate_regularized_linear_fixture(fixture_dir)
     generate_ridge_classifier_fixture(fixture_dir)
     generate_multinomial_logistic_fixture(fixture_dir)
+    generate_glm_fixture(fixture_dir)
 
 
 if __name__ == "__main__":
