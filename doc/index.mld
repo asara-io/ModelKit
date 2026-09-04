@@ -352,6 +352,16 @@ name, so [f1_macro] and [f1_weighted] can share one grid-search report.
 terminal declares two or more classes and request probabilities only when a
 scorer needs them.
 
+Ranking metrics score probability and relevance orderings rather than hard
+labels. {!Modelkit.Binary_classification_metrics.average_precision} summarizes
+the precision-recall curve; {!Modelkit.Multiclass_ranking.roc_auc} extends ROC
+AUC to several classes by one-versus-rest or one-versus-one averaging;
+{!Modelkit.Multiclass_ranking.top_k_accuracy} accepts a row whenever the truth
+class ranks inside the first [k]; and {!Modelkit.Ranking_metrics.ndcg} scores
+per-row graded relevance with a logarithmic discount and tie-averaged gains.
+Each of these has a scorer, so a grid search can refit on
+[roc_auc_ovo_weighted] or [top_2_accuracy] exactly as it does on [f1_macro].
+
 {@ocaml[
 # open Modelkit;;
 # let truth = Target.classification [|0; 0; 1; 1; 2; 2|];;
@@ -371,6 +381,15 @@ val prediction : Target.classification Target.t = <abstr>
     (Multiclass_classification_scorer.recall
        ~average:Multiclass_classification_metrics.Weighted ());;
 - : string = "recall_weighted"
+# Ranking_metrics.ndcg
+    ~relevance:(Matrix.of_arrays [|[|3.; 2.; 0.|]|] |> Result.get_ok)
+    ~scores:(Matrix.of_arrays [|[|0.1; 0.5; 0.9|]|] |> Result.get_ok) ()
+  |> Result.get_ok |> Printf.sprintf "%.4f";;
+- : string = "0.6480"
+# Multiclass_classification_scorer.name
+    (Multiclass_classification_scorer.roc_auc
+       ~strategy:Multiclass_ranking.One_vs_one ());;
+- : string = "roc_auc_ovo"
 ]}
 
 {1 Executable example}
