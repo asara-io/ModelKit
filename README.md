@@ -76,7 +76,7 @@ All matrix transforms are immutable training specifications with distinct fitted
 
 Development toward 0.4.0 adds `Lasso_regression` and `Elastic_net_regression` for sparse-coefficient scalar regression. Their portable deterministic cyclic coordinate-descent solver minimizes a weighted objective normalized by total positive sample weight, leaves the optional intercept unpenalized, checks both coordinate updates and optimality residuals, and returns typed convergence failures. `Elastic_net_regression` mixes L1 and L2 coefficient penalties through `l1_ratio`; setting it to one gives lasso semantics.
 
-`Lasso_path` and `Elastic_net_path` fit complete descending regularization paths, warm-starting each point from the preceding stronger penalty. Callers can provide explicit alphas or request a logarithmic path through `epsilon` and `count`. Path results expose alphas, one coefficient row and intercept per alpha, per-point solver reports, and checked access to an ordinary fitted estimator that can predict or participate in an in-memory pipeline. Automatic elastic-net paths require a positive L1 ratio; pure L2 paths require explicit alphas because no finite penalty forces every coefficient to zero.
+`Lasso_path` and `Elastic_net_path` fit complete descending regularization paths, warm-starting each point from the preceding stronger penalty. Callers can provide explicit alphas or request a logarithmic path through `epsilon` and `count`. Path results expose alphas, one coefficient row and intercept per alpha, per-point solver reports, and checked access to an ordinary fitted estimator for direct prediction. To use a selected hyperparameter in a pipeline or cross-validation, create the corresponding immutable `Lasso_regression` or `Elastic_net_regression` specification with that alpha. Automatic elastic-net paths require a positive L1 ratio; pure L2 paths require explicit alphas because no finite penalty forces every coefficient to zero.
 
 `Ridge_classifier` provides weighted binary and multiclass classification by fitting one ridge problem per ascending class against targets encoded as negative or positive one. Its decision function always returns a sample-by-class score matrix, including for binary problems, so coefficient rows, intercepts, reports, and score columns share one class order without a shape special case. Prediction selects the first maximum and therefore resolves exact ties to the lowest class label. Only classes represented by positive sample weight participate in fitting.
 
@@ -98,7 +98,19 @@ let expected_counts =
   |> Result.get_ok
 ```
 
-Lasso, elastic-net, ridge classification, multinomial logistic regression, Poisson regression, and Tweedie regression currently accept dense `Matrix.t` input through the common estimator and pipeline contracts. They do not yet have built-in artifact constructors or codecs; generally packaged pipelines remain usable in memory and return a typed unsupported-component error if artifact encoding is attempted. Multinomial logistic pipelines support prediction, probabilities, and class metadata. The current pipeline decision-function capability is vector-valued for binary estimators, so matrix-valued ridge and multinomial-logistic scores are obtained directly from their respective `decision_function` functions.
+### Linear workbench workflow coverage
+
+| Component | Pipeline capabilities | Cross-validation and scoring | scikit-learn fixture | Current boundary |
+| --- | --- | --- | --- | --- |
+| `Lasso_regression`, `Elastic_net_regression` | Prediction | Regression scorers | Coefficients, intercepts, predictions | Dense input; in-memory only |
+| `Lasso_path`, `Elastic_net_path` | Selected fitted models predict directly | Recreate an estimator specification with the selected alpha | Alpha order, coefficients, intercepts | Paths are fitting utilities, not estimator specifications |
+| `Ridge_classifier` | Prediction and class metadata | Binary label scorers; multiclass scoring is scheduled next | Binary/multiclass coefficients, scores, predictions | Matrix decision scores are available directly from the estimator |
+| `Multinomial_logistic_regression` | Prediction, probabilities, class metadata | Multiclass scoring is scheduled next | Coefficients, intercepts, scores, probabilities, predictions | Matrix decision scores are available directly from the estimator |
+| `Poisson_regression`, `Tweedie_regression` | Prediction | Regression scorers | Coefficients, intercepts, predictions | Dense input; in-memory only |
+
+All estimator rows above use the common immutable estimator and pipeline contracts. Regression estimators and binary ridge classification are exercised end to end through pipeline fitting, prediction, cross-validation, and the currently supported scorers. Multiclass cross-validation becomes a supported scored workflow when the next planned metrics item adds multiclass scoring; this slice does not coerce multiclass outputs through binary metrics. None of these additions yet has a built-in artifact constructor or codec, so their pipelines remain usable in memory while artifact encoding returns a typed unsupported-component error.
+
+The current pipeline decision-function capability is vector-valued for binary estimators. Matrix-valued ridge and multinomial-logistic scores are therefore obtained directly from their respective `decision_function` functions, while pipeline prediction, probability, and class dispatch remain available as shown in the table.
 
 Built-in logistic regression can be installed as a pipeline terminal with its optional capabilities:
 
@@ -168,6 +180,7 @@ The portable implementation is organized by responsibility:
 | `modelkit_linear_models` | Solver reports, shared numerical routines, and linear estimators |
 | `modelkit_regularized_linear` | Coordinate-descent lasso and elastic-net estimators and regularization paths |
 | `modelkit_linear_classifiers` | Binary and multiclass linear classifiers with matrix-valued class scores |
+| `modelkit_glm` | Poisson and Tweedie generalized linear regression with stable link handling |
 | `modelkit_splitting` | Validated splits and built-in cross-validation splitters |
 | `modelkit_metrics` | Metrics, binary responses, scorers, and score aggregation |
 | `modelkit_model_selection` | Cross-validation and finite grid search |
@@ -234,7 +247,7 @@ python dev/fixtures/generate.py
 python dev/benchmarks/run.py
 ```
 
-The committed smoke benchmark validates the measurement workflow only. The development preprocessing, dense-linear-model, ridge-classifier, multinomial-logistic, generalized-linear-model, splitter, metrics, sequential and bounded-parallel cross-validation, and finite grid-search benchmarks compare ModelKit operations with pinned scikit-learn references on deterministic workloads. Build the corresponding OCaml worker and select a scenario under `dev/benchmarks/scenarios/`; the parallel cross-validation scenario records sequential and four-worker results for both runtimes so speedup, efficiency, wall time, and peak RSS can be compared. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for declared parity tolerances, scope, raw-result links, and limitations. Release comparisons will use the product plan's independent-CI benchmark contract.
+The committed smoke benchmark validates the measurement workflow only. The development preprocessing, dense-linear-model, regularized-linear, ridge-classifier, multinomial-logistic, generalized-linear-model, splitter, metrics, sequential and bounded-parallel cross-validation, and finite grid-search benchmarks compare ModelKit operations with pinned scikit-learn references on deterministic workloads. Build the corresponding OCaml worker and select a scenario under `dev/benchmarks/scenarios/`; the parallel cross-validation scenario records sequential and four-worker results for both runtimes so speedup, efficiency, wall time, and peak RSS can be compared. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for declared parity tolerances, scope, raw-result links, and limitations. Release comparisons will use the product plan's independent-CI benchmark contract.
 
 ## Project Policies
 

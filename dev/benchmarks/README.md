@@ -86,6 +86,45 @@ The raw report is
 toolchain versions, thread limits, output signatures, allocations, and the full
 scenario.
 
+## Dense regularized linear models v1
+
+`regularized_linear_dense_v1` fits weighted lasso and elastic-net regressors
+and three-point descending paths on the same deterministic 3,000 by 12 float64
+matrix in ModelKit and scikit-learn. Both implementations use cyclic coordinate
+descent and warm-start each path from its preceding stronger penalty. Selected
+coefficients, intercepts, and predictions must agree within `1e-6` absolute and
+relative tolerance before a report is written.
+
+The harness performs one warmup and five interleaved measured runs in fresh
+processes, so timings include runtime startup, deterministic data generation,
+two ordinary fits, two path fits, and prediction. Peak RSS is sampled every
+millisecond, and the ModelKit worker reports OCaml heap allocation words.
+
+The committed macOS arm64 report recorded these medians:
+
+| Implementation | Wall time | Peak RSS |
+| --- | ---: | ---: |
+| ModelKit 0.4.0-dev / OCaml 5.3.0 | 0.045 s | 7,897,088 bytes |
+| scikit-learn 1.9.0 / Python 3.14.3 | 0.728 s | 126,124,032 bytes |
+
+This scenario is `claim_eligible: false`. It includes process startup and data
+generation, uses a small fixed path, and has not run on independent CI targets.
+It records parity, deterministic output, allocations, and gross regressions,
+not support for a comparative performance claim.
+
+Build and run it from the repository root:
+
+```sh
+opam exec -- dune build bench/ocaml/regularized_linear_worker.exe
+env/bin/python dev/benchmarks/run.py \
+  --scenario dev/benchmarks/scenarios/regularized_linear_dense.json
+```
+
+The raw report is
+`results/regularized_linear_dense_v1.darwin-arm64.json`; it records every raw
+run, toolchain versions, thread limits, output signatures, allocations, and the
+full scenario.
+
 ## Dense ridge classification v1
 
 `ridge_classifier_dense_v1` fits weighted binary and three-class ridge

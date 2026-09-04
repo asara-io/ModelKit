@@ -71,6 +71,12 @@
  (libraries modelkit alcotest))
 
 (test
+ (name linear_workbench_integration_test)
+ (modules linear_workbench_integration_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
  (name splitter_test)
  (modules splitter_test)
  (package modelkit)

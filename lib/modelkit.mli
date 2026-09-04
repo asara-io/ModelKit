@@ -1189,7 +1189,9 @@ end
     weighted mean squared error plus [alpha] times the L1 coefficient norm. The
     optional intercept is not penalized. [alpha] is finite and non-negative;
     [tolerance] and [max_iterations] control checked convergence. Iteration
-    exhaustion returns a typed convergence error. *)
+    exhaustion returns a typed convergence error. For [n] samples and [p]
+    features, each coordinate-descent sweep costs [O(n * p)] and fitting uses
+    [O(n + p)] working storage. *)
 module Lasso_regression : sig
   type params = {
     alpha : float;
@@ -1227,7 +1229,9 @@ end
     [0.5 * alpha * (1 - l1_ratio) * L2 squared]. [l1_ratio] is in [[0, 1]]; one
     is lasso and zero is a pure L2 penalty. The optional intercept remains
     unpenalized. Deterministic cyclic coordinate descent returns a
-    {!Solver_report.t} or a typed convergence failure. *)
+    {!Solver_report.t} or a typed convergence failure. For [n] samples and [p]
+    features, each sweep costs [O(n * p)] and fitting uses [O(n + p)] working
+    storage. *)
 module Elastic_net_regression : sig
   type params = {
     alpha : float;
@@ -1268,7 +1272,9 @@ end
     values from the smallest alpha producing the all-zero centered solution to
     [epsilon] times that value. Explicit alphas are copied, validated, and
     sorted descending. Coefficient-matrix rows, intercepts, reports, and model
-    indices all use this same order. *)
+    indices all use this same order. A path of [a] alpha values costs the sum of
+    its warm-started coordinate-descent sweeps and stores [O(a * p)] fitted
+    coefficients. *)
 module Lasso_path : sig
   type params = {
     fit_intercept : bool;
@@ -1317,7 +1323,8 @@ end
     Path ordering and access follow {!Lasso_path}. Automatic alpha generation
     requires positive [l1_ratio], because a pure L2 penalty has no finite alpha
     at which every coefficient is forced to zero; explicit alphas remain valid
-    when [l1_ratio] is zero. *)
+    when [l1_ratio] is zero. A path of [a] alpha values stores [O(a * p)] fitted
+    coefficients. *)
 module Elastic_net_path : sig
   type params = {
     l1_ratio : float;
@@ -1530,7 +1537,9 @@ end
     fitting an intercept. [alpha] applies an L2 penalty to coefficients but not
     the intercept. Deterministic damped IRLS iterations return typed numerical
     or convergence failures rather than non-finite fitted values. Prediction
-    returns finite, strictly positive means or a typed error. *)
+    returns finite, strictly positive means or a typed error. For [n] samples
+    and [p] features, fitting costs [O(iterations * (n * p squared + p cubed))],
+    with [O(p squared)] solver storage; prediction costs [O(n * p)]. *)
 module Poisson_regression : sig
   type params = {
     alpha : float;
@@ -1570,7 +1579,9 @@ end
     An identity-linked nonzero-power model also requires positive fitted means.
     [alpha] penalizes coefficients but not the intercept. The portable,
     deterministic damped IRLS solver reports checked convergence and prediction
-    rejects inverse-link overflow or out-of-domain means. *)
+    rejects inverse-link overflow or out-of-domain means. For [n] samples and
+    [p] features, fitting costs [O(iterations * (n * p squared + p cubed))],
+    with [O(p squared)] solver storage; prediction costs [O(n * p)]. *)
 module Tweedie_regression : sig
   type link = Auto | Identity | Log
 

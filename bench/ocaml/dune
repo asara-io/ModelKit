@@ -19,6 +19,10 @@
  (libraries modelkit))
 
 (executable
+ (name regularized_linear_worker)
+ (libraries modelkit))
+
+(executable
  (name splitters_worker)
  (libraries modelkit))
 

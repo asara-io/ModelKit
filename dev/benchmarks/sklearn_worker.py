@@ -334,6 +334,90 @@ def glm(scenario: dict[str, object]) -> dict[str, object]:
     }
 
 
+def regularized_linear(scenario: dict[str, object]) -> dict[str, object]:
+    import numpy as np
+    from sklearn.linear_model import ElasticNet, Lasso
+
+    dataset = scenario["dataset"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    x = (
+        (rows * (17 + columns * 12) + columns * 31 + dataset["seed"]) % 1000
+    ).astype(np.float64)
+    x = (x / 100.0) - 5.0
+    target = (
+        2.0
+        + 1.5 * x[:, 0]
+        - 0.8 * x[:, 1]
+        + 0.3 * x[:, 2]
+        + ((rows[:, 0] % 7).astype(np.float64) - 3.0) * 0.02
+    )
+    sample_weight = 1.0 + (rows[:, 0] % 5).astype(np.float64) * 0.25
+    common = {
+        "fit_intercept": True,
+        "tol": scenario["tolerance"],
+        "max_iter": scenario["max_iterations"],
+        "selection": "cyclic",
+    }
+    lasso = Lasso(alpha=scenario["alpha"], **common).fit(
+        x, target, sample_weight=sample_weight
+    )
+    elastic = ElasticNet(
+        alpha=scenario["alpha"], l1_ratio=scenario["l1_ratio"], **common
+    ).fit(x, target, sample_weight=sample_weight)
+
+    def path(estimator):
+        coefficients = []
+        for alpha in scenario["path_alphas"]:
+            estimator.set_params(alpha=alpha)
+            estimator.fit(x, target, sample_weight=sample_weight)
+            coefficients.append(estimator.coef_.copy())
+        return np.asarray(coefficients)
+
+    lasso_path = path(Lasso(alpha=scenario["path_alphas"][0], warm_start=True, **common))
+    elastic_path = path(
+        ElasticNet(
+            alpha=scenario["path_alphas"][0],
+            l1_ratio=scenario["l1_ratio"],
+            warm_start=True,
+            **common,
+        )
+    )
+    lasso_predictions = lasso.predict(x)
+    elastic_predictions = elastic.predict(x)
+    signature = np.asarray(
+        [
+            lasso.coef_[0],
+            lasso.intercept_,
+            lasso_predictions[0],
+            lasso_predictions[-1],
+            elastic.coef_[0],
+            elastic.intercept_,
+            elastic_predictions[0],
+            elastic_predictions[-1],
+            lasso_path[0, 0],
+            lasso_path[-1, 0],
+            elastic_path[0, 0],
+            elastic_path[-1, 0],
+        ],
+        dtype="<f8",
+    )
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "features": x.shape[1],
+        "operations": [
+            "weighted_lasso_fit_predict",
+            "weighted_elastic_net_fit_predict",
+            "weighted_lasso_path",
+            "weighted_elastic_net_path",
+        ],
+        "samples": x.shape[0],
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
 def splitters(scenario: dict[str, object]) -> dict[str, object]:
     import numpy as np
     from sklearn.model_selection import (
@@ -701,6 +785,8 @@ def main() -> None:
         result = multinomial_logistic(scenario)
     elif workload == "glm":
         result = glm(scenario)
+    elif workload == "regularized_linear":
+        result = regularized_linear(scenario)
     elif workload == "splitters":
         result = splitters(scenario)
     elif workload == "metrics":
