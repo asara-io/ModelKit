@@ -1334,6 +1334,52 @@ let balanced_class_weights_equalize_class_mass =
             totals
           && Float.abs (resolved_total -. !original) <= 1e-9 *. !original)
 
+let multiclass_averages_are_consistent =
+  QCheck.Test.make ~count:300
+    ~name:"multiclass micro scores equal accuracy and weighted recall"
+    QCheck.(pair (array nat_small) (int_range 2 5))
+    (fun (raw, class_count) ->
+      let samples = class_count + Array.length raw in
+      let truth =
+        Target.classification
+          (Array.init samples (fun row -> row mod class_count))
+      in
+      let prediction =
+        Target.classification
+          (Array.init samples (fun row ->
+               let value = if row < Array.length raw then raw.(row) else row in
+               value * 7 mod class_count))
+      in
+      let open Multiclass_classification_metrics in
+      let undefined = Undefined_metric_policy.Use_fallback in
+      match
+        ( accuracy ~truth ~prediction (),
+          precision ~undefined ~average:Micro ~truth ~prediction (),
+          recall ~undefined ~average:Weighted ~truth ~prediction (),
+          f1 ~undefined ~average:Macro ~truth ~prediction (),
+          confusion_matrix ~truth ~prediction () )
+      with
+      | Ok accuracy, Ok micro, Ok weighted_recall, Ok macro_f1, Ok confusion ->
+          let trace = ref 0.0 in
+          let total = ref 0.0 in
+          for row = 0 to Matrix.rows confusion.counts - 1 do
+            trace := !trace +. Matrix.get confusion.counts row row;
+            for column = 0 to Matrix.columns confusion.counts - 1 do
+              total := !total +. Matrix.get confusion.counts row column
+            done
+          done;
+          Float.abs (accuracy -. micro) <= 1e-12
+          && Float.abs (accuracy -. weighted_recall) <= 1e-12
+          && Float.abs (accuracy -. (!trace /. !total)) <= 1e-12
+          && macro_f1 >= 0.0 && macro_f1 <= 1.0
+          && Float.abs (!total -. Float.of_int samples) <= 1e-12
+      | Error _, _, _, _, _
+      | _, Error _, _, _, _
+      | _, _, Error _, _, _
+      | _, _, _, Error _, _
+      | _, _, _, _, Error _ ->
+          false)
+
 let ranking_curves_are_monotone =
   QCheck.Test.make ~count:500
     ~name:"ROC and precision-recall curve axes are monotone"
@@ -1415,6 +1461,7 @@ let () =
         sgd_log_loss_probabilities_are_simplex;
         sgd_ordered_batches_compose;
         balanced_class_weights_equalize_class_mass;
+        multiclass_averages_are_consistent;
         logistic_probabilities_are_complementary;
         ridge_classifier_binary_scores_are_opposites;
         ridge_classifier_is_equivariant_to_ordered_label_renaming;

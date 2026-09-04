@@ -363,7 +363,34 @@ module Cross_validation = struct
         ~score_model:(score_model scorers) pipeline dataset
   end
 
-  module Binary_classification = struct
+  (* Classification evaluation shared by the binary and multiclass variants:
+     the scorer family decides which responses a fold needs and how a scorer's
+     prediction value is assembled from them. *)
+  module type CLASSIFICATION_SCORING = sig
+    type scorer
+    type prediction
+
+    val name : scorer -> string
+    val needs_labels : scorer -> bool
+    val needs_probabilities : scorer -> bool
+    val validate_classes : int array -> Matrix.t -> (unit, Error.t) result
+
+    val prediction :
+      scorer ->
+      labels:Target.classification Target.t option ->
+      probabilities:(Matrix.t * int array) option ->
+      (prediction, Error.t) result
+
+    val score :
+      scorer ->
+      ?sample_weight:Sample_weight.t ->
+      truth:Target.classification Target.t ->
+      prediction:prediction ->
+      unit ->
+      (float, Error.t) result
+  end
+
+  module Classification_evaluation (Scoring : CLASSIFICATION_SCORING) = struct
     type model =
       ( Target.classification Target.t,
         Target.classification Target.t )
@@ -374,11 +401,6 @@ module Cross_validation = struct
       probabilities : (Matrix.t * int array, Error.t) result option;
     }
 
-    let needs response scorers =
-      Array.exists
-        (fun scorer -> Binary_classification_scorer.response scorer = response)
-        scorers
-
     let probability_data ~fold_index fitted dataset =
       let ( let* ) = Result.bind in
       (let* classes = Pipeline.classes fitted in
@@ -387,44 +409,13 @@ module Cross_validation = struct
            ~feature_schema:(Dataset.feature_schema dataset)
            ~x:(Dataset.features dataset)
        in
-       if Array.length classes <> 2 then
-         Error
-           (Error.make
-              ~remediation:"declare exactly two distinct binary classes"
-              (Error.Compatibility
-                 {
-                   component = "pipeline probability class order";
-                   reason =
-                     Format.sprintf "%d classes were declared"
-                       (Array.length classes);
-                 }))
-       else if classes.(0) = classes.(1) then
-         Error
-           (Error.make ~remediation:"declare each binary class exactly once"
-              (Error.Compatibility
-                 {
-                   component = "pipeline probability class order";
-                   reason = "the two declared class labels are identical";
-                 }))
-       else if Matrix.columns probabilities <> Array.length classes then
-         Error
-           (Error.make
-              ~remediation:
-                "return one probability column for every declared class"
-              (Error.Compatibility
-                 {
-                   component = "pipeline probability output";
-                   reason =
-                     Format.sprintf "%d columns were returned for %d classes"
-                       (Matrix.columns probabilities)
-                       (Array.length classes);
-                 }))
-       else Ok (probabilities, classes))
+       let* () = Scoring.validate_classes classes probabilities in
+       Ok (probabilities, classes))
       |> Result.map_error (contextualize fold_index)
 
     let responses ~fold_index scorers fitted dataset =
       let labels =
-        if needs Binary_classification_scorer.Labels scorers then
+        if Array.exists Scoring.needs_labels scorers then
           Some
             (Pipeline.predict fitted
                ~feature_schema:(Dataset.feature_schema dataset)
@@ -433,8 +424,8 @@ module Cross_validation = struct
         else None
       in
       let probabilities =
-        if needs Binary_classification_scorer.Positive_probabilities scorers
-        then Some (probability_data ~fold_index fitted dataset)
+        if Array.exists Scoring.needs_probabilities scorers then
+          Some (probability_data ~fold_index fitted dataset)
         else None
       in
       { labels; probabilities }
@@ -447,63 +438,30 @@ module Cross_validation = struct
       in
       collect (collect [] responses.labels) responses.probabilities
 
-    let find_class_column classes positive_label =
-      let rec loop column =
-        if column = Array.length classes then None
-        else if classes.(column) = positive_label then Some column
-        else loop (column + 1)
+    let response_failed scorer responses =
+      let failed = function
+        | Some (Error _) -> true
+        | None | Some (Ok _) -> false
       in
-      loop 0
+      (Scoring.needs_labels scorer && failed responses.labels)
+      || (Scoring.needs_probabilities scorer && failed responses.probabilities)
+
+    let required needed = function
+      | Some result when needed -> Result.map Option.some result
+      | None | Some _ -> Ok None
 
     let prediction_for_scorer scorer responses =
-      match Binary_classification_scorer.response scorer with
-      | Binary_classification_scorer.Labels -> (
-          match responses.labels with
-          | Some (Ok labels) -> Binary_prediction.create ~labels ()
-          | Some (Error error) -> Error error
-          | None -> assert false)
-      | Binary_classification_scorer.Positive_probabilities -> (
-          match responses.probabilities with
-          | Some (Error error) -> Error error
-          | None -> assert false
-          | Some (Ok (probabilities, classes)) -> (
-              let params = Binary_classification_scorer.params scorer in
-              match
-                find_class_column classes
-                  params.Binary_classification_scorer.positive_label
-              with
-              | None ->
-                  Error
-                    (validation ~name:"positive probability class"
-                       ~reason:
-                         (Format.sprintf
-                            "label %d is absent from the declared class order"
-                            params.Binary_classification_scorer.positive_label)
-                       ~remediation:
-                         "configure the scorer positive label to match the \
-                          classifier")
-              | Some column ->
-                  let positive_probabilities =
-                    Vector.unsafe_init (Matrix.rows probabilities) (fun row ->
-                        Matrix.get probabilities row column)
-                  in
-                  Binary_prediction.create ~positive_probabilities ()))
-
-    let response_failed scorer responses =
-      match Binary_classification_scorer.response scorer with
-      | Binary_classification_scorer.Labels -> (
-          match responses.labels with
-          | Some (Error _) -> true
-          | None | Some (Ok _) -> false)
-      | Binary_classification_scorer.Positive_probabilities -> (
-          match responses.probabilities with
-          | Some (Error _) -> true
-          | None | Some (Ok _) -> false)
+      let ( let* ) = Result.bind in
+      let* labels = required (Scoring.needs_labels scorer) responses.labels in
+      let* probabilities =
+        required (Scoring.needs_probabilities scorer) responses.probabilities
+      in
+      Scoring.prediction scorer ~labels ~probabilities
 
     let score_partition ~fold_index ~partition scorers dataset responses =
       Array.map
         (fun scorer ->
-          let name = Binary_classification_scorer.name scorer in
+          let name = Scoring.name scorer in
           match prediction_for_scorer scorer responses with
           | Error error when response_failed scorer responses ->
               (Error error, [])
@@ -514,7 +472,7 @@ module Cross_validation = struct
               )
           | Ok prediction ->
               let result =
-                Binary_classification_scorer.score scorer
+                Scoring.score scorer
                   ?sample_weight:(Dataset.sample_weight dataset)
                   ~truth:(Dataset.target dataset) ~prediction ()
                 |> Result.map_error (scorer_error fold_index name)
@@ -552,7 +510,7 @@ module Cross_validation = struct
         Array.mapi
           (fun index scorer ->
             {
-              name = Binary_classification_scorer.name scorer;
+              name = Scoring.name scorer;
               train_score =
                 Option.map (fun results -> fst results.(index)) train_results;
               test_score = Some (fst test_results.(index));
@@ -581,11 +539,140 @@ module Cross_validation = struct
         ?(execution = Execution.sequential) ~splitter ~scorers ~seed pipeline
         dataset =
       let fit_seed = Option.value fit_seed ~default:seed in
-      let scorer_names = Array.map Binary_classification_scorer.name scorers in
+      let scorer_names = Array.map Scoring.name scorers in
       run ~return_train_score ~return_models ~return_indices ~failure_policy
         ~fit_seed ~execution ~splitter ~scorer_names ~seed
         ~score_model:(score_model scorers) pipeline dataset
   end
+
+  let compatibility ~component ~reason ~remediation =
+    Error.make ~remediation (Error.Compatibility { component; reason })
+
+  let validate_probability_columns classes probabilities =
+    if Matrix.columns probabilities <> Array.length classes then
+      Error
+        (compatibility ~component:"pipeline probability output"
+           ~reason:
+             (Format.sprintf "%d columns were returned for %d classes"
+                (Matrix.columns probabilities)
+                (Array.length classes))
+           ~remediation:"return one probability column for every declared class")
+    else Ok ()
+
+  module Binary_scoring = struct
+    type scorer = Binary_classification_scorer.t
+    type prediction = Binary_prediction.t
+
+    let name = Binary_classification_scorer.name
+
+    let needs_labels scorer =
+      Binary_classification_scorer.response scorer
+      = Binary_classification_scorer.Labels
+
+    let needs_probabilities scorer =
+      Binary_classification_scorer.response scorer
+      = Binary_classification_scorer.Positive_probabilities
+
+    let validate_classes classes probabilities =
+      if Array.length classes <> 2 then
+        Error
+          (compatibility ~component:"pipeline probability class order"
+             ~reason:
+               (Format.sprintf "%d classes were declared" (Array.length classes))
+             ~remediation:"declare exactly two distinct binary classes")
+      else if classes.(0) = classes.(1) then
+        Error
+          (compatibility ~component:"pipeline probability class order"
+             ~reason:"the two declared class labels are identical"
+             ~remediation:"declare each binary class exactly once")
+      else validate_probability_columns classes probabilities
+
+    let find_class_column classes positive_label =
+      let rec loop column =
+        if column = Array.length classes then None
+        else if classes.(column) = positive_label then Some column
+        else loop (column + 1)
+      in
+      loop 0
+
+    let prediction scorer ~labels ~probabilities =
+      match (needs_labels scorer, labels, probabilities) with
+      | true, Some labels, _ -> Binary_prediction.create ~labels ()
+      | false, _, Some (probabilities, classes) -> (
+          let params = Binary_classification_scorer.params scorer in
+          match
+            find_class_column classes
+              params.Binary_classification_scorer.positive_label
+          with
+          | None ->
+              Error
+                (validation ~name:"positive probability class"
+                   ~reason:
+                     (Format.sprintf
+                        "label %d is absent from the declared class order"
+                        params.Binary_classification_scorer.positive_label)
+                   ~remediation:
+                     "configure the scorer positive label to match the \
+                      classifier")
+          | Some column ->
+              let positive_probabilities =
+                Vector.unsafe_init (Matrix.rows probabilities) (fun row ->
+                    Matrix.get probabilities row column)
+              in
+              Binary_prediction.create ~positive_probabilities ())
+      | true, None, _ | false, _, None -> assert false
+
+    let score = Binary_classification_scorer.score
+  end
+
+  module Multiclass_scoring = struct
+    type scorer = Multiclass_classification_scorer.t
+    type prediction = Multiclass_prediction.t
+
+    let name = Multiclass_classification_scorer.name
+
+    let needs_labels scorer =
+      Multiclass_classification_scorer.response scorer
+      = Multiclass_classification_scorer.Labels
+
+    let needs_probabilities scorer =
+      Multiclass_classification_scorer.response scorer
+      = Multiclass_classification_scorer.Class_probabilities
+
+    let validate_classes classes probabilities =
+      let sorted = Array.copy classes in
+      Array.sort Int.compare sorted;
+      let rec distinct index =
+        index >= Array.length sorted
+        || (sorted.(index - 1) <> sorted.(index) && distinct (index + 1))
+      in
+      if Array.length classes < 2 then
+        Error
+          (compatibility ~component:"pipeline probability class order"
+             ~reason:
+               (Format.sprintf "%d classes were declared" (Array.length classes))
+             ~remediation:"declare at least two distinct classes")
+      else if not (distinct 1) then
+        Error
+          (compatibility ~component:"pipeline probability class order"
+             ~reason:"a declared class label repeats"
+             ~remediation:"declare each class exactly once")
+      else validate_probability_columns classes probabilities
+
+    let prediction scorer ~labels ~probabilities =
+      match (needs_labels scorer, labels, probabilities) with
+      | true, Some labels, _ -> Multiclass_prediction.create ~labels ()
+      | false, _, Some (probabilities, classes) ->
+          Multiclass_prediction.create ~classes ~probabilities ()
+      | true, None, _ | false, _, None -> assert false
+
+    let score = Multiclass_classification_scorer.score
+  end
+
+  module Binary_classification = Classification_evaluation (Binary_scoring)
+
+  module Multiclass_classification =
+    Classification_evaluation (Multiclass_scoring)
 end
 
 module Grid_search = struct
@@ -992,6 +1079,26 @@ module Grid_search = struct
       let cross_validate ~return_train_score ~failure_policy ~fit_seed pipeline
           dataset =
         Cross_validation.Binary_classification.cross_validate
+          ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
+          ~scorers ~seed pipeline dataset
+      in
+      search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
+        ~refit ~seed grid dataset
+  end
+
+  module Multiclass_classification = struct
+    type model = Cross_validation.Multiclass_classification.model
+
+    let search ?(return_train_score = false)
+        ?(failure_policy = Cross_validation.Record)
+        ?(execution = Execution.sequential) ~grid ~splitter ~scorers ~refit
+        ~seed dataset =
+      let scorer_names =
+        Array.map Multiclass_classification_scorer.name scorers
+      in
+      let cross_validate ~return_train_score ~failure_policy ~fit_seed pipeline
+          dataset =
+        Cross_validation.Multiclass_classification.cross_validate
           ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
           ~scorers ~seed pipeline dataset
       in

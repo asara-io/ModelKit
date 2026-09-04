@@ -672,6 +672,597 @@ module Binary_classification_metrics = struct
         Metric_internal.finite ~operation:"ROC AUC" area
 end
 
+module Multiclass_prediction = struct
+  type t = {
+    multiclass_length : int;
+    multiclass_labels : Target.classification Target.t option;
+    multiclass_probabilities : (int array * Matrix.t) option;
+  }
+
+  let ( let* ) = Result.bind
+
+  let validate_classes classes =
+    let sorted = Array.copy classes in
+    Array.sort Int.compare sorted;
+    let rec distinct index =
+      index >= Array.length sorted
+      || (sorted.(index - 1) <> sorted.(index) && distinct (index + 1))
+    in
+    if Array.length classes < 2 then
+      Error
+        (Metric_internal.validation ~name:"probability classes"
+           ~reason:"at least two classes are required"
+           ~remediation:"declare one class label per probability column")
+    else if not (distinct 1) then
+      Error
+        (Metric_internal.validation ~name:"probability classes"
+           ~reason:"class labels repeat"
+           ~remediation:"declare each class label exactly once")
+    else Ok ()
+
+  let validate_probability_matrix ~classes probabilities =
+    let rows = Matrix.rows probabilities in
+    let columns = Matrix.columns probabilities in
+    let* () =
+      Metric_internal.validate_length ~name:"probability columns"
+        ~expected:(Array.length classes) ~observed:columns
+    in
+    let rec check row =
+      if row = rows then Ok ()
+      else
+        let total = ref 0.0 in
+        let rec check_column column =
+          if column = columns then Ok ()
+          else
+            let value = Matrix.get probabilities row column in
+            if not (Float.is_finite value) then
+              Error
+                (Metric_internal.validation ~name:"class probabilities"
+                   ~reason:
+                     (Format.sprintf
+                        "value %g at row %d column %d is not finite" value row
+                        column)
+                   ~remediation:"provide finite probabilities in [0, 1]")
+            else if value < 0.0 || value > 1.0 then
+              Error
+                (Metric_internal.validation ~name:"class probabilities"
+                   ~reason:
+                     (Format.sprintf
+                        "value %g at row %d column %d lies outside [0, 1]" value
+                        row column)
+                   ~remediation:"provide probabilities in the interval [0, 1]")
+            else (
+              total := !total +. value;
+              check_column (column + 1))
+        in
+        let* () = check_column 0 in
+        if Float.abs (!total -. 1.0) > 1e-6 then
+          Error
+            (Metric_internal.validation ~name:"class probabilities"
+               ~reason:(Format.sprintf "row %d sums to %.17g" row !total)
+               ~remediation:"normalize each probability row to sum to one")
+        else check (row + 1)
+    in
+    check 0
+
+  let create ?labels ?classes ?probabilities () =
+    let* probabilities =
+      match (classes, probabilities) with
+      | None, None -> Ok None
+      | Some classes, Some probabilities ->
+          let* () = validate_classes classes in
+          let* () = validate_probability_matrix ~classes probabilities in
+          Ok (Some (Array.copy classes, probabilities))
+      | Some _, None | None, Some _ ->
+          Error
+            (Metric_internal.validation ~name:"multiclass prediction"
+               ~reason:"classes and probabilities must be supplied together"
+               ~remediation:
+                 "provide the class order alongside the probability matrix")
+    in
+    let label_length = Option.map Target.length labels in
+    let probability_length =
+      Option.map (fun (_, matrix) -> Matrix.rows matrix) probabilities
+    in
+    match (label_length, probability_length) with
+    | None, None ->
+        Error
+          (Metric_internal.validation ~name:"multiclass prediction"
+             ~reason:"no classifier response was supplied"
+             ~remediation:
+               "provide predicted labels, class probabilities, or both")
+    | Some labels_length, Some rows when labels_length <> rows ->
+        Error
+          (Error.make ~remediation:"provide aligned classifier responses"
+             (Error.Shape_mismatch
+                {
+                  name = "multiclass prediction responses";
+                  expected = [ labels_length ];
+                  observed = [ rows ];
+                }))
+    | Some length, _ | None, Some length ->
+        Ok
+          {
+            multiclass_length = length;
+            multiclass_labels = labels;
+            multiclass_probabilities = probabilities;
+          }
+
+  let length prediction = prediction.multiclass_length
+  let labels prediction = prediction.multiclass_labels
+
+  let classes prediction =
+    Option.map
+      (fun (classes, _) -> Array.copy classes)
+      prediction.multiclass_probabilities
+
+  let probabilities prediction =
+    Option.map snd prediction.multiclass_probabilities
+end
+
+module Multiclass_classification_metrics = struct
+  type average = Micro | Macro | Weighted
+  type confusion_matrix = { labels : int array; counts : Matrix.t }
+
+  type class_scores = {
+    class_labels : int array;
+    precisions : Vector.t;
+    recalls : Vector.t;
+    f1_scores : Vector.t;
+    supports : Vector.t;
+  }
+
+  let ( let* ) = Result.bind
+
+  let validate_labels = function
+    | None -> Ok ()
+    | Some labels ->
+        let sorted = Array.copy labels in
+        Array.sort Int.compare sorted;
+        let rec distinct index =
+          index >= Array.length sorted
+          || (sorted.(index - 1) <> sorted.(index) && distinct (index + 1))
+        in
+        if Array.length labels = 0 then
+          Error
+            (Metric_internal.validation ~name:"metric labels"
+               ~reason:"an explicit label set must not be empty"
+               ~remediation:"list at least one class label or omit labels")
+        else if not (distinct 1) then
+          Error
+            (Metric_internal.validation ~name:"metric labels"
+               ~reason:"explicit labels repeat"
+               ~remediation:"list each class label exactly once")
+        else Ok ()
+
+  let observed_labels arrays =
+    let seen = Hashtbl.create 8 in
+    Array.iter (Array.iter (fun label -> Hashtbl.replace seen label ())) arrays;
+    let labels = Hashtbl.to_seq_keys seen |> Array.of_seq in
+    Array.sort Int.compare labels;
+    labels
+
+  let prepare ?sample_weight ?labels ~truth ~prediction () =
+    let truth = Target.classification_values truth in
+    let prediction = Target.classification_values prediction in
+    let length = Array.length truth in
+    let* () =
+      Metric_internal.validate_nonempty ~name:"multiclass classification metric"
+        length
+    in
+    let* () =
+      Metric_internal.validate_length ~name:"classification prediction"
+        ~expected:length ~observed:(Array.length prediction)
+    in
+    let* () = Metric_internal.validate_weights ~expected:length sample_weight in
+    let* () = validate_labels labels in
+    let labels =
+      match labels with
+      | Some labels -> Array.copy labels
+      | None -> observed_labels [| truth; prediction |]
+    in
+    Ok (truth, prediction, length, labels)
+
+  (* Rows are truth and columns are prediction; a row whose label is outside
+     the explicit label set is ignored, as scikit-learn does. *)
+  let confusion_counts ~sample_weight ~labels truth prediction length =
+    let index = Hashtbl.create (Array.length labels) in
+    Array.iteri
+      (fun position label -> Hashtbl.replace index label position)
+      labels;
+    let size = Array.length labels in
+    let cells =
+      Array.init (size * size) (fun _ ->
+          Reference_backend.Accumulator.create ())
+    in
+    for row = 0 to length - 1 do
+      match
+        ( Hashtbl.find_opt index truth.(row),
+          Hashtbl.find_opt index prediction.(row) )
+      with
+      | Some observed, Some predicted ->
+          Reference_backend.Accumulator.add
+            cells.((observed * size) + predicted)
+            (Metric_internal.weight sample_weight row)
+      | None, _ | _, None -> ()
+    done;
+    let values = Array.map Reference_backend.Accumulator.value cells in
+    if Array.for_all Float.is_finite values then Ok values
+    else
+      Error
+        (Metric_internal.numerical ~operation:"confusion matrix"
+           ~reason:"a weighted cell count is not finite")
+
+  let confusion_matrix ?sample_weight ?labels ~truth ~prediction () =
+    let* truth, prediction, length, labels =
+      prepare ?sample_weight ?labels ~truth ~prediction ()
+    in
+    let* values =
+      confusion_counts ~sample_weight ~labels truth prediction length
+    in
+    let size = Array.length labels in
+    match
+      Matrix.init ~rows:size ~columns:size (fun row column ->
+          values.((row * size) + column))
+    with
+    | Ok counts -> Ok { labels; counts }
+    | Error error ->
+        Error
+          (Error.of_data_error
+             ~remediation:"report invalid confusion dimensions" error)
+
+  let accuracy ?sample_weight ~truth ~prediction () =
+    let* truth, prediction, length, _ =
+      prepare ?sample_weight ~truth ~prediction ()
+    in
+    Metric_internal.average ~operation:"multiclass accuracy" ~sample_weight
+      length (fun index ->
+        if truth.(index) = prediction.(index) then 1.0 else 0.0)
+
+  let balanced_accuracy ?(undefined = Undefined_metric_policy.Error)
+      ?sample_weight ~truth ~prediction () =
+    let* { labels; counts } =
+      confusion_matrix ?sample_weight ~truth ~prediction ()
+    in
+    let size = Array.length labels in
+    let total = Reference_backend.Accumulator.create () in
+    let supported = ref 0 in
+    for row = 0 to size - 1 do
+      let support = ref 0.0 in
+      for column = 0 to size - 1 do
+        support := !support +. Matrix.get counts row column
+      done;
+      if !support > 0.0 then (
+        incr supported;
+        Reference_backend.Accumulator.add total
+          (Matrix.get counts row row /. !support))
+    done;
+    if !supported = 0 then
+      Metric_internal.undefined undefined ~name:"balanced accuracy"
+        ~reason:"no class has positive weighted support" ~fallback:0.0
+    else
+      Metric_internal.finite ~operation:"balanced accuracy"
+        (Reference_backend.Accumulator.value total /. Float.of_int !supported)
+
+  type totals = {
+    tp : float array;
+    predicted : float array;
+    support : float array;
+  }
+
+  (* Per-label totals are taken from every row, so a truth label inside the
+     label set keeps its support even when its prediction falls outside the
+     set. This matches scikit-learn's averaged scores, which differ from its
+     confusion matrix in exactly that case. *)
+  let totals ~sample_weight ~labels truth prediction length =
+    let index = Hashtbl.create (Array.length labels) in
+    Array.iteri
+      (fun position label -> Hashtbl.replace index label position)
+      labels;
+    let size = Array.length labels in
+    let accumulators () =
+      Array.init size (fun _ -> Reference_backend.Accumulator.create ())
+    in
+    let tp = accumulators () in
+    let predicted = accumulators () in
+    let support = accumulators () in
+    for row = 0 to length - 1 do
+      let weight = Metric_internal.weight sample_weight row in
+      let observed = Hashtbl.find_opt index truth.(row) in
+      let guessed = Hashtbl.find_opt index prediction.(row) in
+      Option.iter
+        (fun position ->
+          Reference_backend.Accumulator.add support.(position) weight)
+        observed;
+      Option.iter
+        (fun position ->
+          Reference_backend.Accumulator.add predicted.(position) weight)
+        guessed;
+      if truth.(row) = prediction.(row) then
+        Option.iter
+          (fun position ->
+            Reference_backend.Accumulator.add tp.(position) weight)
+          observed
+    done;
+    let values = Array.map Reference_backend.Accumulator.value in
+    let totals =
+      { tp = values tp; predicted = values predicted; support = values support }
+    in
+    if
+      Array.for_all Float.is_finite totals.tp
+      && Array.for_all Float.is_finite totals.predicted
+      && Array.for_all Float.is_finite totals.support
+    then Ok totals
+    else
+      Error
+        (Metric_internal.numerical ~operation:"classification totals"
+           ~reason:"a weighted class total is not finite")
+
+  let divide ~undefined ~name ~reason numerator denominator =
+    if denominator = 0.0 then
+      Metric_internal.undefined undefined ~name ~reason ~fallback:0.0
+    else Ok (numerator /. denominator)
+
+  let per_class ~undefined totals =
+    let size = Array.length totals.tp in
+    let precisions = Array.make size 0.0 in
+    let recalls = Array.make size 0.0 in
+    let f1_scores = Array.make size 0.0 in
+    let rec loop index =
+      if index = size then Ok ()
+      else
+        let* precision =
+          divide ~undefined ~name:"precision"
+            ~reason:"a class has no positively weighted prediction"
+            totals.tp.(index) totals.predicted.(index)
+        in
+        let* recall =
+          divide ~undefined ~name:"recall"
+            ~reason:"a class has no positively weighted truth label"
+            totals.tp.(index) totals.support.(index)
+        in
+        let* f1 =
+          divide ~undefined ~name:"F1"
+            ~reason:"a class has neither predictions nor truth labels"
+            (2.0 *. totals.tp.(index))
+            (totals.predicted.(index) +. totals.support.(index))
+        in
+        precisions.(index) <- precision;
+        recalls.(index) <- recall;
+        f1_scores.(index) <- f1;
+        loop (index + 1)
+    in
+    let* () = loop 0 in
+    Ok (precisions, recalls, f1_scores)
+
+  let class_scores ?(undefined = Undefined_metric_policy.Error) ?sample_weight
+      ?labels ~truth ~prediction () =
+    let* truth, prediction, length, labels =
+      prepare ?sample_weight ?labels ~truth ~prediction ()
+    in
+    let* totals = totals ~sample_weight ~labels truth prediction length in
+    let* precisions, recalls, f1_scores = per_class ~undefined totals in
+    Ok
+      {
+        class_labels = labels;
+        precisions = Vector.of_array precisions;
+        recalls = Vector.of_array recalls;
+        f1_scores = Vector.of_array f1_scores;
+        supports = Vector.of_array totals.support;
+      }
+
+  let sum values = Array.fold_left ( +. ) 0.0 values
+
+  (* Micro averaging pools the per-class totals before dividing; macro and
+     weighted averaging combine per-class ratios. A NaN produced under the
+     Return_nan policy propagates through the mean because the caller asked
+     for it explicitly. *)
+  let averaged ~average ~undefined ~name ~reason ~numerator ~denominator
+      ~per_class totals =
+    match average with
+    | Micro ->
+        divide ~undefined ~name ~reason
+          (sum (numerator totals))
+          (sum (denominator totals))
+    | Macro ->
+        let* values = per_class in
+        let mean = sum values /. Float.of_int (Array.length values) in
+        if Float.is_nan mean then Ok mean
+        else Metric_internal.finite ~operation:name mean
+    | Weighted ->
+        let* values = per_class in
+        let support = sum totals.support in
+        if support = 0.0 then
+          Metric_internal.undefined undefined ~name
+            ~reason:"no class has positive weighted support" ~fallback:0.0
+        else
+          let weighted =
+            Array.mapi
+              (fun index value -> value *. totals.support.(index))
+              values
+          in
+          Ok (sum weighted /. support)
+
+  let scored ~select ~name ~reason ~numerator ~denominator ?(average = Macro)
+      ?(undefined = Undefined_metric_policy.Error) ?sample_weight ?labels ~truth
+      ~prediction () =
+    let* truth, prediction, length, labels =
+      prepare ?sample_weight ?labels ~truth ~prediction ()
+    in
+    let* totals = totals ~sample_weight ~labels truth prediction length in
+    let per_class = Result.map select (per_class ~undefined totals) in
+    averaged ~average ~undefined ~name ~reason ~numerator ~denominator
+      ~per_class totals
+
+  let precision ?average ?undefined ?sample_weight ?labels ~truth ~prediction ()
+      =
+    scored
+      ~select:(fun (precisions, _, _) -> precisions)
+      ~name:"precision" ~reason:"no class has a positively weighted prediction"
+      ~numerator:(fun totals -> totals.tp)
+      ~denominator:(fun totals -> totals.predicted)
+      ?average ?undefined ?sample_weight ?labels ~truth ~prediction ()
+
+  let recall ?average ?undefined ?sample_weight ?labels ~truth ~prediction () =
+    scored
+      ~select:(fun (_, recalls, _) -> recalls)
+      ~name:"recall" ~reason:"no class has a positively weighted truth label"
+      ~numerator:(fun totals -> totals.tp)
+      ~denominator:(fun totals -> totals.support)
+      ?average ?undefined ?sample_weight ?labels ~truth ~prediction ()
+
+  let f1 ?average ?undefined ?sample_weight ?labels ~truth ~prediction () =
+    scored
+      ~select:(fun (_, _, f1_scores) -> f1_scores)
+      ~name:"F1" ~reason:"no class has predictions or truth labels"
+      ~numerator:(fun totals -> Array.map (fun tp -> 2.0 *. tp) totals.tp)
+      ~denominator:(fun totals ->
+        Array.mapi
+          (fun index value -> value +. totals.support.(index))
+          totals.predicted)
+      ?average ?undefined ?sample_weight ?labels ~truth ~prediction ()
+
+  let log_loss ?sample_weight ~truth ~classes ~probabilities () =
+    let truth = Target.classification_values truth in
+    let length = Array.length truth in
+    let* () =
+      Metric_internal.validate_nonempty ~name:"multiclass log loss" length
+    in
+    let* () = Metric_internal.validate_weights ~expected:length sample_weight in
+    let* () = Multiclass_prediction.validate_classes classes in
+    let* () =
+      Metric_internal.validate_length ~name:"probability rows" ~expected:length
+        ~observed:(Matrix.rows probabilities)
+    in
+    let* () =
+      Multiclass_prediction.validate_probability_matrix ~classes probabilities
+    in
+    let index = Hashtbl.create (Array.length classes) in
+    Array.iteri
+      (fun position label -> Hashtbl.replace index label position)
+      classes;
+    let rec check row =
+      if row = length then Ok ()
+      else if Hashtbl.mem index truth.(row) then check (row + 1)
+      else
+        Error
+          (Metric_internal.validation ~name:"multiclass log loss"
+             ~reason:
+               (Format.sprintf
+                  "truth label %d at row %d has no probability column"
+                  truth.(row) row)
+             ~remediation:"declare every observed label in the class order")
+    in
+    let* () = check 0 in
+    let epsilon = Float.epsilon in
+    Metric_internal.average ~operation:"multiclass log loss" ~sample_weight
+      length (fun row ->
+        let column = Hashtbl.find index truth.(row) in
+        let probability = Matrix.get probabilities row column in
+        -.Float.log (Float.max epsilon (Float.min (1.0 -. epsilon) probability)))
+end
+
+module Multiclass_classification_scorer = struct
+  type metric =
+    | Accuracy
+    | Balanced_accuracy
+    | Precision of Multiclass_classification_metrics.average
+    | Recall of Multiclass_classification_metrics.average
+    | F1 of Multiclass_classification_metrics.average
+    | Log_loss
+
+  type response = Labels | Class_probabilities
+  type params = { metric : metric; undefined : Undefined_metric_policy.t }
+  type t = params
+  type truth = Target.classification Target.t
+  type prediction = Multiclass_prediction.t
+
+  let create ?(undefined = Undefined_metric_policy.Error) metric =
+    { metric; undefined }
+
+  let accuracy = create Accuracy
+  let balanced_accuracy ?undefined () = create ?undefined Balanced_accuracy
+
+  let precision ?undefined ?(average = Multiclass_classification_metrics.Macro)
+      () =
+    create ?undefined (Precision average)
+
+  let recall ?undefined ?(average = Multiclass_classification_metrics.Macro) ()
+      =
+    create ?undefined (Recall average)
+
+  let f1 ?undefined ?(average = Multiclass_classification_metrics.Macro) () =
+    create ?undefined (F1 average)
+
+  let neg_log_loss = create Log_loss
+  let clone specification = specification
+  let params specification = specification
+
+  let response specification =
+    match specification.metric with
+    | Accuracy | Balanced_accuracy | Precision _ | Recall _ | F1 _ -> Labels
+    | Log_loss -> Class_probabilities
+
+  let average_name = function
+    | Multiclass_classification_metrics.Micro -> "micro"
+    | Multiclass_classification_metrics.Macro -> "macro"
+    | Multiclass_classification_metrics.Weighted -> "weighted"
+
+  let name specification =
+    match specification.metric with
+    | Accuracy -> "accuracy"
+    | Balanced_accuracy -> "balanced_accuracy"
+    | Precision average -> "precision_" ^ average_name average
+    | Recall average -> "recall_" ^ average_name average
+    | F1 average -> "f1_" ^ average_name average
+    | Log_loss -> "neg_log_loss"
+
+  let missing_response name =
+    Error
+      (Metric_internal.validation ~name:"multiclass scorer prediction"
+         ~reason:(name ^ " are required by this scorer")
+         ~remediation:"provide the classifier response requested by the scorer")
+
+  let score specification ?sample_weight ~truth ~prediction () =
+    let score_labels metric =
+      match Multiclass_prediction.labels prediction with
+      | None -> missing_response "predicted labels"
+      | Some prediction -> metric prediction
+    in
+    let undefined = specification.undefined in
+    match specification.metric with
+    | Accuracy ->
+        score_labels (fun prediction ->
+            Multiclass_classification_metrics.accuracy ?sample_weight ~truth
+              ~prediction ())
+    | Balanced_accuracy ->
+        score_labels (fun prediction ->
+            Multiclass_classification_metrics.balanced_accuracy ~undefined
+              ?sample_weight ~truth ~prediction ())
+    | Precision average ->
+        score_labels (fun prediction ->
+            Multiclass_classification_metrics.precision ~average ~undefined
+              ?sample_weight ~truth ~prediction ())
+    | Recall average ->
+        score_labels (fun prediction ->
+            Multiclass_classification_metrics.recall ~average ~undefined
+              ?sample_weight ~truth ~prediction ())
+    | F1 average ->
+        score_labels (fun prediction ->
+            Multiclass_classification_metrics.f1 ~average ~undefined
+              ?sample_weight ~truth ~prediction ())
+    | Log_loss -> (
+        match
+          ( Multiclass_prediction.classes prediction,
+            Multiclass_prediction.probabilities prediction )
+        with
+        | Some classes, Some probabilities ->
+            Multiclass_classification_metrics.log_loss ?sample_weight ~truth
+              ~classes ~probabilities ()
+            |> Result.map Float.neg
+        | None, _ | _, None -> missing_response "class probabilities")
+end
+
 module Regression_scorer = struct
   type metric =
     | Mean_absolute_error

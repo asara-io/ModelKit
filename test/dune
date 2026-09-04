@@ -107,6 +107,18 @@
  (libraries modelkit alcotest))
 
 (test
+ (name multiclass_metrics_test)
+ (modules multiclass_metrics_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name multiclass_integration_test)
+ (modules multiclass_integration_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
  (name metrics_test)
  (modules metrics_test)
  (package modelkit)
@@ -194,6 +206,18 @@
   (setenv
    MODELKIT_SKLEARN_METRICS_FIXTURE
    %{dep:fixtures/sklearn/metrics_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name sklearn_multiclass_metrics_fixture_test)
+ (modules sklearn_multiclass_metrics_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/multiclass_metrics_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_SKLEARN_MULTICLASS_METRICS_FIXTURE
+   %{dep:fixtures/sklearn/multiclass_metrics_v1.tsv}
    (run %{test}))))
 
 (test

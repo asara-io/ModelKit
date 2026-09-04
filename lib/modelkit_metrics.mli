@@ -254,6 +254,177 @@ module Binary_classification_scorer : sig
        and type prediction = Binary_prediction.t
 end
 
+(** Aligned multiclass classifier outputs used by scorer specifications.
+
+    At least one response must be present. Probabilities require their class
+    order, must be finite values in [[0., 1.]], and each row must sum to one
+    within [1e-6]. When both responses are supplied, their lengths must agree.
+*)
+module Multiclass_prediction : sig
+  type t
+
+  val create :
+    ?labels:Target.classification Target.t ->
+    ?classes:int array ->
+    ?probabilities:Matrix.t ->
+    unit ->
+    (t, Error.t) result
+
+  val length : t -> int
+  val labels : t -> Target.classification Target.t option
+  val classes : t -> int array option
+  val probabilities : t -> Matrix.t option
+end
+
+(** Confusion-matrix and averaged classification metrics for any label count.
+
+    The label set defaults to the ascending union of observed truth and
+    prediction labels; an explicit [labels] array fixes the confusion-matrix
+    order and drops rows whose labels fall outside it. [Micro] pools weighted
+    counts before dividing, [Macro] averages per-class ratios equally, and
+    [Weighted] averages them by weighted truth support. A per-class ratio with a
+    zero denominator follows the undefined policy, with a fallback of zero,
+    matching scikit-learn's default zero-division handling. Balanced accuracy
+    averages recall over classes with positive support. Log loss clips
+    probabilities to the machine epsilon and requires every truth label to have
+    a probability column. Label metrics are [O(samples + classes squared)] with
+    [O(classes squared)] scratch. *)
+module Multiclass_classification_metrics : sig
+  type average = Micro | Macro | Weighted
+  type confusion_matrix = { labels : int array; counts : Matrix.t }
+
+  type class_scores = {
+    class_labels : int array;
+    precisions : Vector.t;
+    recalls : Vector.t;
+    f1_scores : Vector.t;
+    supports : Vector.t;
+  }
+
+  val confusion_matrix :
+    ?sample_weight:Sample_weight.t ->
+    ?labels:int array ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (confusion_matrix, Error.t) result
+  (** Rows are truth labels and columns are predicted labels. *)
+
+  val accuracy :
+    ?sample_weight:Sample_weight.t ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (float, Error.t) result
+
+  val balanced_accuracy :
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (float, Error.t) result
+
+  val class_scores :
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    ?labels:int array ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (class_scores, Error.t) result
+
+  val precision :
+    ?average:average ->
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    ?labels:int array ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (float, Error.t) result
+
+  val recall :
+    ?average:average ->
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    ?labels:int array ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (float, Error.t) result
+
+  val f1 :
+    ?average:average ->
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    ?labels:int array ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (float, Error.t) result
+
+  val log_loss :
+    ?sample_weight:Sample_weight.t ->
+    truth:Target.classification Target.t ->
+    classes:int array ->
+    probabilities:Matrix.t ->
+    unit ->
+    (float, Error.t) result
+end
+
+(** Higher-is-better multiclass scorer specifications.
+
+    Label metrics request {!Multiclass_prediction.labels}; log loss requests
+    class probabilities and is negated for selection. Averaged metrics default
+    to [Macro] and carry the averaging mode in their name, for example
+    [f1_weighted]. *)
+module Multiclass_classification_scorer : sig
+  type metric =
+    | Accuracy
+    | Balanced_accuracy
+    | Precision of Multiclass_classification_metrics.average
+    | Recall of Multiclass_classification_metrics.average
+    | F1 of Multiclass_classification_metrics.average
+    | Log_loss
+
+  type response = Labels | Class_probabilities
+  type params = { metric : metric; undefined : Undefined_metric_policy.t }
+  type t
+
+  val create : ?undefined:Undefined_metric_policy.t -> metric -> t
+  val response : t -> response
+  val accuracy : t
+  val balanced_accuracy : ?undefined:Undefined_metric_policy.t -> unit -> t
+
+  val precision :
+    ?undefined:Undefined_metric_policy.t ->
+    ?average:Multiclass_classification_metrics.average ->
+    unit ->
+    t
+
+  val recall :
+    ?undefined:Undefined_metric_policy.t ->
+    ?average:Multiclass_classification_metrics.average ->
+    unit ->
+    t
+
+  val f1 :
+    ?undefined:Undefined_metric_policy.t ->
+    ?average:Multiclass_classification_metrics.average ->
+    unit ->
+    t
+
+  val neg_log_loss : t
+
+  include
+    SCORER
+      with type t := t
+       and type params := params
+       and type truth = Target.classification Target.t
+       and type prediction = Multiclass_prediction.t
+end
+
 (** Stable [O(scores)] population aggregation with [O(1)] scratch.
 
     Empty arrays and infinities are typed failures. For NaN values, [Error]

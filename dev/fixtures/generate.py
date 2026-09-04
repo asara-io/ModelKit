@@ -1465,6 +1465,148 @@ def generate_class_weight_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_multiclass_metrics_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.metrics import (
+        accuracy_score,
+        balanced_accuracy_score,
+        confusion_matrix,
+        f1_score,
+        log_loss,
+        precision_recall_fscore_support,
+        precision_score,
+        recall_score,
+    )
+
+    truth = np.array([0, 2, 1, 2, 0, 1, 2, 2, 1, 0], dtype=np.int64)
+    prediction = np.array([0, 2, 1, 1, 0, 2, 2, 2, 1, 1], dtype=np.int64)
+    sample_weight = np.array(
+        [1.0, 2.0, 0.5, 3.0, 1.5, 0.75, 2.5, 1.25, 1.0, 2.0], dtype=np.float64
+    )
+    # A label that appears only in predictions exercises zero-division handling.
+    sparse_truth = np.array([0, 0, 1, 1, 1], dtype=np.int64)
+    sparse_prediction = np.array([0, 0, 2, 1, 1], dtype=np.int64)
+    classes = np.array([0, 1, 2], dtype=np.int64)
+    probabilities = np.array(
+        [
+            [0.7, 0.2, 0.1],
+            [0.1, 0.3, 0.6],
+            [0.2, 0.5, 0.3],
+            [0.3, 0.4, 0.3],
+            [0.6, 0.3, 0.1],
+            [0.2, 0.3, 0.5],
+            [0.05, 0.15, 0.8],
+            [0.1, 0.2, 0.7],
+            [0.25, 0.5, 0.25],
+            [0.45, 0.35, 0.2],
+        ],
+        dtype=np.float64,
+    )
+
+    rows = ["# ModelKit sklearn multiclass metrics reference fixture v1"]
+
+    def add_matrix(name: str, matrix) -> None:
+        for index, row in enumerate(matrix):
+            rows.append(f"{name}\t{index}\t{float_values(row)}")
+
+    def add_vector(name: str, values) -> None:
+        rows.append(f"{name}\t{float_values(values)}")
+
+    add_vector("truth", truth)
+    add_vector("prediction", prediction)
+    add_vector("sample_weight", sample_weight)
+    add_vector("sparse_truth", sparse_truth)
+    add_vector("sparse_prediction", sparse_prediction)
+    add_vector("classes", classes)
+    add_matrix("probabilities", probabilities)
+    add_matrix(
+        "confusion_matrix",
+        confusion_matrix(truth, prediction, sample_weight=sample_weight),
+    )
+    add_matrix(
+        "unweighted_confusion_matrix",
+        confusion_matrix(truth, prediction, labels=[2, 0, 1]),
+    )
+    add_vector("accuracy", [accuracy_score(truth, prediction, sample_weight=sample_weight)])
+    add_vector(
+        "balanced_accuracy",
+        [balanced_accuracy_score(truth, prediction, sample_weight=sample_weight)],
+    )
+    for average in ("micro", "macro", "weighted"):
+        add_vector(
+            f"precision_{average}",
+            [precision_score(truth, prediction, average=average, sample_weight=sample_weight)],
+        )
+        add_vector(
+            f"recall_{average}",
+            [recall_score(truth, prediction, average=average, sample_weight=sample_weight)],
+        )
+        add_vector(
+            f"f1_{average}",
+            [f1_score(truth, prediction, average=average, sample_weight=sample_weight)],
+        )
+    per_precision, per_recall, per_f1, support = precision_recall_fscore_support(
+        truth, prediction, average=None, sample_weight=sample_weight
+    )
+    add_vector("class_precision", per_precision)
+    add_vector("class_recall", per_recall)
+    add_vector("class_f1", per_f1)
+    add_vector("class_support", support)
+    add_vector(
+        "sparse_precision_macro",
+        [precision_score(sparse_truth, sparse_prediction, average="macro", zero_division=0.0)],
+    )
+    add_vector(
+        "sparse_recall_macro",
+        [recall_score(sparse_truth, sparse_prediction, average="macro", zero_division=0.0)],
+    )
+    add_vector(
+        "sparse_f1_weighted",
+        [f1_score(sparse_truth, sparse_prediction, average="weighted", zero_division=0.0)],
+    )
+    add_vector(
+        "sparse_balanced_accuracy",
+        [balanced_accuracy_score(sparse_truth, sparse_prediction)],
+    )
+    add_vector(
+        "log_loss",
+        [log_loss(truth, probabilities, sample_weight=sample_weight, labels=classes)],
+    )
+
+    data_path = fixture_dir / "multiclass_metrics_v1.tsv"
+    metadata_path = fixture_dir / "multiclass_metrics_v1.metadata.json"
+    data_path.write_text("\n".join(rows) + "\n", encoding="utf-8", newline="\n")
+    metadata = {
+        "configuration": {
+            "averages": ["micro", "macro", "weighted"],
+            "classes": 3,
+            "samples": int(truth.shape[0]),
+            "weighted": True,
+            "zero_division": 0.0,
+        },
+        "environment": environment.metadata(),
+        "fixture": "multiclass_metrics_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.metrics.accuracy_score",
+            "sklearn.metrics.balanced_accuracy_score",
+            "sklearn.metrics.confusion_matrix",
+            "sklearn.metrics.f1_score",
+            "sklearn.metrics.log_loss",
+            "sklearn.metrics.precision_recall_fscore_support",
+            "sklearn.metrics.precision_score",
+            "sklearn.metrics.recall_score",
+        ],
+        "schema_version": 1,
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
@@ -1482,6 +1624,7 @@ def main() -> None:
     generate_sgd_regressor_fixture(fixture_dir)
     generate_sgd_classifier_fixture(fixture_dir)
     generate_class_weight_fixture(fixture_dir)
+    generate_multiclass_metrics_fixture(fixture_dir)
 
 
 if __name__ == "__main__":

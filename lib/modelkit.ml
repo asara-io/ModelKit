@@ -82,6 +82,14 @@ module Regression_scorer = Modelkit_metrics.Regression_scorer
 module Binary_classification_scorer =
   Modelkit_metrics.Binary_classification_scorer
 
+module Multiclass_prediction = Modelkit_metrics.Multiclass_prediction
+
+module Multiclass_classification_metrics =
+  Modelkit_metrics.Multiclass_classification_metrics
+
+module Multiclass_classification_scorer =
+  Modelkit_metrics.Multiclass_classification_scorer
+
 module Score_aggregation = Modelkit_metrics.Score_aggregation
 module Cross_validation = Modelkit_model_selection.Cross_validation
 module Grid_search = Modelkit_model_selection.Grid_search
