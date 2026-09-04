@@ -1100,6 +1100,104 @@ let sgd_fit_matches_checkpoint_continuation =
           && Sgd_regressor.intercept fitted = Sgd_regressor.intercept resumed
       | Error _, _ | _, Error _ -> false)
 
+let sgd_classifier_fit_matches_checkpoint_continuation =
+  QCheck.Test.make ~count:200
+    ~name:"SGD classifier fit equals the same immutable checkpoint stream"
+    QCheck.(pair (array nat_small) (int_range 1 6))
+    (fun (raw, epochs) ->
+      let samples = 3 + Array.length raw in
+      let x =
+        Result.get_ok
+          (Matrix.init ~rows:samples ~columns:2 (fun row column ->
+               let value =
+                 if row < Array.length raw then raw.(row) else 17 + row
+               in
+               Float.of_int (((value + (column * 13)) mod 21) - 10) /. 10.0))
+      in
+      let feature_schema = Result.get_ok (Feature_schema.of_matrix x) in
+      let y =
+        Target.classification
+          (Array.init samples (fun row -> [| -3; 4; 11 |].(row mod 3)))
+      in
+      let specification =
+        Result.get_ok
+          (Sgd_classifier.create ~loss:Sgd_classifier.Log_loss
+             ~penalty:Sgd_classifier.Elastic_net ~alpha:0.01 ~l1_ratio:0.25
+             ~learning_rate:(Sgd_classifier.Inverse_scaling { power_t = 0.2 })
+             ~eta0:0.05 ~max_epochs:epochs ~shuffle:true ())
+      in
+      let rng = Rng.create (Seed.of_int 2026) in
+      let rec train remaining checkpoint =
+        if remaining = 0 then Ok checkpoint
+        else
+          Result.bind
+            (Sgd_classifier.partial_fit checkpoint ~feature_schema ~x ~y ())
+            (train (remaining - 1))
+      in
+      match
+        ( Sgd_classifier.fit specification ~rng ~feature_schema ~x ~y (),
+          Result.bind
+            (Result.bind
+               (Sgd_classifier.start specification ~rng ~feature_schema
+                  ~classes:[| 11; -3; 4 |])
+               (train epochs))
+            Sgd_classifier.to_fitted )
+      with
+      | Ok fitted, Ok resumed ->
+          Matrix.to_arrays (Sgd_classifier.coefficients fitted)
+          = Matrix.to_arrays (Sgd_classifier.coefficients resumed)
+          && Vector.to_array (Sgd_classifier.intercepts fitted)
+             = Vector.to_array (Sgd_classifier.intercepts resumed)
+          && Sgd_classifier.classes fitted = [| -3; 4; 11 |]
+      | Error _, _ | _, Error _ -> false)
+
+let sgd_log_loss_probabilities_are_simplex =
+  QCheck.Test.make ~count:200
+    ~name:"SGD log-loss probabilities are bounded and sum to one"
+    QCheck.(pair (array nat_small) (int_range 2 4))
+    (fun (raw, class_count) ->
+      let samples = class_count + Array.length raw in
+      let x =
+        Result.get_ok
+          (Matrix.init ~rows:samples ~columns:2 (fun row column ->
+               let value =
+                 if row < Array.length raw then raw.(row) else 29 + row
+               in
+               Float.of_int (((value + (column * 7)) mod 41) - 20) /. 4.0))
+      in
+      let feature_schema = Result.get_ok (Feature_schema.of_matrix x) in
+      let y =
+        Target.classification
+          (Array.init samples (fun row -> row mod class_count))
+      in
+      let specification =
+        Result.get_ok
+          (Sgd_classifier.create ~loss:Sgd_classifier.Log_loss
+             ~learning_rate:Sgd_classifier.Constant ~eta0:0.5 ~max_epochs:3 ())
+      in
+      match
+        Result.bind
+          (Sgd_classifier.fit specification
+             ~rng:(Rng.create (Seed.of_int 7))
+             ~feature_schema ~x ~y ())
+          (fun fitted -> Sgd_classifier.predict_proba fitted ~feature_schema ~x)
+      with
+      | Ok probabilities ->
+          let rec rows row =
+            row = Matrix.rows probabilities
+            ||
+            let total = ref 0.0 in
+            let bounded = ref true in
+            for column = 0 to class_count - 1 do
+              let value = Matrix.get probabilities row column in
+              bounded := !bounded && value >= 0.0 && value <= 1.0;
+              total := !total +. value
+            done;
+            !bounded && Float.abs (!total -. 1.0) <= 1e-12 && rows (row + 1)
+          in
+          Matrix.columns probabilities = class_count && rows 0
+      | Error _ -> false)
+
 let ranking_curves_are_monotone =
   QCheck.Test.make ~count:500
     ~name:"ROC and precision-recall curve axes are monotone"
@@ -1177,6 +1275,8 @@ let () =
         lasso_matches_one_dimensional_soft_threshold;
         regularization_paths_are_descending_and_warm_started;
         sgd_fit_matches_checkpoint_continuation;
+        sgd_classifier_fit_matches_checkpoint_continuation;
+        sgd_log_loss_probabilities_are_simplex;
         logistic_probabilities_are_complementary;
         ridge_classifier_binary_scores_are_opposites;
         ridge_classifier_is_equivariant_to_ordered_label_renaming;

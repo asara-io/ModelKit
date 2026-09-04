@@ -114,6 +114,27 @@ let checkpoint =
 let fitted = Sgd_regressor.to_fitted checkpoint |> Result.get_ok
 ```
 
+`Sgd_classifier` trains binary and multiclass linear classifiers with the same immutable checkpoint contract, penalties, and learning-rate schedules, using either the `Hinge` margin loss or the stable `Log_loss`. A stream registers its complete class set when the checkpoint starts; later batches may omit classes but never introduce unregistered ones. Two classes train one model, more train one one-versus-rest model per ascending class, and every model shares the update counter and per-batch shuffle. `decision_function` returns one score column per model, `binary_decision_function` exposes the binary score as a vector for pipeline dispatch, and `predict_proba` is available for `Log_loss` only.
+
+```ocaml
+let classifier =
+  Sgd_classifier.create ~loss:Sgd_classifier.Log_loss ~alpha:0.0001 ~eta0:0.01 ()
+  |> Result.get_ok
+
+let checkpoint =
+  Sgd_classifier.start classifier ~rng ~feature_schema ~classes:[| 0; 1; 2 |]
+  |> Result.get_ok
+
+let checkpoint =
+  Sgd_classifier.partial_fit checkpoint ~feature_schema ~x:batch_x ~y:batch_labels ()
+  |> Result.get_ok
+
+let probabilities =
+  Sgd_classifier.to_fitted checkpoint
+  |> Result.get_ok
+  |> fun fitted -> Sgd_classifier.predict_proba fitted ~feature_schema ~x:future_x
+```
+
 ### Linear workbench workflow coverage
 
 | Component | Pipeline capabilities | Cross-validation and scoring | scikit-learn fixture | Current boundary |
@@ -124,6 +145,7 @@ let fitted = Sgd_regressor.to_fitted checkpoint |> Result.get_ok
 | `Multinomial_logistic_regression` | Prediction, probabilities, class metadata | Multiclass scoring is scheduled next | Coefficients, intercepts, scores, probabilities, predictions | Matrix decision scores are available directly from the estimator |
 | `Poisson_regression`, `Tweedie_regression` | Prediction | Regression scorers | Coefficients, intercepts, predictions | Dense input; in-memory only |
 | `Sgd_regressor` | Prediction after `fit` or a checkpoint snapshot | Consolidated CV coverage is scheduled with the remaining SGD integration work | Full-fit and repeated-`partial_fit` coefficients, intercepts, predictions | Dense batches; in-memory checkpoints |
+| `Sgd_classifier` | Prediction, binary decision scores, `Log_loss` probabilities, class metadata | Consolidated CV coverage is scheduled with the remaining SGD integration work | Binary and multiclass hinge and log-loss coefficients, intercepts, scores, probabilities, predictions after `fit` and repeated `partial_fit` | Dense batches; in-memory checkpoints; multiclass scores are obtained directly from the estimator |
 
 All estimator rows above use the common immutable estimator contract, and every estimator except the explicitly staged SGD workflow has consolidated pipeline and scoring coverage. Lasso, elastic-net, Poisson, Tweedie, and binary ridge classification are exercised end to end through pipeline fitting, prediction, cross-validation, and the currently supported scorers. Multiclass cross-validation becomes a supported scored workflow when the next planned metrics item adds multiclass scoring; this slice does not coerce multiclass outputs through binary metrics. None of these additions yet has a built-in artifact constructor or codec, so their pipelines remain usable in memory while artifact encoding returns a typed unsupported-component error.
 
@@ -265,7 +287,7 @@ python dev/fixtures/generate.py
 python dev/benchmarks/run.py
 ```
 
-The committed smoke benchmark validates the measurement workflow only. The development preprocessing, dense-linear-model, regularized-linear, SGD-regression, ridge-classifier, multinomial-logistic, generalized-linear-model, splitter, metrics, sequential and bounded-parallel cross-validation, and finite grid-search benchmarks compare ModelKit operations with pinned scikit-learn references on deterministic workloads. Build the corresponding OCaml worker and select a scenario under `dev/benchmarks/scenarios/`; the parallel cross-validation scenario records sequential and four-worker results for both runtimes so speedup, efficiency, wall time, and peak RSS can be compared. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for declared parity tolerances, scope, raw-result links, and limitations. Release comparisons will use the product plan's independent-CI benchmark contract.
+The committed smoke benchmark validates the measurement workflow only. The development preprocessing, dense-linear-model, regularized-linear, SGD-regression, SGD-classification, ridge-classifier, multinomial-logistic, generalized-linear-model, splitter, metrics, sequential and bounded-parallel cross-validation, and finite grid-search benchmarks compare ModelKit operations with pinned scikit-learn references on deterministic workloads. Build the corresponding OCaml worker and select a scenario under `dev/benchmarks/scenarios/`; the parallel cross-validation scenario records sequential and four-worker results for both runtimes so speedup, efficiency, wall time, and peak RSS can be compared. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for declared parity tolerances, scope, raw-result links, and limitations. Release comparisons will use the product plan's independent-CI benchmark contract.
 
 ## Project Policies
 

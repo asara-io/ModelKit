@@ -59,6 +59,12 @@
  (libraries modelkit alcotest))
 
 (test
+ (name sgd_classifier_test)
+ (modules sgd_classifier_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
  (name linear_classifier_test)
  (modules linear_classifier_test)
  (package modelkit)
@@ -229,6 +235,18 @@
   (setenv
    MODELKIT_SKLEARN_SGD_REGRESSOR_FIXTURE
    %{dep:fixtures/sklearn/sgd_regressor_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name sklearn_sgd_classifier_fixture_test)
+ (modules sklearn_sgd_classifier_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/sgd_classifier_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_SKLEARN_SGD_CLASSIFIER_FIXTURE
+   %{dep:fixtures/sklearn/sgd_classifier_v1.tsv}
    (run %{test}))))
 
 (test
