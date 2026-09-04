@@ -51,3 +51,17 @@
   (modelkit (= :version))
   (nx (= 1.0.0~alpha3))
   (alcotest (and :with-test (>= 1.9.0)))))
+
+(package
+ (name modelkit-talon)
+ (synopsis "Checked Talon dataframe column admission for ModelKit")
+ (description
+  "ModelKit Talon converts explicitly selected, typed Talon dataframe columns into immutable ModelKit features, targets, masks, groups, names, and weights with typed validation and allocation reports.")
+ (tags
+  (data-science machine-learning adapters dataframes))
+ (depends
+  (ocaml (>= 5.2))
+  (modelkit (= :version))
+  (talon (= 1.0.0~alpha3))
+  (nx (= 1.0.0~alpha3))
+  (alcotest (and :with-test (>= 1.9.0)))))

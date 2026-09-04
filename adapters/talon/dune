@@ -1,0 +1,11 @@
+(library
+ (name modelkit_talon)
+ (public_name modelkit-talon)
+ (modules modelkit_talon)
+ (libraries modelkit talon nx))
+
+(test
+ (name modelkit_talon_test)
+ (modules modelkit_talon_test)
+ (package modelkit-talon)
+ (libraries modelkit modelkit-talon talon nx alcotest str))

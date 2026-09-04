@@ -13,7 +13,7 @@ The full documentation is available via: [https://ocaml.org/p/modelkit/latest/do
 - Reproducible foundations with deterministic random streams and stable reference numerical operations across supported platforms, OCaml versions, and execution schedules.
 - Typed extension contracts separate immutable estimator specifications from fitted models and return actionable errors.
 - Immutable, validated float64 data primitives catch shape, feature-order, and sample-alignment problems before model code runs.
-- The optional `modelkit-nx` package admits explicitly typed Nx tensors with checked shapes, names, null masks, groups, weights, and observable copy/allocation behavior without making Raven a core dependency.
+- The optional `modelkit-nx` and `modelkit-talon` packages admit explicitly typed Nx tensors and explicitly selected Talon dataframe columns with checked shapes, names, null masks, groups, weights, and observable copy/allocation behavior without making Raven a core dependency.
 - Checked immutable CSR matrices provide canonical sparse storage, zero-copy indexed row views, explicit materialization and payload-memory accounting, and portable dense/CSR numerical-kernel dispatch.
 - Dense datasets admit aligned features, targets, weights, groups, and names under an explicit finiteness policy; stable schema fingerprints and copy/view reports make compatibility and allocation behavior observable.
 - Immutable preprocessing specifications fit mean, median, or constant imputation, population standardization, and variance-based feature filtering without changing or losing feature identities.
@@ -80,7 +80,22 @@ let null_mask = admitted.feature_null_mask
 let allocation = admitted.dataset_reports
 ```
 
-Explicit feature nulls are written as NaN in the admitted matrix for compatibility with existing missing-value transforms, while the separately returned `Null_mask.t` preserves which positions were source nulls rather than genuine IEEE NaNs. Unmasked infinities, null-mask shape mismatches, invalid names, non-finite targets or weights, negative weights, all-zero weights, and int64 labels outside the current platform's OCaml `int` range return typed errors. Nx remains pinned to the tested `1.0.0~alpha3` release while Raven's API is alpha; Talon admission is not implemented yet.
+Explicit feature nulls are written as NaN in the admitted matrix for compatibility with existing missing-value transforms, while the separately returned `Null_mask.t` preserves which positions were source nulls rather than genuine IEEE NaNs. Unmasked infinities, null-mask shape mismatches, invalid names, non-finite targets or weights, negative weights, all-zero weights, and int64 labels outside the current platform's OCaml `int` range return typed errors. Nx remains pinned to the tested `1.0.0~alpha3` release while Raven's API is alpha.
+
+The optional `modelkit-talon` package admits Talon dataframe columns by explicit name and role rather than through Talon's `to_nx` convenience conversion, which casts every numeric column to float32 and folds nulls into NaN. Feature columns must already be float64 and are read in the order selected, so the selection order becomes the feature-name order and the column names become the feature names. Talon null masks on feature columns are merged into the returned `Null_mask.t` and written as NaN in the matrix, while unmasked NaNs stay ordinary data. Target, weight, and group columns must be float64 or int64 as their role requires and must not contain nulls; a column with the wrong type, a null, or more than one role in a dataset returns a typed error naming the column instead of being coerced. Install it with `opam install modelkit-talon`; code using it opens `Modelkit_talon` separately.
+
+```ocaml
+let admitted =
+  Modelkit_talon.classification_dataset
+    ~sample_weight:"weight"
+    ~groups:"site"
+    ~features:[ "temperature"; "pressure" ]
+    ~target:"label"
+    frame
+  |> Result.get_ok
+```
+
+Talon is pinned to the same `1.0.0~alpha3` release as Nx. Cross-adapter conformance, copy/allocation benchmarks, and platform lockfiles for the adapters are scheduled next.
 
 The 0.3.2 API also provides `Simple_imputer`, `Standard_scaler`, and `Variance_threshold`. Imputation learns only from the supplied training matrix and treats NaN as the missing-value marker. Scaling uses population variance and maps constant centered features to zero with a scale of one. Variance filtering keeps columns whose variance is strictly greater than its threshold and preserves selected names in input order. These transformers reject infinities with typed errors rather than silently continuing.
 
@@ -273,7 +288,7 @@ The portable implementation is organized by responsibility:
 | `modelkit_artifact` | Versioned fitted-pipeline persistence and built-in component codecs |
 | `modelkit.ml` | Public façade retaining the stable `Modelkit.*` namespace |
 
-These units remain within the portable `modelkit` package under `lib/`; they are not separately installable packages or additional public namespaces. Dependencies flow from higher-level workflows toward data and protocol foundations. The optional `modelkit-parallel` package lives under `backends/parallel/` and the optional `modelkit-nx` package lives under `adapters/nx/`; both depend inward on the portable core. The Nx adapter exposes the separate `Modelkit_nx` namespace and does not add Raven to `modelkit` itself. Talon and accelerated numerical backends remain reserved under `adapters/` and `backends/` as separate future packages.
+These units remain within the portable `modelkit` package under `lib/`; they are not separately installable packages or additional public namespaces. Dependencies flow from higher-level workflows toward data and protocol foundations. The optional `modelkit-parallel` package lives under `backends/parallel/`, and the optional `modelkit-nx` and `modelkit-talon` packages live under `adapters/nx/` and `adapters/talon/`; all depend inward on the portable core. The adapters expose the separate `Modelkit_nx` and `Modelkit_talon` namespaces and do not add Raven to `modelkit` itself. Owl adapters and accelerated numerical backends remain reserved under `adapters/` and `backends/` as separate future packages.
 
 ## Development
 
@@ -290,6 +305,7 @@ opam exec -- dune build @all @runtest @doc @fmt @opam @install --auto-promote
 opam lint modelkit.opam
 opam lint modelkit-parallel.opam
 opam lint modelkit-nx.opam
+opam lint modelkit-talon.opam
 ```
 
 ### Windows
