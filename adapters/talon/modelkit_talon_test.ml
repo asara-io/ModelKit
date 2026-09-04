@@ -259,6 +259,76 @@ let test_regression_dataset () =
     (Option.is_none admitted.feature_null_mask);
   Alcotest.check Alcotest.int "reports" 2 (List.length admitted.dataset_reports)
 
+module Conformance = Adapter_conformance.Make (struct
+  let name = "modelkit-talon"
+
+  let feature_columns ?null_mask ~names values =
+    Array.to_list
+      (Array.mapi
+         (fun column name ->
+           let column_values = Array.map (fun row -> row.(column)) values in
+           match null_mask with
+           | None -> (name, Talon.Col.float64 column_values)
+           | Some null_mask ->
+               ( name,
+                 Talon.Col.float64_opt
+                   (Array.mapi
+                      (fun row value ->
+                        if null_mask.(row).(column) then None else Some value)
+                      column_values) ))
+         names)
+
+  let features ?null_mask ~names values =
+    Modelkit_talon.features
+      (Talon.create (feature_columns ?null_mask ~names values))
+      (Array.to_list names)
+
+  let single name column = Talon.create [ (name, column) ]
+
+  let regression_target values =
+    Modelkit_talon.regression_target
+      (single "target" (Talon.Col.float64 values))
+      "target"
+
+  let classification_target values =
+    Modelkit_talon.classification_target
+      (single "target" (Talon.Col.int64 values))
+      "target"
+
+  let sample_weight values =
+    Modelkit_talon.sample_weight
+      (single "weight" (Talon.Col.float64 values))
+      "weight"
+
+  let groups values =
+    Modelkit_talon.groups (single "group" (Talon.Col.int64 values)) "group"
+
+  let frame ?null_mask ?sample_weight ?groups ~names ~x target =
+    Talon.create
+      (feature_columns ?null_mask ~names x
+      @ [ ("target", target) ]
+      @ Option.fold ~none:[]
+          ~some:(fun values -> [ ("weight", Talon.Col.float64 values) ])
+          sample_weight
+      @ Option.fold ~none:[]
+          ~some:(fun values -> [ ("group", Talon.Col.int64 values) ])
+          groups)
+
+  let classification_dataset ?null_mask ?sample_weight ?groups ~names ~x ~y () =
+    Modelkit_talon.classification_dataset
+      ?sample_weight:(Option.map (fun _ -> "weight") sample_weight)
+      ?groups:(Option.map (fun _ -> "group") groups)
+      ~features:(Array.to_list names) ~target:"target"
+      (frame ?null_mask ?sample_weight ?groups ~names ~x (Talon.Col.int64 y))
+
+  let regression_dataset ?null_mask ?sample_weight ?groups ~names ~x ~y () =
+    Modelkit_talon.regression_dataset
+      ?sample_weight:(Option.map (fun _ -> "weight") sample_weight)
+      ?groups:(Option.map (fun _ -> "group") groups)
+      ~features:(Array.to_list names) ~target:"target"
+      (frame ?null_mask ?sample_weight ?groups ~names ~x (Talon.Col.float64 y))
+end)
+
 let () =
   Alcotest.run "modelkit-talon"
     [
@@ -274,4 +344,5 @@ let () =
           Alcotest.test_case "dataset" `Quick test_dataset_admission;
           Alcotest.test_case "regression dataset" `Quick test_regression_dataset;
         ] );
+      ("conformance", Conformance.tests);
     ]

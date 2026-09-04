@@ -1341,3 +1341,34 @@ module Conversion_report = struct
   let allocated_payload_bytes report =
     Int64.add report.temporary_payload_bytes report.retained_payload_bytes
 end
+
+module Admission = struct
+  type 'a conversion = { value : 'a; report : Conversion_report.t }
+
+  type features = {
+    matrix : Matrix.t;
+    schema : Feature_schema.t;
+    null_mask : Null_mask.t option;
+    feature_reports : Conversion_report.t list;
+  }
+
+  type 'kind dataset = {
+    dataset : 'kind Dataset.t;
+    feature_null_mask : Null_mask.t option;
+    dataset_reports : Conversion_report.t list;
+  }
+
+  let sum_payload select reports =
+    List.fold_left
+      (fun total report -> Int64.add total (select report))
+      0L reports
+
+  let retained_payload_bytes reports =
+    sum_payload Conversion_report.retained_payload_bytes reports
+
+  let temporary_payload_bytes reports =
+    sum_payload Conversion_report.temporary_payload_bytes reports
+
+  let allocated_payload_bytes reports =
+    sum_payload Conversion_report.allocated_payload_bytes reports
+end

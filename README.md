@@ -13,7 +13,7 @@ The full documentation is available via: [https://ocaml.org/p/modelkit/latest/do
 - Reproducible foundations with deterministic random streams and stable reference numerical operations across supported platforms, OCaml versions, and execution schedules.
 - Typed extension contracts separate immutable estimator specifications from fitted models and return actionable errors.
 - Immutable, validated float64 data primitives catch shape, feature-order, and sample-alignment problems before model code runs.
-- The optional `modelkit-nx` and `modelkit-talon` packages admit explicitly typed Nx tensors and explicitly selected Talon dataframe columns with checked shapes, names, null masks, groups, weights, and observable copy/allocation behavior without making Raven a core dependency.
+- The optional `modelkit-nx` and `modelkit-talon` packages admit explicitly typed Nx tensors and explicitly selected Talon dataframe columns with checked shapes, names, null masks, groups, weights, shared `Admission` result records, a common conformance suite, and observable copy/allocation behavior without making Raven a core dependency.
 - Checked immutable CSR matrices provide canonical sparse storage, zero-copy indexed row views, explicit materialization and payload-memory accounting, and portable dense/CSR numerical-kernel dispatch.
 - Dense datasets admit aligned features, targets, weights, groups, and names under an explicit finiteness policy; stable schema fingerprints and copy/view reports make compatibility and allocation behavior observable.
 - Immutable preprocessing specifications fit mean, median, or constant imputation, population standardization, and variance-based feature filtering without changing or losing feature identities.
@@ -95,7 +95,9 @@ let admitted =
   |> Result.get_ok
 ```
 
-Talon is pinned to the same `1.0.0~alpha3` release as Nx. Cross-adapter conformance, copy/allocation benchmarks, and platform lockfiles for the adapters are scheduled next.
+Both adapters return the records declared by `Modelkit.Admission`, so application code and tests can consume admitted features and datasets without knowing which source produced them, and `Admission.retained_payload_bytes` totals the payload accounting of a whole dataset admission. A source-neutral conformance suite in `test/adapter_conformance.ml` runs the same admission, null-identity, rejection, and payload-accounting cases against every adapter. The `adapter_admission_dense_v1` development benchmark under `dev/benchmarks/` records the copy and allocation cost of both adapters; on the committed macOS report each admits a 100,000 by 40 masked feature matrix with target, weights, and groups in about a quarter of a second while allocating roughly five bytes per retained payload byte.
+
+Talon is pinned to the same `1.0.0~alpha3` release as Nx. Both adapters are verified on Linux x86-64 and macOS arm64 with OCaml 5.2, 5.3, and 5.5 and ship macOS arm64 lockfiles. They are not supported on Windows at this pin because Nx requires OpenBLAS headers and a C++ toolchain that the Windows opam environment does not provide; see `adapters/README.md` for the compatibility matrix.
 
 The 0.3.2 API also provides `Simple_imputer`, `Standard_scaler`, and `Variance_threshold`. Imputation learns only from the supplied training matrix and treats NaN as the missing-value marker. Scaling uses population variance and maps constant centered features to zero with a scale of one. Variance filtering keeps columns whose variance is strictly greater than its threshold and preserves selected names in input order. These transformers reject infinities with typed errors rather than silently continuing.
 
@@ -312,21 +314,25 @@ opam lint modelkit-talon.opam
 
 ```commandline
 opam lock ./modelkit.opam ./modelkit-parallel.opam --lock-suffix=locked.windows-x86_64
-opam install . --deps-only --with-test --with-doc --locked --lock-suffix=locked.windows-x86_64
+opam install ./modelkit.opam ./modelkit-parallel.opam --deps-only --with-test --with-doc --locked --lock-suffix=locked.windows-x86_64
 ```
+
+The Raven adapter packages are not locked or installed on Windows; see `adapters/README.md`.
 
 ### macOS (arm64)
 
 ```sh
-opam lock ./modelkit.opam ./modelkit-parallel.opam --lock-suffix=locked.macos-arm64
+opam lock ./modelkit.opam ./modelkit-parallel.opam ./modelkit-nx.opam ./modelkit-talon.opam --lock-suffix=locked.macos-arm64
 opam install . --deps-only --with-test --with-doc --locked --lock-suffix=locked.macos-arm64
 ```
 
+The four opam files must be locked together so that the in-tree `modelkit` dependency of the optional packages resolves.
+
 The ordinary Dune workspace uses the repository-local opam switch automatically. Reproducible locks are platform-specific because compiler and system dependency packages differ by host.
 
-The full test suite combines named unit tests, deterministic generated properties, metamorphic invariants, executable documentation, a compiled end-to-end example, artifact golden-reader and adversarial-input tests, a compile-time public API consumer, and a reusable numerical-backend conformance suite. Run the current supervised workflow from a source checkout with `opam exec -- dune exec examples/evaluation.exe`.
+The full test suite combines named unit tests, deterministic generated properties, metamorphic invariants, executable documentation, a compiled end-to-end example, artifact golden-reader and adversarial-input tests, a compile-time public API consumer, a reusable numerical-backend conformance suite, and a source-neutral adapter conformance suite shared by every adapter package. Run the current supervised workflow from a source checkout with `opam exec -- dune exec examples/evaluation.exe`.
 
-GitHub Actions is configured to run the build, complete test suite, package build, and documentation generation on Linux x86-64, macOS arm64, and Windows x86-64 with OCaml 5.2, 5.3, and 5.5. These jobs use committed reference data and do not install or execute Python.
+GitHub Actions is configured to run the build, complete test suite, package build, and documentation generation on Linux x86-64, macOS arm64, and Windows x86-64 with OCaml 5.2, 5.3, and 5.5. The Linux and macOS jobs build and test all four packages; the Windows jobs build and test only the portable `modelkit` and `modelkit-parallel` packages because the Raven adapters cannot be built there at the current pin. These jobs use committed reference data and do not install or execute Python.
 
 ### Reference Fixtures and Benchmarks
 

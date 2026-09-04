@@ -571,6 +571,58 @@ def sgd_classification(scenario: dict[str, object]) -> dict[str, object]:
     }
 
 
+def adapter_admission(scenario: dict[str, object]) -> dict[str, object]:
+    import numpy as np
+    from sklearn.utils import check_array, check_consistent_length
+    from sklearn.utils.validation import _check_sample_weight
+
+    dataset = scenario["dataset"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    x = ((rows * 17 + columns * 31 + dataset["seed"]) % 1000).astype(np.float64)
+    x /= 100.0
+    missing = (columns > 0) & (
+        (rows * 101 + columns * 53 + dataset["seed"]) % dataset["missing_modulus"] == 0
+    )
+    x[missing] = np.nan
+    y = rows[:, 0] % 3
+    weights = 1.0 + (rows[:, 0] % 5).astype(np.float64) * 0.25
+    groups = rows[:, 0] // 10
+
+    def admit(features):
+        admitted = check_array(features, dtype=np.float64, ensure_all_finite="allow-nan")
+        labels = check_array(y, ensure_2d=False, dtype=np.int64)
+        admitted_weights = _check_sample_weight(weights, admitted)
+        admitted_groups = check_array(groups, ensure_2d=False, dtype=np.int64)
+        check_consistent_length(admitted, labels, admitted_weights, admitted_groups)
+        return [
+            float(admitted.shape[0]),
+            float(admitted.shape[1]),
+            float(np.nansum(admitted)),
+            float(np.isnan(admitted).sum()),
+            float(labels.sum()),
+            float(admitted_weights.sum()),
+            float(admitted_groups.sum()),
+        ]
+
+    tensor_signature = admit(x)
+    table = {f"feature_{index}": x[:, index].copy() for index in range(x.shape[1])}
+    table_signature = admit(np.column_stack(list(table.values())))
+    signature = np.asarray([*tensor_signature, *table_signature], dtype="<f8")
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "features": x.shape[1],
+        "operations": [
+            "numpy_tensor_check_array_admission",
+            "numpy_column_stack_check_array_admission",
+        ],
+        "samples": x.shape[0],
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
 def splitters(scenario: dict[str, object]) -> dict[str, object]:
     import numpy as np
     from sklearn.model_selection import (
@@ -944,6 +996,8 @@ def main() -> None:
         result = sgd_regression(scenario)
     elif workload == "sgd_classification":
         result = sgd_classification(scenario)
+    elif workload == "adapter_admission":
+        result = adapter_admission(scenario)
     elif workload == "splitters":
         result = splitters(scenario)
     elif workload == "metrics":

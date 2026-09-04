@@ -1,0 +1,69 @@
+opam-version: "2.0"
+name: "modelkit-nx"
+version: "0.3.2"
+synopsis: "Checked Nx tensor admission for ModelKit"
+description:
+  "ModelKit Nx converts explicitly typed Nx tensors into immutable ModelKit features, targets, masks, groups, names, and weights with typed validation and allocation reports."
+maintainer: "Asara developers <devs@asara.io>"
+authors: "Asara"
+license: "Apache-2.0"
+tags: ["data-science" "machine-learning" "adapters" "tensors"]
+homepage: "https://github.com/asara-io/ModelKit"
+bug-reports: "https://github.com/asara-io/ModelKit/issues"
+depends: [
+  "alcotest" {= "1.9.1" & with-test}
+  "astring" {= "0.8.5" & with-test}
+  "base-bigarray" {= "base"}
+  "base-domains" {= "base"}
+  "base-effects" {= "base"}
+  "base-nnp" {= "base"}
+  "base-threads" {= "base"}
+  "base-unix" {= "base"}
+  "camlp-streams" {= "5.0.1" & with-doc}
+  "cmdliner" {= "2.1.1"}
+  "conf-pkg-config" {= "5"}
+  "conf-zlib" {= "1"}
+  "cppo" {= "1.8.0" & with-doc}
+  "crunch" {= "4.1.0" & with-doc}
+  "csexp" {= "1.5.2"}
+  "dune" {= "3.24.2"}
+  "dune-configurator" {= "3.24.2"}
+  "fmt" {= "0.11.0"}
+  "fpath" {= "0.7.3" & with-doc}
+  "logs" {= "0.10.0"}
+  "modelkit" {= "0.3.2"}
+  "nx" {= "1.0.0~alpha3"}
+  "ocaml" {= "5.3.0"}
+  "ocaml-base-compiler" {= "5.3.0"}
+  "ocaml-compiler" {= "5.3.0"}
+  "ocaml-config" {= "3"}
+  "ocaml-options-vanilla" {= "1"}
+  "ocaml-syntax-shims" {= "1.0.0" & with-test}
+  "ocamlbuild" {= "0.16.1"}
+  "ocamlfind" {= "1.9.8"}
+  "odoc" {= "3.2.1" & with-doc}
+  "odoc-parser" {= "3.2.1" & with-doc}
+  "ptime" {= "1.2.0" & with-doc}
+  "re" {= "1.14.0" & with-test}
+  "seq" {= "base" & with-doc}
+  "stdlib-shims" {= "0.3.0" & with-test}
+  "topkg" {= "1.1.1"}
+  "tyxml" {= "4.6.0" & with-doc}
+  "uutf" {= "1.0.4" & with-test}
+]
+build: [
+  ["dune" "subst"] {dev}
+  [
+    "dune"
+    "build"
+    "-p"
+    name
+    "-j"
+    jobs
+    "@install"
+    "@runtest" {with-test}
+    "@doc" {with-doc}
+  ]
+]
+dev-repo: "git+https://github.com/asara-io/ModelKit.git"
+x-maintenance-intent: ["(latest)"]

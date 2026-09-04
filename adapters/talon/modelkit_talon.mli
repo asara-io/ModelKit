@@ -7,16 +7,19 @@
     feature schema. Feature columns may carry Talon null masks; target, weight,
     and group columns must not contain nulls. *)
 
-type 'a conversion = { value : 'a; report : Modelkit.Conversion_report.t }
+type 'a conversion = 'a Modelkit.Admission.conversion = {
+  value : 'a;
+  report : Modelkit.Conversion_report.t;
+}
 
-type features = {
+type features = Modelkit.Admission.features = {
   matrix : Modelkit.Matrix.t;
   schema : Modelkit.Feature_schema.t;
   null_mask : Modelkit.Null_mask.t option;
   feature_reports : Modelkit.Conversion_report.t list;
 }
 
-type 'kind admitted_dataset = {
+type 'kind admitted_dataset = 'kind Modelkit.Admission.dataset = {
   dataset : 'kind Modelkit.Dataset.t;
   feature_null_mask : Modelkit.Null_mask.t option;
   dataset_reports : Modelkit.Conversion_report.t list;

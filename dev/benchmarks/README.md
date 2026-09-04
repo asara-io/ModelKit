@@ -558,3 +558,72 @@ The raw report is
 `results/grid_search_dense_v1.darwin-arm64.json`; it records every raw run,
 toolchain versions, thread limits, candidate output signatures, allocations,
 and the full scenario.
+
+## Adapter admission v1
+
+`adapter_admission_dense_v1` measures the copy and allocation cost of moving a
+deterministic 100,000 by 40 float64 feature matrix with a five-percent null
+mask, an int64 classification target, float64 sample weights, and int64 groups
+into a complete ModelKit dataset through both Raven adapters. The ModelKit
+worker builds an Nx tensor set and an equivalent Talon dataframe from the same
+generator, then times `Modelkit_nx.classification_dataset` and
+`Modelkit_talon.classification_dataset` separately inside one process. The
+scikit-learn worker validates the same data through `check_array` and
+`_check_sample_weight` from a NumPy array and from a column-stacked dictionary
+of NumPy columns. Row and column counts, the NaN-skipping feature sum, the null
+count, and the label, weight, and group sums must agree within `1e-7` absolute
+and relative tolerance for both adapters before a report is written.
+
+The harness performs one warmup and three interleaved measured runs in fresh
+processes. Process wall time includes runtime startup and source construction,
+which for ModelKit means allocating the Nx tensors and Talon columns in OCaml.
+The per-adapter admission timings and allocations inside the ModelKit worker
+isolate the adapter cost. Each adapter also reports the payload bytes recorded
+by its `Conversion_report` values, so the allocation ratio compares the OCaml
+heap allocated during admission with the numeric payload ModelKit retains.
+
+The committed macOS arm64 report recorded these medians:
+
+| Implementation | Wall time | Peak RSS |
+| --- | ---: | ---: |
+| ModelKit 0.4.0-dev / OCaml 5.3.0 | 1.168 s | 283,869,184 bytes |
+| scikit-learn 1.9.0 / Python 3.14.3 | 0.748 s | 255,672,320 bytes |
+
+| Adapter | Admission time | Allocated words | Retained payload | Staging payload | Allocated bytes per retained byte |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `modelkit-nx` | 0.247 s | 47,521,815 | 66,400,000 bytes | 1,600,000 bytes | 5.73 |
+| `modelkit-talon` | 0.228 s | 39,526,023 | 66,400,000 bytes | 1,600,000 bytes | 4.76 |
+
+The retained payload is the 32,000,000-byte feature matrix, the
+32,000,000-byte Boolean null mask, and 800,000 bytes each for the target,
+weights, and groups. The staging payload is the OCaml-int array each adapter
+fills before constructing the target and groups. The remaining allocation is
+boxed floats crossing the `Matrix.init` and `Vector.init` closures plus the
+per-row arrays of the null mask; it is proportional to the payload and is not
+a copy of the source.
+
+This scenario replaced an earlier implementation that read every element
+through `Nx.item` with a freshly allocated index list. On the same machine that
+version needed 7.4 s and 5,106,271,511 words for the Nx admission and 2.7 s and
+1,977,084,649 words for Talon, more than 600 and 230 allocated bytes per
+retained byte. Both adapters now read through the tensor's flat buffer with its
+offset and element strides, which also preserves logical-order reads of strided
+views without materializing them.
+
+This scenario is `claim_eligible: false`: it includes process startup and
+source construction, compares against validation utilities rather than a
+complete scikit-learn workflow, and has not run on the independent CI targets
+required for a comparative performance claim. The worker is excluded on
+Windows, where the Raven adapters are unsupported.
+
+Build and run it from the repository root:
+
+```sh
+opam exec -- dune build bench/ocaml/adapter_admission_worker.exe
+env/bin/python dev/benchmarks/run.py \
+  --scenario dev/benchmarks/scenarios/adapter_admission_dense.json
+```
+
+The raw report is `results/adapter_admission_dense_v1.darwin-arm64.json`; it
+records every raw run, per-adapter timings and allocations, payload accounting,
+toolchain versions, thread limits, output signatures, and the full scenario.

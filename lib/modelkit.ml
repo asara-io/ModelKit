@@ -16,6 +16,7 @@ module Feature_schema = Modelkit_data.Feature_schema
 module Dataset = Modelkit_data.Dataset
 module Error = Modelkit_data.Error
 module Conversion_report = Modelkit_data.Conversion_report
+module Admission = Modelkit_data.Admission
 
 module type SPECIFICATION = Modelkit_protocols.SPECIFICATION
 module type ESTIMATOR = Modelkit_protocols.ESTIMATOR

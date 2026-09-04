@@ -19,34 +19,56 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # The Raven adapters (modelkit-nx, modelkit-talon) build on Linux and
+        # macOS only: Nx 1.0.0~alpha3 requires OpenBLAS headers and a C++
+        # toolchain that the Windows opam environment does not provide. The
+        # portable packages are verified on every platform.
         include:
           - platform: Linux x86-64
             runner: ubuntu-24.04
             ocaml-compiler: "5.2"
+            packages: modelkit,modelkit-parallel,modelkit-nx,modelkit-talon
+            opam-files: ./modelkit.opam ./modelkit-parallel.opam ./modelkit-nx.opam ./modelkit-talon.opam
           - platform: Linux x86-64
             runner: ubuntu-24.04
             ocaml-compiler: "5.3"
+            packages: modelkit,modelkit-parallel,modelkit-nx,modelkit-talon
+            opam-files: ./modelkit.opam ./modelkit-parallel.opam ./modelkit-nx.opam ./modelkit-talon.opam
           - platform: Linux x86-64
             runner: ubuntu-24.04
             ocaml-compiler: "5.5"
+            packages: modelkit,modelkit-parallel,modelkit-nx,modelkit-talon
+            opam-files: ./modelkit.opam ./modelkit-parallel.opam ./modelkit-nx.opam ./modelkit-talon.opam
           - platform: macOS arm64
             runner: macos-15
             ocaml-compiler: "5.2"
+            packages: modelkit,modelkit-parallel,modelkit-nx,modelkit-talon
+            opam-files: ./modelkit.opam ./modelkit-parallel.opam ./modelkit-nx.opam ./modelkit-talon.opam
           - platform: macOS arm64
             runner: macos-15
             ocaml-compiler: "5.3"
+            packages: modelkit,modelkit-parallel,modelkit-nx,modelkit-talon
+            opam-files: ./modelkit.opam ./modelkit-parallel.opam ./modelkit-nx.opam ./modelkit-talon.opam
           - platform: macOS arm64
             runner: macos-15
             ocaml-compiler: "5.5"
+            packages: modelkit,modelkit-parallel,modelkit-nx,modelkit-talon
+            opam-files: ./modelkit.opam ./modelkit-parallel.opam ./modelkit-nx.opam ./modelkit-talon.opam
           - platform: Windows x86-64
             runner: windows-2025
             ocaml-compiler: "5.2"
+            packages: modelkit,modelkit-parallel
+            opam-files: ./modelkit.opam ./modelkit-parallel.opam
           - platform: Windows x86-64
             runner: windows-2025
             ocaml-compiler: "5.3"
+            packages: modelkit,modelkit-parallel
+            opam-files: ./modelkit.opam ./modelkit-parallel.opam
           - platform: Windows x86-64
             runner: windows-2025
             ocaml-compiler: "5.5"
+            packages: modelkit,modelkit-parallel
+            opam-files: ./modelkit.opam ./modelkit-parallel.opam
 
     steps:
       - name: Check out repository
@@ -59,16 +81,16 @@ jobs:
           dune-cache: true
 
       - name: Install runtime dependencies
-        run: opam install . --deps-only
+        run: opam install ${{ matrix.opam-files }} --deps-only
 
       - name: Verify production package build
-        run: opam exec -- dune build -p modelkit,modelkit-parallel,modelkit-nx,modelkit-talon @install
+        run: opam exec -- dune build -p ${{ matrix.packages }} @install
 
       - name: Install test and documentation dependencies
-        run: opam install . --deps-only --with-test --with-doc
+        run: opam install ${{ matrix.opam-files }} --deps-only --with-test --with-doc
 
       - name: Build, test, and generate documentation
-        run: opam exec -- dune build @all @runtest @doc @install
+        run: opam exec -- dune build --only-packages ${{ matrix.packages }} @all @runtest @doc @install
 
       - name: Verify package build
-        run: opam exec -- dune build -p modelkit,modelkit-parallel,modelkit-nx,modelkit-talon @install @runtest @doc
+        run: opam exec -- dune build -p ${{ matrix.packages }} @install @runtest @doc

@@ -153,6 +153,52 @@ let test_regression_dataset () =
     (Alcotest.array (Alcotest.float 0.0))
     "regression dataset target" [| 3.; 4. |] values
 
+module Conformance = Adapter_conformance.Make (struct
+  let name = "modelkit-nx"
+
+  let dimensions values =
+    let rows = Array.length values in
+    let columns = if rows = 0 then 0 else Array.length values.(0) in
+    (rows, columns)
+
+  let flatten values = Array.concat (Array.to_list values)
+
+  let matrix values =
+    let rows, columns = dimensions values in
+    Nx.create Nx.float64 [| rows; columns |] (flatten values)
+
+  let mask values null_mask =
+    let rows, columns = dimensions values in
+    Nx.create Nx.bool [| rows; columns |] (flatten null_mask)
+
+  let features ?null_mask ~names values =
+    Modelkit_nx.features ~names
+      ?null_mask:(Option.map (mask values) null_mask)
+      (matrix values)
+
+  let vector values = Nx.create Nx.float64 [| Array.length values |] values
+  let labels values = Nx.create Nx.int64 [| Array.length values |] values
+  let regression_target values = Modelkit_nx.regression_target (vector values)
+
+  let classification_target values =
+    Modelkit_nx.classification_target (labels values)
+
+  let sample_weight values = Modelkit_nx.sample_weight (vector values)
+  let groups values = Modelkit_nx.groups (labels values)
+
+  let classification_dataset ?null_mask ?sample_weight ?groups ~names ~x ~y () =
+    Modelkit_nx.classification_dataset ~names
+      ?feature_null_mask:(Option.map (mask x) null_mask)
+      ?sample_weight:(Option.map vector sample_weight)
+      ?groups:(Option.map labels groups) ~x:(matrix x) ~y:(labels y) ()
+
+  let regression_dataset ?null_mask ?sample_weight ?groups ~names ~x ~y () =
+    Modelkit_nx.regression_dataset ~names
+      ?feature_null_mask:(Option.map (mask x) null_mask)
+      ?sample_weight:(Option.map vector sample_weight)
+      ?groups:(Option.map labels groups) ~x:(matrix x) ~y:(vector y) ()
+end)
+
 let () =
   Alcotest.run "modelkit-nx"
     [
@@ -167,4 +213,5 @@ let () =
           Alcotest.test_case "dataset" `Quick test_dataset_admission;
           Alcotest.test_case "regression dataset" `Quick test_regression_dataset;
         ] );
+      ("conformance", Conformance.tests);
     ]

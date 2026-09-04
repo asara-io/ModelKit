@@ -392,6 +392,28 @@ val prediction : Target.classification Target.t = <abstr>
 - : string = "roc_auc_ovo"
 ]}
 
+{1 Adapter admission}
+
+Data that lives in another library reaches ModelKit through an optional
+adapter package rather than through a core dependency. The portable core
+declares only the adapter-neutral result records in {!Modelkit.Admission}: a
+[conversion] pairs an admitted value with its {!Modelkit.Conversion_report.t},
+[features] carries a matrix, its schema, an optional explicit
+{!Modelkit.Null_mask.t}, and the feature reports, and [dataset] carries a
+complete {!Modelkit.Dataset.t} with the feature null mask and every report
+produced while admitting the target, weights, and groups. The
+[Admission.retained_payload_bytes], [temporary_payload_bytes], and
+[allocated_payload_bytes] helpers total a report list.
+
+The [modelkit-nx] and [modelkit-talon] packages implement this contract for
+Raven tensors and dataframes. Every adapter copies into immutable storage,
+writes explicit source nulls as NaN while preserving their identity in the
+mask, rejects unmasked infinities and non-finite targets or weights, and
+checks that int64 labels and groups fit OCaml [int]. A shared conformance
+suite exercises those semantics against each adapter, and the adapter
+packages document their type requirements, platform support, and measured
+copy and allocation cost.
+
 {1 Executable example}
 
 Dataset admission permits NaN missing markers only when explicitly requested:

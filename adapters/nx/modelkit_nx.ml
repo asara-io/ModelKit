@@ -1,15 +1,18 @@
 open Modelkit
 
-type 'a conversion = { value : 'a; report : Conversion_report.t }
+type 'a conversion = 'a Admission.conversion = {
+  value : 'a;
+  report : Conversion_report.t;
+}
 
-type features = {
+type features = Admission.features = {
   matrix : Matrix.t;
   schema : Feature_schema.t;
   null_mask : Null_mask.t option;
   feature_reports : Conversion_report.t list;
 }
 
-type 'kind admitted_dataset = {
+type 'kind admitted_dataset = 'kind Admission.dataset = {
   dataset : 'kind Dataset.t;
   feature_null_mask : Null_mask.t option;
   dataset_reports : Conversion_report.t list;
@@ -54,6 +57,37 @@ let map_data_error ~remediation = function
   | Ok value -> Ok value
   | Error error -> Error (Error.of_data_error ~remediation error)
 
+(* Logical-index readers over the tensor's flat buffer. Reading through the
+   buffer with the tensor's offset and element strides avoids allocating an
+   index list per element and works for both contiguous tensors and strided
+   views. A view without computable strides is first materialized, and that
+   full-size staging copy is reported as temporary payload. *)
+type 'a source = { tensor : 'a; staging_bytes : int64 }
+
+let materialize tensor =
+  match Nx.strides tensor with
+  | _ -> { tensor; staging_bytes = 0L }
+  | exception Invalid_argument _ ->
+      let tensor = Nx.contiguous tensor in
+      { tensor; staging_bytes = Int64.of_int (Nx.nbytes tensor) }
+
+let element_strides tensor =
+  let itemsize = Nx.itemsize tensor in
+  Array.map (fun stride -> stride / itemsize) (Nx.strides tensor)
+
+let reader_2d tensor =
+  let buffer = Nx.data tensor in
+  let offset = Nx.offset tensor in
+  let strides = element_strides tensor in
+  fun row column ->
+    Nx_buffer.get buffer (offset + (row * strides.(0)) + (column * strides.(1)))
+
+let reader_1d tensor =
+  let buffer = Nx.data tensor in
+  let offset = Nx.offset tensor in
+  let strides = element_strides tensor in
+  fun index -> Nx_buffer.get buffer (offset + (index * strides.(0)))
+
 let feature_names names columns =
   match names with
   | None -> Ok None
@@ -75,15 +109,16 @@ let feature_null_mask tensor expected_shape =
   else
     let rows = shape.(0) in
     let columns = shape.(1) in
+    let source = materialize tensor in
+    let read = reader_2d source.tensor in
     let* mask =
-      Null_mask.init ~rows ~columns (fun row column ->
-          Nx.item [ row; column ] tensor)
+      Null_mask.init ~rows ~columns read
       |> map_data_error ~remediation:"Pass a valid rank-two Boolean null mask."
     in
     let* report =
       report ~source:"feature null mask" ~source_dtype:"bool" ~shape
         ~source_contiguous:(Nx.is_c_contiguous tensor)
-        ~temporary_payload_bytes:0L
+        ~temporary_payload_bytes:source.staging_bytes
         ~retained_payload_bytes:(int_bytes (Nx.size tensor))
     in
     Ok (mask, report)
@@ -115,6 +150,8 @@ let features ?names ?null_mask tensor =
   let* shape = expect_rank ~name:"features" 2 tensor in
   let rows = shape.(0) in
   let columns = shape.(1) in
+  let source = materialize tensor in
+  let read = reader_2d source.tensor in
   let* names = feature_names names columns in
   let* null_mask, mask_reports =
     match null_mask with
@@ -127,7 +164,7 @@ let features ?names ?null_mask tensor =
     Matrix.init ~rows ~columns (fun row column ->
         match null_mask with
         | Some mask when Null_mask.get mask row column -> Float.nan
-        | None | Some _ -> Nx.item [ row; column ] tensor)
+        | None | Some _ -> read row column)
     |> map_data_error
          ~remediation:"Pass a valid rank-two float64 feature tensor."
   in
@@ -140,7 +177,7 @@ let features ?names ?null_mask tensor =
   let* value_report =
     report ~source:"features" ~source_dtype:"float64" ~shape
       ~source_contiguous:(Nx.is_c_contiguous tensor)
-      ~temporary_payload_bytes:0L
+      ~temporary_payload_bytes:source.staging_bytes
       ~retained_payload_bytes:(float_bytes (Nx.size tensor))
   in
   Ok
@@ -155,8 +192,10 @@ let features ?names ?null_mask tensor =
 let regression_target tensor =
   let* shape = expect_rank ~name:"regression target" 1 tensor in
   let length = shape.(0) in
+  let source = materialize tensor in
+  let read = reader_1d source.tensor in
   let* values =
-    Vector.init ~length (fun index -> Nx.item [ index ] tensor)
+    Vector.init ~length read
     |> map_data_error
          ~remediation:"Pass a valid rank-one float64 regression target."
   in
@@ -168,7 +207,8 @@ let regression_target tensor =
   let* report =
     report ~source:"regression target" ~source_dtype:"float64" ~shape
       ~source_contiguous:(Nx.is_c_contiguous tensor)
-      ~temporary_payload_bytes:0L ~retained_payload_bytes:(float_bytes length)
+      ~temporary_payload_bytes:source.staging_bytes
+      ~retained_payload_bytes:(float_bytes length)
   in
   Ok { value; report }
 
@@ -190,25 +230,29 @@ let checked_int ~name index value =
 let int_array ~name tensor =
   let* shape = expect_rank ~name 1 tensor in
   let length = shape.(0) in
+  let source = materialize tensor in
+  let read = reader_1d source.tensor in
   let values = Array.make length 0 in
   let rec fill index =
-    if index = length then Ok (shape, values)
+    if index = length then Ok (shape, values, source.staging_bytes)
     else
-      let* value = checked_int ~name index (Nx.item [ index ] tensor) in
+      let* value = checked_int ~name index (read index) in
       values.(index) <- value;
       fill (index + 1)
   in
   fill 0
 
 let classification_target tensor =
-  let* shape, values = int_array ~name:"classification target" tensor in
+  let* shape, values, staging_bytes =
+    int_array ~name:"classification target" tensor
+  in
   let length = Array.length values in
   let value = Target.classification values in
   let payload_bytes = int_bytes length in
   let* report =
     report ~source:"classification target" ~source_dtype:"int64" ~shape
       ~source_contiguous:(Nx.is_c_contiguous tensor)
-      ~temporary_payload_bytes:payload_bytes
+      ~temporary_payload_bytes:(Int64.add staging_bytes payload_bytes)
       ~retained_payload_bytes:payload_bytes
   in
   Ok { value; report }
@@ -216,8 +260,10 @@ let classification_target tensor =
 let sample_weight tensor =
   let* shape = expect_rank ~name:"sample weights" 1 tensor in
   let length = shape.(0) in
+  let source = materialize tensor in
+  let read = reader_1d source.tensor in
   let* vector =
-    Vector.init ~length (fun index -> Nx.item [ index ] tensor)
+    Vector.init ~length read
     |> map_data_error
          ~remediation:"Pass a valid rank-one float64 weight tensor."
   in
@@ -230,12 +276,13 @@ let sample_weight tensor =
   let* report =
     report ~source:"sample weights" ~source_dtype:"float64" ~shape
       ~source_contiguous:(Nx.is_c_contiguous tensor)
-      ~temporary_payload_bytes:0L ~retained_payload_bytes:(float_bytes length)
+      ~temporary_payload_bytes:source.staging_bytes
+      ~retained_payload_bytes:(float_bytes length)
   in
   Ok { value; report }
 
 let groups tensor =
-  let* shape, values = int_array ~name:"groups" tensor in
+  let* shape, values, staging_bytes = int_array ~name:"groups" tensor in
   let length = Array.length values in
   let* value =
     Groups.create ~expected_length:length values
@@ -247,7 +294,7 @@ let groups tensor =
   let* report =
     report ~source:"groups" ~source_dtype:"int64" ~shape
       ~source_contiguous:(Nx.is_c_contiguous tensor)
-      ~temporary_payload_bytes:payload_bytes
+      ~temporary_payload_bytes:(Int64.add staging_bytes payload_bytes)
       ~retained_payload_bytes:payload_bytes
   in
   Ok { value; report }

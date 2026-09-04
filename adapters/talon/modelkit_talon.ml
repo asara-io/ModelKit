@@ -1,15 +1,18 @@
 open Modelkit
 
-type 'a conversion = { value : 'a; report : Conversion_report.t }
+type 'a conversion = 'a Admission.conversion = {
+  value : 'a;
+  report : Conversion_report.t;
+}
 
-type features = {
+type features = Admission.features = {
   matrix : Matrix.t;
   schema : Feature_schema.t;
   null_mask : Null_mask.t option;
   feature_reports : Conversion_report.t list;
 }
 
-type 'kind admitted_dataset = {
+type 'kind admitted_dataset = 'kind Admission.dataset = {
   dataset : 'kind Dataset.t;
   feature_null_mask : Null_mask.t option;
   dataset_reports : Conversion_report.t list;
@@ -84,6 +87,14 @@ let report ~source ~source_dtype ~shape ~source_contiguous
 
 let contiguity tensor = Some (Nx.is_c_contiguous tensor)
 
+(* Column tensors are read through their flat buffer with the tensor's offset
+   and element stride, which avoids allocating an index list per element. *)
+let reader tensor =
+  let buffer = Nx.data tensor in
+  let offset = Nx.offset tensor in
+  let stride = (Nx.strides tensor).(0) / Nx.itemsize tensor in
+  fun index -> Nx_buffer.get buffer (offset + (index * stride))
+
 let rec unique_selection seen = function
   | [] -> Ok ()
   | name :: rest ->
@@ -102,7 +113,9 @@ let feature_columns frame names =
           typed_tensor ~role:"features" ~name ~dtype:Nx.float64
             ~expected:"float64" column
         in
-        collect ((tensor, Talon.Col.null_mask column) :: accumulated) rest
+        collect
+          ((reader tensor, Talon.Col.null_mask column) :: accumulated)
+          rest
   in
   collect [] names
 
@@ -167,7 +180,7 @@ let features frame names =
     Matrix.init ~rows ~columns:column_count (fun row column ->
         match null_mask with
         | Some mask when Null_mask.get mask row column -> Float.nan
-        | None | Some _ -> Nx.item [ row ] (fst columns.(column)))
+        | None | Some _ -> (fst columns.(column)) row)
     |> map_data_error
          ~remediation:"Select float64 feature columns with at least one row."
   in
@@ -207,7 +220,7 @@ let float_column ~role frame name =
   let* () = reject_nulls ~role ~name column in
   let length = Talon.Col.length column in
   let* vector =
-    Vector.init ~length (fun index -> Nx.item [ index ] tensor)
+    Vector.init ~length (reader tensor)
     |> map_data_error
          ~remediation:
            (Format.sprintf "Select a float64 %s column with at least one row."
@@ -274,11 +287,12 @@ let int_column ~role frame name =
   in
   let* () = reject_nulls ~role ~name column in
   let length = Talon.Col.length column in
+  let read = reader tensor in
   let values = Array.make length 0 in
   let rec fill index =
     if index = length then Ok (values, tensor)
     else
-      let* value = checked_int ~role ~name index (Nx.item [ index ] tensor) in
+      let* value = checked_int ~role ~name index (read index) in
       values.(index) <- value;
       fill (index + 1)
   in

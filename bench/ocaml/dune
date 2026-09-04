@@ -49,3 +49,9 @@
 (executable
  (name parallel_cross_validation_worker)
  (libraries modelkit modelkit-parallel))
+
+(executable
+ (name adapter_admission_worker)
+ (enabled_if
+  (<> %{os_type} Win32))
+ (libraries modelkit modelkit-nx modelkit-talon nx talon unix))

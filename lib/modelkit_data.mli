@@ -469,6 +469,44 @@ module Conversion_report : sig
   val allocated_payload_bytes : t -> int64
 end
 
+(** Adapter-neutral admission results.
+
+    Every ModelKit adapter returns these records so that conformance tests,
+    allocation benchmarks, and application code can treat admitted data
+    uniformly regardless of the source library. Each [conversion] pairs an
+    immutable ModelKit value with the {!Conversion_report.t} describing the
+    payload allocated to produce it. [features] carries the admitted matrix, its
+    schema, an explicit null mask when the source supplied one, and the reports
+    for the matrix and mask. [dataset] carries a complete {!Dataset.t} together
+    with the feature null mask and every report produced while admitting
+    features, target, weights, and groups. *)
+module Admission : sig
+  type 'a conversion = { value : 'a; report : Conversion_report.t }
+
+  type features = {
+    matrix : Matrix.t;
+    schema : Feature_schema.t;
+    null_mask : Null_mask.t option;
+    feature_reports : Conversion_report.t list;
+  }
+
+  type 'kind dataset = {
+    dataset : 'kind Dataset.t;
+    feature_null_mask : Null_mask.t option;
+    dataset_reports : Conversion_report.t list;
+  }
+
+  val retained_payload_bytes : Conversion_report.t list -> int64
+  (** Total retained payload across a list of reports. *)
+
+  val temporary_payload_bytes : Conversion_report.t list -> int64
+  (** Total discarded staging payload across a list of reports. *)
+
+  val allocated_payload_bytes : Conversion_report.t list -> int64
+  (** Total allocated payload (retained plus temporary) across a list of
+      reports. *)
+end
+
 (** Shared convention for immutable configured components.
 
     Concrete modules expose [params] as a public typed value. [clone] returns an

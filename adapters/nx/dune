@@ -2,10 +2,10 @@
  (name modelkit_nx)
  (public_name modelkit-nx)
  (modules modelkit_nx)
- (libraries modelkit nx))
+ (libraries modelkit nx nx.buffer))
 
 (test
  (name modelkit_nx_test)
  (modules modelkit_nx_test)
  (package modelkit-nx)
- (libraries modelkit modelkit-nx nx alcotest))
+ (libraries modelkit modelkit-nx modelkit_test_support nx alcotest))
