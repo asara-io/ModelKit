@@ -1607,6 +1607,181 @@ def generate_multiclass_metrics_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_ranking_metrics_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.metrics import (
+        average_precision_score,
+        dcg_score,
+        ndcg_score,
+        roc_auc_score,
+        top_k_accuracy_score,
+    )
+
+    binary_truth = np.array([0, 1, 0, 1, 1, 0, 1, 0], dtype=np.int64)
+    binary_probabilities = np.array(
+        [0.1, 0.9, 0.4, 0.4, 0.65, 0.35, 0.8, 0.55], dtype=np.float64
+    )
+    binary_weight = np.array([1.0, 2.0, 0.5, 3.0, 1.5, 0.75, 2.5, 1.25])
+    truth = np.array([0, 2, 1, 2, 0, 1, 2, 2, 1, 0], dtype=np.int64)
+    sample_weight = np.array(
+        [1.0, 2.0, 0.5, 3.0, 1.5, 0.75, 2.5, 1.25, 1.0, 2.0], dtype=np.float64
+    )
+    classes = np.array([0, 1, 2], dtype=np.int64)
+    probabilities = np.array(
+        [
+            [0.7, 0.2, 0.1],
+            [0.1, 0.3, 0.6],
+            [0.2, 0.5, 0.3],
+            [0.3, 0.4, 0.3],
+            [0.6, 0.3, 0.1],
+            [0.2, 0.3, 0.5],
+            [0.05, 0.15, 0.8],
+            [0.1, 0.2, 0.7],
+            [0.25, 0.5, 0.25],
+            [0.45, 0.35, 0.2],
+        ],
+        dtype=np.float64,
+    )
+    # Tied scores and tied gains exercise the tie-averaged and tie-ignoring paths.
+    relevance = np.array(
+        [
+            [3.0, 2.0, 3.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0, 2.0, 0.0],
+            [1.0, 1.0, 1.0, 1.0, 1.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0],
+        ],
+        dtype=np.float64,
+    )
+    ranking_scores = np.array(
+        [
+            [0.9, 0.9, 0.3, 0.1, 0.5],
+            [0.2, 0.2, 0.2, 0.9, 0.1],
+            [0.5, 0.4, 0.3, 0.2, 0.1],
+            [0.1, 0.2, 0.3, 0.4, 0.5],
+        ],
+        dtype=np.float64,
+    )
+    ranking_weight = np.array([1.0, 2.0, 0.5, 1.5], dtype=np.float64)
+
+    rows = ["# ModelKit sklearn ranking metrics reference fixture v1"]
+
+    def add_matrix(name: str, matrix) -> None:
+        for index, row in enumerate(matrix):
+            rows.append(f"{name}\t{index}\t{float_values(row)}")
+
+    def add_vector(name: str, values) -> None:
+        rows.append(f"{name}\t{float_values(values)}")
+
+    add_vector("binary_truth", binary_truth)
+    add_vector("binary_probabilities", binary_probabilities)
+    add_vector("binary_weight", binary_weight)
+    add_vector(
+        "average_precision",
+        [
+            average_precision_score(
+                binary_truth, binary_probabilities, sample_weight=binary_weight
+            )
+        ],
+    )
+    add_vector("truth", truth)
+    add_vector("sample_weight", sample_weight)
+    add_vector("classes", classes)
+    add_matrix("probabilities", probabilities)
+    for average in ("macro", "weighted", "micro"):
+        add_vector(
+            f"roc_auc_ovr_{average}",
+            [
+                roc_auc_score(
+                    truth,
+                    probabilities,
+                    multi_class="ovr",
+                    average=average,
+                    sample_weight=sample_weight,
+                    labels=classes,
+                )
+            ],
+        )
+    for average in ("macro", "weighted"):
+        add_vector(
+            f"roc_auc_ovo_{average}",
+            [
+                roc_auc_score(
+                    truth, probabilities, multi_class="ovo", average=average, labels=classes
+                )
+            ],
+        )
+    for k in (1, 2):
+        add_vector(
+            f"top_{k}_accuracy",
+            [
+                top_k_accuracy_score(
+                    truth, probabilities, k=k, sample_weight=sample_weight, labels=classes
+                )
+            ],
+        )
+    add_matrix("relevance", relevance)
+    add_matrix("ranking_scores", ranking_scores)
+    add_vector("ranking_weight", ranking_weight)
+    for label, k in (("all", None), ("3", 3)):
+        for ties, ignore_ties in (("averaged", False), ("ignored", True)):
+            add_vector(
+                f"dcg_{label}_{ties}",
+                [
+                    dcg_score(
+                        relevance,
+                        ranking_scores,
+                        k=k,
+                        sample_weight=ranking_weight,
+                        ignore_ties=ignore_ties,
+                    )
+                ],
+            )
+            add_vector(
+                f"ndcg_{label}_{ties}",
+                [
+                    ndcg_score(
+                        relevance,
+                        ranking_scores,
+                        k=k,
+                        sample_weight=ranking_weight,
+                        ignore_ties=ignore_ties,
+                    )
+                ],
+            )
+
+    data_path = fixture_dir / "ranking_metrics_v1.tsv"
+    metadata_path = fixture_dir / "ranking_metrics_v1.metadata.json"
+    data_path.write_text("\n".join(rows) + "\n", encoding="utf-8", newline="\n")
+    metadata = {
+        "configuration": {
+            "classes": 3,
+            "ranking_columns": int(relevance.shape[1]),
+            "ranking_cutoffs": [None, 3],
+            "samples": int(truth.shape[0]),
+            "top_k": [1, 2],
+            "weighted": True,
+            "one_vs_one_weighted": False,
+        },
+        "environment": environment.metadata(),
+        "fixture": "ranking_metrics_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.metrics.average_precision_score",
+            "sklearn.metrics.dcg_score",
+            "sklearn.metrics.ndcg_score",
+            "sklearn.metrics.roc_auc_score",
+            "sklearn.metrics.top_k_accuracy_score",
+        ],
+        "schema_version": 1,
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
@@ -1625,6 +1800,7 @@ def main() -> None:
     generate_sgd_classifier_fixture(fixture_dir)
     generate_class_weight_fixture(fixture_dir)
     generate_multiclass_metrics_fixture(fixture_dir)
+    generate_ranking_metrics_fixture(fixture_dir)
 
 
 if __name__ == "__main__":

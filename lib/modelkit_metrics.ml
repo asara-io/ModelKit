@@ -670,6 +670,34 @@ module Binary_classification_metrics = struct
               (right_x -. left_x) *. (left_y +. right_y) *. 0.5)
         in
         Metric_internal.finite ~operation:"ROC AUC" area
+
+  let average_precision ?(positive_label = 1)
+      ?(undefined = Undefined_metric_policy.Error) ?sample_weight ~truth
+      ~positive_probabilities () =
+    match
+      precision_recall_curve ~positive_label ?sample_weight ~truth
+        ~positive_probabilities ()
+    with
+    | Error error -> (
+        match Error.kind error with
+        | Error.Validation { name = "binary ranking curve"; reason } ->
+            Metric_internal.undefined undefined ~name:"average precision"
+              ~reason ~fallback:0.0
+        | Error.Data _ | Error.Shape_mismatch _
+        | Error.Feature_schema_mismatch _ | Error.Validation _
+        | Error.Numerical _ | Error.Convergence _ | Error.Compatibility _
+        | Error.Artifact _ | Error.Cancelled ->
+            Error error)
+    | Ok curve ->
+        let length = Vector.length curve.recalls in
+        let area =
+          Metric_internal.sum (length - 1) (fun index ->
+              (Vector.get curve.recalls index
+              -. Vector.get curve.recalls (index + 1))
+              *. Vector.get curve.precisions index)
+        in
+        Metric_internal.finite ~operation:"average precision"
+          (Float.max 0.0 area)
 end
 
 module Multiclass_prediction = struct
@@ -1162,6 +1190,370 @@ module Multiclass_classification_metrics = struct
         -.Float.log (Float.max epsilon (Float.min (1.0 -. epsilon) probability)))
 end
 
+module Multiclass_ranking = struct
+  open Multiclass_classification_metrics
+
+  type strategy = One_vs_rest | One_vs_one
+
+  let ( let* ) = Result.bind
+
+  let prepare ?sample_weight ~truth ~classes ~probabilities () =
+    let truth = Target.classification_values truth in
+    let length = Array.length truth in
+    let* () =
+      Metric_internal.validate_nonempty ~name:"multiclass ranking metric" length
+    in
+    let* () = Metric_internal.validate_weights ~expected:length sample_weight in
+    let* () = Multiclass_prediction.validate_classes classes in
+    let* () =
+      Metric_internal.validate_length ~name:"probability rows" ~expected:length
+        ~observed:(Matrix.rows probabilities)
+    in
+    let* () =
+      Multiclass_prediction.validate_probability_matrix ~classes probabilities
+    in
+    let index = Hashtbl.create (Array.length classes) in
+    Array.iteri
+      (fun position label -> Hashtbl.replace index label position)
+      classes;
+    let encoded = Array.make length (-1) in
+    let rec encode row =
+      if row = length then Ok ()
+      else
+        match Hashtbl.find_opt index truth.(row) with
+        | Some position ->
+            encoded.(row) <- position;
+            encode (row + 1)
+        | None ->
+            Error
+              (Metric_internal.validation ~name:"multiclass ranking metric"
+                 ~reason:
+                   (Format.sprintf
+                      "truth label %d at row %d has no probability column"
+                      truth.(row) row)
+                 ~remediation:"declare every observed label in the class order")
+    in
+    let* () = encode 0 in
+    Ok (encoded, length)
+
+  let binary_auc ~undefined ~sample_weight ~rows ~positive ~score =
+    let truth =
+      Target.classification
+        (Array.map (fun row -> if positive row then 1 else 0) rows)
+    in
+    let positive_probabilities =
+      Vector.unsafe_init (Array.length rows) (fun position ->
+          score rows.(position))
+    in
+    let sample_weight =
+      Option.map
+        (fun weights ->
+          Sample_weight.of_array ~expected_length:(Array.length rows)
+            (Array.map (Sample_weight.get weights) rows)
+          |> Result.get_ok)
+        sample_weight
+    in
+    Binary_classification_metrics.roc_auc ~undefined ?sample_weight ~truth
+      ~positive_probabilities ()
+
+  (* Micro one-versus-rest averaging scores every (row, class) indicator as
+     one binary observation carrying the row's weight. *)
+  let micro_auc ~undefined ~sample_weight ~encoded ~length ~classes
+      ~probabilities =
+    let class_count = Array.length classes in
+    let flattened = length * class_count in
+    let truth =
+      Target.classification
+        (Array.init flattened (fun cell ->
+             if encoded.(cell / class_count) = cell mod class_count then 1
+             else 0))
+    in
+    let positive_probabilities =
+      Vector.unsafe_init flattened (fun cell ->
+          Matrix.get probabilities (cell / class_count) (cell mod class_count))
+    in
+    let sample_weight =
+      Option.map
+        (fun weights ->
+          Sample_weight.of_array ~expected_length:flattened
+            (Array.init flattened (fun cell ->
+                 Sample_weight.get weights (cell / class_count)))
+          |> Result.get_ok)
+        sample_weight
+    in
+    Binary_classification_metrics.roc_auc ~undefined ?sample_weight ~truth
+      ~positive_probabilities ()
+
+  let average_scores ~average ~undefined ~name scores weights =
+    match average with
+    | Micro -> assert false
+    | Macro ->
+        let total = Array.fold_left ( +. ) 0.0 scores in
+        let mean = total /. Float.of_int (Array.length scores) in
+        if Float.is_nan mean then Ok mean
+        else Metric_internal.finite ~operation:name mean
+    | Weighted ->
+        let total = Array.fold_left ( +. ) 0.0 weights in
+        if total = 0.0 then
+          Metric_internal.undefined undefined ~name
+            ~reason:"no class has positive weighted support" ~fallback:0.0
+        else
+          let weighted = ref 0.0 in
+          Array.iteri
+            (fun index score ->
+              weighted := !weighted +. (score *. weights.(index)))
+            scores;
+          Ok (!weighted /. total)
+
+  let roc_auc ?(strategy = One_vs_rest) ?(average = Macro)
+      ?(undefined = Undefined_metric_policy.Error) ?sample_weight ~truth
+      ~classes ~probabilities () =
+    let* encoded, length =
+      prepare ?sample_weight ~truth ~classes ~probabilities ()
+    in
+    let class_count = Array.length classes in
+    let all_rows = Array.init length Fun.id in
+    let weight = Metric_internal.weight sample_weight in
+    let support position =
+      Metric_internal.sum length (fun row ->
+          if encoded.(row) = position then weight row else 0.0)
+    in
+    match (strategy, average) with
+    | One_vs_rest, Micro ->
+        micro_auc ~undefined ~sample_weight ~encoded ~length ~classes
+          ~probabilities
+    | One_vs_one, Micro ->
+        Error
+          (Metric_internal.validation ~name:"one-versus-one ROC AUC"
+             ~reason:"micro averaging is not defined for class pairs"
+             ~remediation:"choose Macro or Weighted averaging")
+    | One_vs_rest, (Macro | Weighted) ->
+        let rec per_class position accumulated =
+          if position = class_count then Ok (List.rev accumulated)
+          else
+            let* auc =
+              binary_auc ~undefined ~sample_weight ~rows:all_rows
+                ~positive:(fun row -> encoded.(row) = position)
+                ~score:(fun row -> Matrix.get probabilities row position)
+            in
+            per_class (position + 1) (auc :: accumulated)
+        in
+        let* scores = per_class 0 [] in
+        average_scores ~average ~undefined ~name:"one-versus-rest ROC AUC"
+          (Array.of_list scores)
+          (Array.init class_count support)
+    | One_vs_one, (Macro | Weighted) ->
+        (* Pairs range over classes with positive weighted truth support, in
+           ascending class order, as scikit-learn pairs the observed classes. *)
+        let present =
+          List.filter
+            (fun position -> support position > 0.0)
+            (List.init class_count Fun.id)
+        in
+        let total_weight = Metric_internal.sum length weight in
+        let rec pairs = function
+          | [] -> []
+          | first :: rest ->
+              List.map (fun second -> (first, second)) rest @ pairs rest
+        in
+        let rec score_pairs remaining scores prevalences =
+          match remaining with
+          | [] -> Ok (List.rev scores, List.rev prevalences)
+          | (first, second) :: rest ->
+              let rows =
+                all_rows |> Array.to_list
+                |> List.filter (fun row ->
+                    encoded.(row) = first || encoded.(row) = second)
+                |> Array.of_list
+              in
+              let* first_auc =
+                binary_auc ~undefined ~sample_weight ~rows
+                  ~positive:(fun row -> encoded.(row) = first)
+                  ~score:(fun row -> Matrix.get probabilities row first)
+              in
+              let* second_auc =
+                binary_auc ~undefined ~sample_weight ~rows
+                  ~positive:(fun row -> encoded.(row) = second)
+                  ~score:(fun row -> Matrix.get probabilities row second)
+              in
+              let prevalence =
+                Metric_internal.sum (Array.length rows) (fun position ->
+                    weight rows.(position))
+                /. total_weight
+              in
+              score_pairs rest
+                (((first_auc +. second_auc) /. 2.0) :: scores)
+                (prevalence :: prevalences)
+        in
+        if List.length present < 2 then
+          Metric_internal.undefined undefined ~name:"one-versus-one ROC AUC"
+            ~reason:"fewer than two classes have positive weighted support"
+            ~fallback:0.5
+        else
+          let* scores, prevalences = score_pairs (pairs present) [] [] in
+          average_scores ~average ~undefined ~name:"one-versus-one ROC AUC"
+            (Array.of_list scores)
+            (Array.of_list prevalences)
+
+  (* Ties are broken toward the higher column index, matching the reversed
+     stable argsort scikit-learn uses. *)
+  let top_k_accuracy ~k ?sample_weight ~truth ~classes ~probabilities () =
+    let* encoded, length =
+      prepare ?sample_weight ~truth ~classes ~probabilities ()
+    in
+    let class_count = Array.length classes in
+    if k < 1 || k >= class_count then
+      Error
+        (Metric_internal.validation ~name:"top-k accuracy"
+           ~reason:
+             (Format.sprintf "k must satisfy 1 <= k < %d classes, got %d"
+                class_count k)
+           ~remediation:"choose k between one and one less than the class count")
+    else
+      Metric_internal.average ~operation:"top-k accuracy" ~sample_weight length
+        (fun row ->
+          let target = encoded.(row) in
+          let target_score = Matrix.get probabilities row target in
+          let ahead = ref 0 in
+          for column = 0 to class_count - 1 do
+            let score = Matrix.get probabilities row column in
+            if
+              column <> target
+              && (score > target_score
+                 || (score = target_score && column > target))
+            then incr ahead
+          done;
+          if !ahead < k then 1.0 else 0.0)
+end
+
+module Ranking_metrics = struct
+  let ( let* ) = Result.bind
+
+  let validate ?k ?sample_weight ~relevance ~scores () =
+    let rows = Matrix.rows relevance in
+    let columns = Matrix.columns relevance in
+    let* () = Metric_internal.validate_nonempty ~name:"ranking metric" rows in
+    let* () =
+      if columns >= 2 then Ok ()
+      else
+        Error
+          (Metric_internal.validation ~name:"ranking metric"
+             ~reason:"at least two ranked items per row are required"
+             ~remediation:"provide a relevance matrix with two or more columns")
+    in
+    let* () =
+      if Matrix.shape scores = (rows, columns) then Ok ()
+      else
+        Error
+          (Error.make
+             ~remediation:"provide aligned relevance and score matrices"
+             (Error.Shape_mismatch
+                {
+                  name = "ranking scores";
+                  expected = [ rows; columns ];
+                  observed = [ Matrix.rows scores; Matrix.columns scores ];
+                }))
+    in
+    let* () = Metric_internal.validate_weights ~expected:rows sample_weight in
+    let* () =
+      match k with
+      | Some k when k < 1 ->
+          Error
+            (Metric_internal.validation ~name:"ranking cutoff"
+               ~reason:"k must be positive"
+               ~remediation:"choose a positive cutoff or omit k")
+      | None | Some _ -> Ok ()
+    in
+    let rec check row column =
+      if row = rows then Ok ()
+      else if column = columns then check (row + 1) 0
+      else
+        let gain = Matrix.get relevance row column in
+        let score = Matrix.get scores row column in
+        if not (Float.is_finite gain && gain >= 0.0) then
+          Error
+            (Metric_internal.validation ~name:"ranking relevance"
+               ~reason:
+                 (Format.sprintf
+                    "value %g at row %d column %d is not finite and \
+                     non-negative"
+                    gain row column)
+               ~remediation:"provide finite non-negative relevance gains")
+        else if not (Float.is_finite score) then
+          Error
+            (Metric_internal.validation ~name:"ranking scores"
+               ~reason:
+                 (Format.sprintf "value %g at row %d column %d is not finite"
+                    score row column)
+               ~remediation:"provide finite ranking scores")
+        else check row (column + 1)
+    in
+    let* () = check 0 0 in
+    Ok (rows, columns)
+
+  let discounts ?k columns =
+    Array.init columns (fun rank ->
+        match k with
+        | Some k when rank >= k -> 0.0
+        | None | Some _ ->
+            1.0 /. (Float.log (Float.of_int (rank + 2)) /. Float.log 2.0))
+
+  (* Descending score order; ties favour the higher column, matching the
+     reversed stable argsort scikit-learn applies when ignoring ties. *)
+  let ranking scores row columns =
+    let order = Array.init columns Fun.id in
+    Array.stable_sort
+      (fun left right ->
+        let by_score =
+          Float.compare
+            (Matrix.get scores row right)
+            (Matrix.get scores row left)
+        in
+        if by_score <> 0 then by_score else Int.compare right left)
+      order;
+    order
+
+  let row_dcg ~discounts ~ignore_ties relevance scores row columns =
+    let order = ranking scores row columns in
+    if ignore_ties then
+      Metric_internal.sum columns (fun rank ->
+          discounts.(rank) *. Matrix.get relevance row order.(rank))
+    else
+      let total = ref 0.0 in
+      let start = ref 0 in
+      while !start < columns do
+        let score = Matrix.get scores row order.(!start) in
+        let stop = ref !start in
+        let gain = ref 0.0 in
+        let discount = ref 0.0 in
+        while !stop < columns && Matrix.get scores row order.(!stop) = score do
+          gain := !gain +. Matrix.get relevance row order.(!stop);
+          discount := !discount +. discounts.(!stop);
+          incr stop
+        done;
+        total := !total +. (!gain /. Float.of_int (!stop - !start) *. !discount);
+        start := !stop
+      done;
+      !total
+
+  let dcg ?k ?(ignore_ties = false) ?sample_weight ~relevance ~scores () =
+    let* rows, columns = validate ?k ?sample_weight ~relevance ~scores () in
+    let discounts = discounts ?k columns in
+    Metric_internal.average ~operation:"DCG" ~sample_weight rows (fun row ->
+        row_dcg ~discounts ~ignore_ties relevance scores row columns)
+
+  let ndcg ?k ?(ignore_ties = false) ?sample_weight ~relevance ~scores () =
+    let* rows, columns = validate ?k ?sample_weight ~relevance ~scores () in
+    let discounts = discounts ?k columns in
+    Metric_internal.average ~operation:"NDCG" ~sample_weight rows (fun row ->
+        let ideal =
+          row_dcg ~discounts ~ignore_ties:true relevance relevance row columns
+        in
+        if ideal = 0.0 then 0.0
+        else
+          row_dcg ~discounts ~ignore_ties relevance scores row columns /. ideal)
+end
+
 module Multiclass_classification_scorer = struct
   type metric =
     | Accuracy
@@ -1170,6 +1562,11 @@ module Multiclass_classification_scorer = struct
     | Recall of Multiclass_classification_metrics.average
     | F1 of Multiclass_classification_metrics.average
     | Log_loss
+    | Roc_auc of {
+        strategy : Multiclass_ranking.strategy;
+        average : Multiclass_classification_metrics.average;
+      }
+    | Top_k_accuracy of int
 
   type response = Labels | Class_probabilities
   type params = { metric : metric; undefined : Undefined_metric_policy.t }
@@ -1195,13 +1592,19 @@ module Multiclass_classification_scorer = struct
     create ?undefined (F1 average)
 
   let neg_log_loss = create Log_loss
+
+  let roc_auc ?undefined ?(strategy = Multiclass_ranking.One_vs_rest)
+      ?(average = Multiclass_classification_metrics.Macro) () =
+    create ?undefined (Roc_auc { strategy; average })
+
+  let top_k_accuracy ~k = create (Top_k_accuracy k)
   let clone specification = specification
   let params specification = specification
 
   let response specification =
     match specification.metric with
     | Accuracy | Balanced_accuracy | Precision _ | Recall _ | F1 _ -> Labels
-    | Log_loss -> Class_probabilities
+    | Log_loss | Roc_auc _ | Top_k_accuracy _ -> Class_probabilities
 
   let average_name = function
     | Multiclass_classification_metrics.Micro -> "micro"
@@ -1216,6 +1619,20 @@ module Multiclass_classification_scorer = struct
     | Recall average -> "recall_" ^ average_name average
     | F1 average -> "f1_" ^ average_name average
     | Log_loss -> "neg_log_loss"
+    | Roc_auc { strategy; average } ->
+        let strategy_name =
+          match strategy with
+          | Multiclass_ranking.One_vs_rest -> "ovr"
+          | Multiclass_ranking.One_vs_one -> "ovo"
+        in
+        let suffix =
+          match average with
+          | Multiclass_classification_metrics.Macro -> ""
+          | Multiclass_classification_metrics.Micro -> "_micro"
+          | Multiclass_classification_metrics.Weighted -> "_weighted"
+        in
+        "roc_auc_" ^ strategy_name ^ suffix
+    | Top_k_accuracy k -> Format.sprintf "top_%d_accuracy" k
 
   let missing_response name =
     Error
@@ -1228,6 +1645,14 @@ module Multiclass_classification_scorer = struct
       match Multiclass_prediction.labels prediction with
       | None -> missing_response "predicted labels"
       | Some prediction -> metric prediction
+    in
+    let score_probabilities metric =
+      match
+        ( Multiclass_prediction.classes prediction,
+          Multiclass_prediction.probabilities prediction )
+      with
+      | Some classes, Some probabilities -> metric ~classes ~probabilities
+      | None, _ | _, None -> missing_response "class probabilities"
     in
     let undefined = specification.undefined in
     match specification.metric with
@@ -1251,16 +1676,19 @@ module Multiclass_classification_scorer = struct
         score_labels (fun prediction ->
             Multiclass_classification_metrics.f1 ~average ~undefined
               ?sample_weight ~truth ~prediction ())
-    | Log_loss -> (
-        match
-          ( Multiclass_prediction.classes prediction,
-            Multiclass_prediction.probabilities prediction )
-        with
-        | Some classes, Some probabilities ->
+    | Log_loss ->
+        score_probabilities (fun ~classes ~probabilities ->
             Multiclass_classification_metrics.log_loss ?sample_weight ~truth
               ~classes ~probabilities ()
-            |> Result.map Float.neg
-        | None, _ | _, None -> missing_response "class probabilities")
+            |> Result.map Float.neg)
+    | Roc_auc { strategy; average } ->
+        score_probabilities (fun ~classes ~probabilities ->
+            Multiclass_ranking.roc_auc ~strategy ~average ~undefined
+              ?sample_weight ~truth ~classes ~probabilities ())
+    | Top_k_accuracy k ->
+        score_probabilities (fun ~classes ~probabilities ->
+            Multiclass_ranking.top_k_accuracy ~k ?sample_weight ~truth ~classes
+              ~probabilities ())
 end
 
 module Regression_scorer = struct
@@ -1320,6 +1748,7 @@ module Binary_classification_scorer = struct
     | F1
     | Log_loss
     | Roc_auc
+    | Average_precision
 
   type response = Labels | Positive_probabilities
 
@@ -1354,13 +1783,16 @@ module Binary_classification_scorer = struct
   let roc_auc ?positive_label ?undefined () =
     create ?positive_label ?undefined Roc_auc
 
+  let average_precision ?positive_label ?undefined () =
+    create ?positive_label ?undefined Average_precision
+
   let clone specification = specification
   let params specification = specification
 
   let response specification =
     match specification.metric with
     | Accuracy | Balanced_accuracy | Precision | Recall | F1 -> Labels
-    | Log_loss | Roc_auc -> Positive_probabilities
+    | Log_loss | Roc_auc | Average_precision -> Positive_probabilities
 
   let name specification =
     match specification.metric with
@@ -1371,6 +1803,7 @@ module Binary_classification_scorer = struct
     | F1 -> "f1"
     | Log_loss -> "neg_log_loss"
     | Roc_auc -> "roc_auc"
+    | Average_precision -> "average_precision"
 
   let missing_response name =
     Error
@@ -1427,6 +1860,12 @@ module Binary_classification_scorer = struct
     | Roc_auc ->
         score_probabilities (fun positive_probabilities ->
             Binary_classification_metrics.roc_auc
+              ~positive_label:specification.positive_label
+              ~undefined:specification.undefined ?sample_weight ~truth
+              ~positive_probabilities ())
+    | Average_precision ->
+        score_probabilities (fun positive_probabilities ->
+            Binary_classification_metrics.average_precision
               ~positive_label:specification.positive_label
               ~undefined:specification.undefined ?sample_weight ~truth
               ~positive_probabilities ())

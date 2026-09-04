@@ -42,7 +42,15 @@ let label_scorers =
     |]
 
 let probability_scorers =
-  Array.append label_scorers [| Multiclass_classification_scorer.neg_log_loss |]
+  Array.append label_scorers
+    Multiclass_classification_scorer.
+      [|
+        neg_log_loss;
+        roc_auc ();
+        roc_auc ~strategy:Multiclass_ranking.One_vs_one
+          ~average:Multiclass_classification_metrics.Weighted ();
+        top_k_accuracy ~k:2;
+      |]
 
 let test_scores report =
   Cross_validation.folds report
@@ -137,9 +145,14 @@ let test_cross_validation () =
       ~y:binary_labels ()
     |> get_data
   in
+  let binary_scorers =
+    Array.append label_scorers
+      Multiclass_classification_scorer.
+        [| neg_log_loss; roc_auc (); top_k_accuracy ~k:1 |]
+  in
   let binary_report =
     Cross_validation.Multiclass_classification.cross_validate ~splitter
-      ~scorers:probability_scorers ~seed:(Seed.of_int 42)
+      ~scorers:binary_scorers ~seed:(Seed.of_int 42)
       ( multinomial_pipeline () |> fun _ ->
         Pipeline.set_estimator Pipeline.empty
           (Pipeline.classifier ~name:"logistic"

@@ -1380,6 +1380,80 @@ let multiclass_averages_are_consistent =
       | _, _, _, _, Error _ ->
           false)
 
+let ranking_scores_are_bounded_and_ideal_orderings_are_perfect =
+  QCheck.Test.make ~count:300
+    ~name:
+      "NDCG, average precision, and multiclass AUC are bounded and perfect for \
+       ideal rankings"
+    QCheck.(pair (array nat_small) (int_range 2 4))
+    (fun (raw, columns) ->
+      let rows = 1 + (Array.length raw / columns) in
+      let value row column =
+        let index = (row * columns) + column in
+        if index < Array.length raw then raw.(index) else index * 13 mod 7
+      in
+      let relevance =
+        Result.get_ok
+          (Matrix.init ~rows ~columns (fun row column ->
+               Float.of_int
+                 (if column = 0 then 1 + (value row column mod 4)
+                  else value row column mod 4)))
+      in
+      let scores =
+        Result.get_ok
+          (Matrix.init ~rows ~columns (fun row column ->
+               Float.of_int (value (row + 1) column mod 5) /. 5.0))
+      in
+      let samples = rows * columns in
+      let truth =
+        Target.classification
+          (Array.init samples (fun index -> index mod columns))
+      in
+      let probabilities =
+        Result.get_ok
+          (Matrix.init ~rows:samples ~columns (fun row column ->
+               let raw_value =
+                 Float.of_int (1 + (value (row mod rows) column mod 5))
+               in
+               let total = ref 0.0 in
+               for other = 0 to columns - 1 do
+                 total :=
+                   !total
+                   +. Float.of_int (1 + (value (row mod rows) other mod 5))
+               done;
+               raw_value /. !total))
+      in
+      let ideal =
+        Result.get_ok
+          (Matrix.init ~rows:samples ~columns (fun row column ->
+               if column = row mod columns then 0.7
+               else 0.3 /. Float.of_int (columns - 1)))
+      in
+      let classes = Array.init columns Fun.id in
+      let bounded value = value >= 0.0 && value <= 1.0 +. 1e-12 in
+      match
+        ( Ranking_metrics.ndcg ~relevance ~scores (),
+          Ranking_metrics.ndcg ~relevance ~scores:relevance (),
+          Multiclass_ranking.roc_auc
+            ~undefined:Undefined_metric_policy.Use_fallback ~truth ~classes
+            ~probabilities (),
+          Multiclass_ranking.roc_auc ~strategy:Multiclass_ranking.One_vs_one
+            ~truth ~classes ~probabilities:ideal (),
+          Multiclass_ranking.top_k_accuracy ~k:1 ~truth ~classes
+            ~probabilities:ideal () )
+      with
+      | Ok ndcg, Ok ideal_ndcg, Ok auc, Ok ideal_auc, Ok ideal_top ->
+          bounded ndcg && bounded auc
+          && Float.abs (ideal_ndcg -. 1.0) <= 1e-12
+          && Float.abs (ideal_auc -. 1.0) <= 1e-12
+          && Float.abs (ideal_top -. 1.0) <= 1e-12
+      | Error _, _, _, _, _
+      | _, Error _, _, _, _
+      | _, _, Error _, _, _
+      | _, _, _, Error _, _
+      | _, _, _, _, Error _ ->
+          false)
+
 let ranking_curves_are_monotone =
   QCheck.Test.make ~count:500
     ~name:"ROC and precision-recall curve axes are monotone"
@@ -1462,6 +1536,7 @@ let () =
         sgd_ordered_batches_compose;
         balanced_class_weights_equalize_class_mass;
         multiclass_averages_are_consistent;
+        ranking_scores_are_bounded_and_ideal_orderings_are_perfect;
         logistic_probabilities_are_complementary;
         ridge_classifier_binary_scores_are_opposites;
         ridge_classifier_is_equivariant_to_ordered_label_renaming;

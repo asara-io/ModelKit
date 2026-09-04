@@ -90,6 +90,8 @@ module Multiclass_classification_metrics =
 module Multiclass_classification_scorer =
   Modelkit_metrics.Multiclass_classification_scorer
 
+module Multiclass_ranking = Modelkit_metrics.Multiclass_ranking
+module Ranking_metrics = Modelkit_metrics.Ranking_metrics
 module Score_aggregation = Modelkit_metrics.Score_aggregation
 module Cross_validation = Modelkit_model_selection.Cross_validation
 module Grid_search = Modelkit_model_selection.Grid_search

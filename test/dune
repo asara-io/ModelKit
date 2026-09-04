@@ -119,6 +119,12 @@
  (libraries modelkit alcotest))
 
 (test
+ (name ranking_metrics_test)
+ (modules ranking_metrics_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
  (name metrics_test)
  (modules metrics_test)
  (package modelkit)
@@ -218,6 +224,18 @@
   (setenv
    MODELKIT_SKLEARN_MULTICLASS_METRICS_FIXTURE
    %{dep:fixtures/sklearn/multiclass_metrics_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name sklearn_ranking_metrics_fixture_test)
+ (modules sklearn_ranking_metrics_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/ranking_metrics_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_SKLEARN_RANKING_METRICS_FIXTURE
+   %{dep:fixtures/sklearn/ranking_metrics_v1.tsv}
    (run %{test}))))
 
 (test

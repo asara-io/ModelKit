@@ -165,6 +165,7 @@ let test_classification_cross_validation () =
         [|
           Binary_classification_scorer.accuracy;
           Binary_classification_scorer.roc_auc ();
+          Binary_classification_scorer.average_precision ();
           Binary_classification_scorer.neg_log_loss ();
         |]
       ~seed:(Seed.of_int 42)

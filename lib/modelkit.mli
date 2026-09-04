@@ -2143,9 +2143,11 @@ end
     descending and begin with infinity; precision-recall thresholds are
     ascending. ROC and precision-recall curves require positive and negative
     weighted support. Scalar fallbacks are zero for undefined precision, recall,
-    F1, and balanced accuracy, and [0.5] for ROC AUC. Scalar label and loss
-    metrics are [O(samples)] with [O(1)] scratch. Ranking curves are
-    [O(samples * log samples)] time and [O(samples)] space. *)
+    F1, and balanced accuracy, [0.5] for ROC AUC, and zero for average
+    precision, which sums precision over recall steps of the precision-recall
+    curve without interpolation. Scalar label and loss metrics are [O(samples)]
+    with [O(1)] scratch. Ranking curves are [O(samples * log samples)] time and
+    [O(samples)] space. *)
 module Binary_classification_metrics : sig
   type roc_curve = {
     thresholds : Vector.t;
@@ -2219,6 +2221,15 @@ module Binary_classification_metrics : sig
     unit ->
     (float, Error.t) result
 
+  val average_precision :
+    ?positive_label:int ->
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    truth:Target.classification Target.t ->
+    positive_probabilities:Vector.t ->
+    unit ->
+    (float, Error.t) result
+
   val roc_curve :
     ?positive_label:int ->
     ?sample_weight:Sample_weight.t ->
@@ -2266,8 +2277,9 @@ end
 
 (** Higher-is-better binary classification scorer specifications.
 
-    Label metrics request {!Binary_prediction.labels}; log loss and ROC AUC
-    request positive-class probabilities. Log loss is negated for selection. *)
+    Label metrics request {!Binary_prediction.labels}; log loss, ROC AUC, and
+    average precision request positive-class probabilities. Log loss is negated
+    for selection. *)
 module Binary_classification_scorer : sig
   type metric =
     | Accuracy
@@ -2277,6 +2289,7 @@ module Binary_classification_scorer : sig
     | F1
     | Log_loss
     | Roc_auc
+    | Average_precision
 
   type response = Labels | Positive_probabilities
 
@@ -2309,6 +2322,9 @@ module Binary_classification_scorer : sig
   val neg_log_loss : ?positive_label:int -> unit -> t
 
   val roc_auc :
+    ?positive_label:int -> ?undefined:Undefined_metric_policy.t -> unit -> t
+
+  val average_precision :
     ?positive_label:int -> ?undefined:Undefined_metric_policy.t -> unit -> t
 
   include
@@ -2438,12 +2454,86 @@ module Multiclass_classification_metrics : sig
     (float, Error.t) result
 end
 
+(** Ranking metrics over class-probability matrices.
+
+    One-versus-rest ROC AUC scores every class column against its indicator;
+    [Macro] averages classes equally, [Weighted] by weighted truth support, and
+    [Micro] pools every row-class indicator into one binary curve.
+    One-versus-one ROC AUC averages, over every pair of classes with positive
+    weighted support in ascending order, the mean of the two directional AUCs on
+    the rows belonging to that pair; [Weighted] uses the pair's weighted
+    prevalence, and [Micro] is a typed validation error. A class without
+    weighted support follows the undefined policy with a fallback of [0.5].
+    scikit-learn refuses sample weights for one-versus-one AUC; ModelKit applies
+    them to both the pairwise curves and the prevalences.
+
+    Top-k accuracy counts a row as a hit when fewer than [k] other classes
+    outrank the truth class, with exact ties broken toward the higher column
+    index as scikit-learn does. [k] must lie in [\[1, classes)]. One-versus-rest
+    costs [O(classes * n log n)]; one-versus-one costs
+    [O(classes squared * n log n)]; top-k costs [O(n * classes)]. *)
+module Multiclass_ranking : sig
+  type strategy = One_vs_rest | One_vs_one
+
+  val roc_auc :
+    ?strategy:strategy ->
+    ?average:Multiclass_classification_metrics.average ->
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    truth:Target.classification Target.t ->
+    classes:int array ->
+    probabilities:Matrix.t ->
+    unit ->
+    (float, Error.t) result
+
+  val top_k_accuracy :
+    k:int ->
+    ?sample_weight:Sample_weight.t ->
+    truth:Target.classification Target.t ->
+    classes:int array ->
+    probabilities:Matrix.t ->
+    unit ->
+    (float, Error.t) result
+end
+
+(** Discounted cumulative gain over per-row graded relevance.
+
+    Each row of [relevance] holds finite non-negative gains for the row's items
+    and each row of [scores] holds the ranking scores; both matrices share one
+    shape with at least two columns. Rank [r] receives discount
+    [1 / log2 (r + 2)], and [k] zeroes discounts from rank [k] onward. By
+    default tied scores share the mean gain of their group times the group's
+    summed discount, following McSherry and Najork; [ignore_ties] instead ranks
+    tied items by descending column index as scikit-learn's reversed stable sort
+    does. NDCG divides each row by its ideal DCG and scores an all-zero row as
+    zero. Both metrics average rows by sample weight and cost
+    [O(rows * columns log columns)]. *)
+module Ranking_metrics : sig
+  val dcg :
+    ?k:int ->
+    ?ignore_ties:bool ->
+    ?sample_weight:Sample_weight.t ->
+    relevance:Matrix.t ->
+    scores:Matrix.t ->
+    unit ->
+    (float, Error.t) result
+
+  val ndcg :
+    ?k:int ->
+    ?ignore_ties:bool ->
+    ?sample_weight:Sample_weight.t ->
+    relevance:Matrix.t ->
+    scores:Matrix.t ->
+    unit ->
+    (float, Error.t) result
+end
+
 (** Higher-is-better multiclass scorer specifications.
 
-    Label metrics request {!Multiclass_prediction.labels}; log loss requests
-    class probabilities and is negated for selection. Averaged metrics default
-    to [Macro] and carry the averaging mode in their name, for example
-    [f1_weighted]. *)
+    Label metrics request {!Multiclass_prediction.labels}; log loss, ROC AUC,
+    and top-k accuracy request class probabilities, and log loss is negated for
+    selection. Averaged metrics default to [Macro] and carry the averaging mode
+    in their name, for example [f1_weighted]. *)
 module Multiclass_classification_scorer : sig
   type metric =
     | Accuracy
@@ -2452,6 +2542,11 @@ module Multiclass_classification_scorer : sig
     | Recall of Multiclass_classification_metrics.average
     | F1 of Multiclass_classification_metrics.average
     | Log_loss
+    | Roc_auc of {
+        strategy : Multiclass_ranking.strategy;
+        average : Multiclass_classification_metrics.average;
+      }
+    | Top_k_accuracy of int
 
   type response = Labels | Class_probabilities
   type params = { metric : metric; undefined : Undefined_metric_policy.t }
@@ -2481,6 +2576,18 @@ module Multiclass_classification_scorer : sig
     t
 
   val neg_log_loss : t
+
+  val roc_auc :
+    ?undefined:Undefined_metric_policy.t ->
+    ?strategy:Multiclass_ranking.strategy ->
+    ?average:Multiclass_classification_metrics.average ->
+    unit ->
+    t
+  (** Named [roc_auc_ovr] or [roc_auc_ovo] for macro averaging, with a
+      [_weighted] or [_micro] suffix otherwise. *)
+
+  val top_k_accuracy : k:int -> t
+  (** Named [top_<k>_accuracy] so several cutoffs can share one report. *)
 
   include
     SCORER
