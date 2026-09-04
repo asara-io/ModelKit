@@ -83,6 +83,12 @@
  (libraries modelkit alcotest))
 
 (test
+ (name sgd_integration_test)
+ (modules sgd_integration_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
  (name linear_workbench_integration_test)
  (modules linear_workbench_integration_test)
  (package modelkit)

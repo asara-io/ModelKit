@@ -143,10 +143,10 @@ The committed macOS arm64 report recorded these medians:
 
 | Implementation | Wall time | Peak RSS |
 | --- | ---: | ---: |
-| ModelKit 0.4.0-dev / OCaml 5.3.0 | 0.266 s | 8,454,144 bytes |
-| scikit-learn 1.9.0 / Python 3.14.3 | 0.730 s | 126,451,712 bytes |
+| ModelKit 0.4.0-dev / OCaml 5.3.0 | 0.261 s | 8,142,848 bytes |
+| scikit-learn 1.9.0 / Python 3.14.3 | 0.738 s | 126,418,944 bytes |
 
-The ModelKit worker allocated 93,146,578 OCaml words in each measured run.
+The ModelKit worker allocated 94,345,776 OCaml words in each measured run.
 This scenario is `claim_eligible: false`: it includes process startup and data
 generation, tests one aligned learning configuration, and has not run on the
 independent CI targets required for a comparative performance claim.

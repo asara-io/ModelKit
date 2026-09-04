@@ -264,6 +264,74 @@ val fitted : Multinomial_logistic_regression.fitted = <abstr>
 - : int * int = (6, 3)
 ]}
 
+{1 Incremental training}
+
+{!Modelkit.Sgd_regressor} and {!Modelkit.Sgd_classifier} train linear models
+by stochastic gradient descent and share one immutable checkpoint contract.
+[start] creates a zero-initialized checkpoint that owns its RNG continuation;
+each [partial_fit] call processes exactly one non-empty batch and returns a new
+checkpoint while leaving its input reusable. [fit] implements the common
+estimator protocol by running the same batch update for a fixed epoch budget
+or until the largest parameter step falls under an optional tolerance. Both
+estimators accept no penalty, L1, L2, or elastic-net regularization and
+constant or inverse-scaling learning rates.
+
+Streams are deterministic. With [shuffle] disabled, rows keep input order and
+cutting a stream into batches never changes the parameters; with it enabled,
+each batch draws a Fisher-Yates permutation from the checkpoint's stream and
+stores the successor, so results depend only on the seed. Sample weights
+scale each row's loss gradient. A zero-weight row contributes no loss
+gradient but still advances the update counter and applies the penalty step,
+matching scikit-learn's online semantics.
+
+The classifier registers its complete class set at [start]. Later batches may
+omit classes but never introduce unregistered ones. Two classes train one model
+scoring the higher label; more train one one-versus-rest model per ascending
+class, all sharing the update counter and permutation. [Hinge] supports
+prediction and decision scores; [Log_loss] additionally supports
+probabilities. Binary models can join a pipeline with
+{!val:Modelkit.Sgd_classifier.binary_decision_function} and
+{!val:Modelkit.Sgd_classifier.predict_proba}, which lets probability scorers
+participate in cross-validation and grid search. Checkpoints are in-memory
+state, not artifacts.
+
+{@ocaml[
+# open Modelkit;;
+# let x =
+    Matrix.of_arrays [|[|-2.|]; [|-1.|]; [|1.|]; [|2.|]|] |> Result.get_ok;;
+val x : Matrix.t = <abstr>
+# let schema = Feature_schema.of_matrix x |> Result.get_ok;;
+val schema : Feature_schema.t = <abstr>
+# let specification =
+    Sgd_classifier.create ~loss:Sgd_classifier.Log_loss
+      ~penalty:Sgd_classifier.No_penalty
+      ~learning_rate:Sgd_classifier.Constant ~eta0:0.5 ~shuffle:false ()
+    |> Result.get_ok;;
+val specification : Sgd_classifier.t = <abstr>
+# let checkpoint =
+    Sgd_classifier.start specification ~rng:(Rng.create (Seed.of_int 42))
+      ~feature_schema:schema ~classes:[|1; 0|]
+    |> Result.get_ok;;
+val checkpoint : Sgd_classifier.checkpoint = <abstr>
+# let checkpoint =
+    Sgd_classifier.partial_fit checkpoint ~feature_schema:schema ~x
+      ~y:(Target.classification [|0; 0; 1; 1|]) ()
+    |> Result.get_ok;;
+val checkpoint : Sgd_classifier.checkpoint = <abstr>
+# Sgd_classifier.checkpoint_updates checkpoint;;
+- : int = 4
+# let fitted = Sgd_classifier.to_fitted checkpoint |> Result.get_ok;;
+val fitted : Sgd_classifier.fitted = <abstr>
+# Sgd_classifier.classes fitted;;
+- : int array = [|0; 1|]
+# Sgd_classifier.predict fitted ~feature_schema:schema ~x
+  |> Result.get_ok |> Target.classification_values;;
+- : int array = [|0; 0; 1; 1|]
+# Sgd_classifier.predict_proba fitted ~feature_schema:schema ~x
+  |> Result.get_ok |> Matrix.shape;;
+- : int * int = (4, 2)
+]}
+
 {1 Executable example}
 
 Dataset admission permits NaN missing markers only when explicitly requested:

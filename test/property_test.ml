@@ -1198,6 +1198,109 @@ let sgd_log_loss_probabilities_are_simplex =
           Matrix.columns probabilities = class_count && rows 0
       | Error _ -> false)
 
+let sgd_ordered_batches_compose =
+  QCheck.Test.make ~count:200
+    ~name:"SGD ordered streams give the same parameters however batches are cut"
+    QCheck.(pair (array nat_small) (int_range 0 20))
+    (fun (raw, cut) ->
+      let samples = 4 + Array.length raw in
+      let cut = 1 + (cut mod (samples - 1)) in
+      let x =
+        Result.get_ok
+          (Matrix.init ~rows:samples ~columns:2 (fun row column ->
+               let value =
+                 if row < Array.length raw then raw.(row) else 23 + row
+               in
+               Float.of_int (((value + (column * 11)) mod 19) - 9) /. 6.0))
+      in
+      let feature_schema = Result.get_ok (Feature_schema.of_matrix x) in
+      let slice from count =
+        Result.get_ok
+          (Matrix.init ~rows:count ~columns:2 (fun row column ->
+               Matrix.get x (from + row) column))
+      in
+      let labels = Array.init samples (fun row -> row mod 3) in
+      let regression_values =
+        Array.init samples (fun row ->
+            0.3 +. (0.8 *. Matrix.get x row 0) -. (0.6 *. Matrix.get x row 1))
+      in
+      let regression from count =
+        Result.get_ok
+          (Target.regression
+             (Vector.of_array (Array.sub regression_values from count)))
+      in
+      let classification from count =
+        Target.classification (Array.sub labels from count)
+      in
+      let rng = Rng.create (Seed.of_int 11) in
+      let regressor =
+        Result.get_ok
+          (Sgd_regressor.create ~penalty:Sgd_regressor.Elastic_net ~alpha:0.01
+             ~l1_ratio:0.5
+             ~learning_rate:(Sgd_regressor.Inverse_scaling { power_t = 0.4 })
+             ~eta0:0.05 ~max_epochs:1 ~shuffle:false ())
+      in
+      let classifier =
+        Result.get_ok
+          (Sgd_classifier.create ~loss:Sgd_classifier.Hinge
+             ~penalty:Sgd_classifier.Elastic_net ~alpha:0.01 ~l1_ratio:0.5
+             ~learning_rate:(Sgd_classifier.Inverse_scaling { power_t = 0.4 })
+             ~eta0:0.05 ~max_epochs:1 ~shuffle:false ())
+      in
+      let ( let* ) = Result.bind in
+      let regression_state fitted =
+        ( Vector.to_array (Sgd_regressor.coefficients fitted),
+          Sgd_regressor.intercept fitted )
+      in
+      let classification_state fitted =
+        ( Matrix.to_arrays (Sgd_classifier.coefficients fitted),
+          Vector.to_array (Sgd_classifier.intercepts fitted) )
+      in
+      let regression_result =
+        let* whole =
+          Sgd_regressor.fit regressor ~rng ~feature_schema ~x
+            ~y:(regression 0 samples) ()
+        in
+        let* first =
+          Sgd_regressor.partial_fit
+            (Sgd_regressor.start regressor ~rng ~feature_schema)
+            ~feature_schema ~x:(slice 0 cut) ~y:(regression 0 cut) ()
+        in
+        let* second =
+          Sgd_regressor.partial_fit first ~feature_schema
+            ~x:(slice cut (samples - cut))
+            ~y:(regression cut (samples - cut))
+            ()
+        in
+        let* chained = Sgd_regressor.to_fitted second in
+        Ok (regression_state whole = regression_state chained)
+      in
+      let classification_result =
+        let* whole =
+          Sgd_classifier.fit classifier ~rng ~feature_schema ~x
+            ~y:(classification 0 samples) ()
+        in
+        let* initial =
+          Sgd_classifier.start classifier ~rng ~feature_schema
+            ~classes:[| 0; 1; 2 |]
+        in
+        let* first =
+          Sgd_classifier.partial_fit initial ~feature_schema ~x:(slice 0 cut)
+            ~y:(classification 0 cut) ()
+        in
+        let* second =
+          Sgd_classifier.partial_fit first ~feature_schema
+            ~x:(slice cut (samples - cut))
+            ~y:(classification cut (samples - cut))
+            ()
+        in
+        let* chained = Sgd_classifier.to_fitted second in
+        Ok (classification_state whole = classification_state chained)
+      in
+      match (regression_result, classification_result) with
+      | Ok regression, Ok classification -> regression && classification
+      | Error _, _ | _, Error _ -> false)
+
 let ranking_curves_are_monotone =
   QCheck.Test.make ~count:500
     ~name:"ROC and precision-recall curve axes are monotone"
@@ -1277,6 +1380,7 @@ let () =
         sgd_fit_matches_checkpoint_continuation;
         sgd_classifier_fit_matches_checkpoint_continuation;
         sgd_log_loss_probabilities_are_simplex;
+        sgd_ordered_batches_compose;
         logistic_probabilities_are_complementary;
         ridge_classifier_binary_scores_are_opposites;
         ridge_classifier_is_equivariant_to_ordered_label_renaming;
