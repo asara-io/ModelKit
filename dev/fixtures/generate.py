@@ -878,6 +878,100 @@ def generate_ridge_classifier_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_multinomial_logistic_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.linear_model import LogisticRegression
+
+    x_train = np.array(
+        [
+            [-2.0, 0.5, 1.0],
+            [-1.0, -1.5, 0.0],
+            [0.0, 2.0, -0.5],
+            [1.0, -0.5, 2.0],
+            [2.0, 1.5, 1.0],
+            [3.0, -2.0, -1.0],
+            [4.0, 0.25, 0.5],
+            [5.0, 2.5, -2.0],
+        ],
+        dtype=np.float64,
+    )
+    x_predict = np.array(
+        [
+            [-1.5, 0.0, 0.5],
+            [0.5, 1.0, -1.0],
+            [2.5, -1.0, 1.5],
+            [6.0, 0.75, -0.25],
+        ],
+        dtype=np.float64,
+    )
+    target = np.array([-4, -4, 2, 2, 9, -4, 9, 9], dtype=np.int64)
+    sample_weight = np.array(
+        [1.0, 2.0, 0.5, 3.0, 1.5, 0.75, 2.5, 1.25], dtype=np.float64
+    )
+    c = 1.7
+    tolerance = 1e-12
+    max_iterations = 1000
+    model = LogisticRegression(
+        C=c,
+        fit_intercept=True,
+        solver="lbfgs",
+        tol=tolerance,
+        max_iter=max_iterations,
+    ).fit(x_train, target, sample_weight=sample_weight)
+
+    rows = ["# ModelKit sklearn multinomial-logistic reference fixture v1"]
+
+    def add_matrix(name: str, matrix) -> None:
+        for index, row in enumerate(matrix):
+            rows.append(f"{name}\t{index}\t{float_values(row)}")
+
+    def add_vector(name: str, values) -> None:
+        rows.append(f"{name}\t{float_values(values)}")
+
+    add_matrix("x_train", x_train)
+    add_matrix("x_predict", x_predict)
+    add_vector("target", target)
+    add_vector("sample_weight", sample_weight)
+    add_vector("c", [c])
+    add_vector("tolerance", [tolerance])
+    add_vector("max_iterations", [max_iterations])
+    add_vector("classes", model.classes_)
+    add_matrix("coefficients", model.coef_)
+    add_vector("intercepts", model.intercept_)
+    add_matrix("decisions", model.decision_function(x_predict))
+    add_matrix("probabilities", model.predict_proba(x_predict))
+    add_vector("predictions", model.predict(x_predict))
+
+    data_path = fixture_dir / "multinomial_logistic_v1.tsv"
+    metadata_path = fixture_dir / "multinomial_logistic_v1.metadata.json"
+    data_path.write_text("\n".join(rows) + "\n", encoding="utf-8", newline="\n")
+    metadata = {
+        "configuration": {
+            "c": c,
+            "classes": len(model.classes_),
+            "features": x_train.shape[1],
+            "fit_intercept": True,
+            "max_iterations": max_iterations,
+            "prediction_samples": x_predict.shape[0],
+            "samples": x_train.shape[0],
+            "solver": "lbfgs",
+            "tolerance": tolerance,
+            "weighted": True,
+        },
+        "environment": environment.metadata(),
+        "fixture": "multinomial_logistic_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "reference": "sklearn.linear_model.LogisticRegression",
+        "schema_version": 1,
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
@@ -890,6 +984,7 @@ def main() -> None:
     generate_linear_model_fixture(fixture_dir)
     generate_regularized_linear_fixture(fixture_dir)
     generate_ridge_classifier_fixture(fixture_dir)
+    generate_multinomial_logistic_fixture(fixture_dir)
 
 
 if __name__ == "__main__":

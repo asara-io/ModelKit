@@ -1,0 +1,17 @@
+{
+  "c": 1.7,
+  "claim_eligible": false,
+  "dataset": {
+    "features": 12,
+    "samples": 10000,
+    "seed": 1729
+  },
+  "max_iterations": 100,
+  "measured_runs": 3,
+  "scenario": "multinomial_logistic_dense_v1",
+  "solver": "newton-cholesky",
+  "thread_limit": 1,
+  "tolerance": 1e-8,
+  "warmup_runs": 1,
+  "workload": "multinomial_logistic"
+}

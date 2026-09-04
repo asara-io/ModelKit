@@ -592,6 +592,137 @@ let ridge_classifier_is_equivariant_to_ordered_label_renaming =
           | Error _, _ | _, Error _ -> false)
       | Error _, _ | _, Error _ -> false)
 
+let multinomial_probabilities_are_simplex_and_scores_are_centered =
+  QCheck.Test.make ~count:200
+    ~name:"multinomial probabilities form a simplex with centered scores"
+    QCheck.(pair (array (int_range (-20) 20)) (int_range 1 100))
+    (fun (raw, raw_c) ->
+      let rows = 6 + Array.length raw in
+      let x =
+        Result.get_ok
+          (Matrix.init ~rows ~columns:2 (fun row column ->
+               let value =
+                 if row < Array.length raw then raw.(row) else (row * 5) - 13
+               in
+               if column = 0 then Float.of_int value
+               else Float.of_int (value * value mod 17)))
+      in
+      let feature_schema = Result.get_ok (Feature_schema.of_matrix x) in
+      let target =
+        Target.classification
+          (Array.init rows (fun row -> [| -7; 3; 12 |].(row mod 3)))
+      in
+      let c = Float.of_int raw_c /. 10.0 in
+      match
+        Result.bind (Multinomial_logistic_regression.create ~c ())
+          (fun specification ->
+            Multinomial_logistic_regression.fit specification
+              ~rng:(linear_model_rng ()) ~feature_schema ~x ~y:target ())
+      with
+      | Error _ -> false
+      | Ok fitted -> (
+          match
+            ( Multinomial_logistic_regression.decision_function fitted
+                ~feature_schema ~x,
+              Multinomial_logistic_regression.predict_proba fitted
+                ~feature_schema ~x )
+          with
+          | Ok decisions, Ok probabilities ->
+              let rec valid row =
+                if row = rows then true
+                else
+                  let score_total = ref 0.0 in
+                  let probability_total = ref 0.0 in
+                  let finite = ref true in
+                  for class_index = 0 to 2 do
+                    let score = Matrix.get decisions row class_index in
+                    let probability =
+                      Matrix.get probabilities row class_index
+                    in
+                    score_total := !score_total +. score;
+                    probability_total := !probability_total +. probability;
+                    finite :=
+                      !finite && Float.is_finite score
+                      && Float.is_finite probability
+                      && probability >= 0.0 && probability <= 1.0
+                  done;
+                  !finite
+                  && Float.abs !score_total <= 1e-8
+                  && Float.abs (!probability_total -. 1.0) <= 1e-12
+                  && valid (row + 1)
+              in
+              Multinomial_logistic_regression.classes fitted = [| -7; 3; 12 |]
+              && valid 0
+          | Error _, _ | _, Error _ -> false))
+
+let multinomial_integer_weights_match_row_replication =
+  QCheck.Test.make ~count:100
+    ~name:"multinomial integer sample weights equal row replication"
+    QCheck.(triple (int_range 1 3) (int_range 1 3) (int_range 1 3))
+    (fun (first_weight, second_weight, third_weight) ->
+      let source =
+        [|
+          ([| 2.0; 0.0 |], 0, first_weight);
+          ([| 3.0; 0.0 |], 0, first_weight);
+          ([| 0.0; 2.0 |], 1, second_weight);
+          ([| 0.0; 3.0 |], 1, second_weight);
+          ([| -2.0; -2.0 |], 2, third_weight);
+          ([| -3.0; -3.0 |], 2, third_weight);
+        |]
+      in
+      let x =
+        Array.map (fun (features, _, _) -> features) source
+        |> Matrix.of_arrays |> Result.get_ok
+      in
+      let target =
+        Target.classification (Array.map (fun (_, label, _) -> label) source)
+      in
+      let sample_weight =
+        Array.map (fun (_, _, weight) -> Float.of_int weight) source
+        |> Sample_weight.of_array ~expected_length:(Array.length source)
+        |> Result.get_ok
+      in
+      let replicated =
+        Array.to_list source
+        |> List.concat_map (fun ((_, _, weight) as row) ->
+            List.init weight (fun _ -> row))
+        |> Array.of_list
+      in
+      let replicated_x =
+        Array.map (fun (features, _, _) -> features) replicated
+        |> Matrix.of_arrays |> Result.get_ok
+      in
+      let replicated_target =
+        Target.classification
+          (Array.map (fun (_, label, _) -> label) replicated)
+      in
+      let specification =
+        Multinomial_logistic_regression.create ~c:2.0 ~tolerance:1e-10 ()
+        |> Result.get_ok
+      in
+      let fit ?sample_weight x y =
+        Multinomial_logistic_regression.fit specification ?sample_weight
+          ~rng:(linear_model_rng ())
+          ~feature_schema:(Feature_schema.of_matrix x |> Result.get_ok)
+          ~x ~y ()
+      in
+      match
+        (fit ~sample_weight x target, fit replicated_x replicated_target)
+      with
+      | Ok weighted, Ok duplicated ->
+          let weighted =
+            Multinomial_logistic_regression.coefficients weighted
+            |> Matrix.to_arrays |> Array.to_list |> Array.concat
+          in
+          let duplicated =
+            Multinomial_logistic_regression.coefficients duplicated
+            |> Matrix.to_arrays |> Array.to_list |> Array.concat
+          in
+          Array.for_all2
+            (fun left right -> Float.abs (left -. right) <= 1e-8)
+            weighted duplicated
+      | Error _, _ | _, Error _ -> false)
+
 let splitter_rng () = Rng.create (Seed.of_int 37)
 
 let k_fold_partitions_every_sample_once =
@@ -930,6 +1061,8 @@ let () =
         logistic_probabilities_are_complementary;
         ridge_classifier_binary_scores_are_opposites;
         ridge_classifier_is_equivariant_to_ordered_label_renaming;
+        multinomial_probabilities_are_simplex_and_scores_are_centered;
+        multinomial_integer_weights_match_row_replication;
         k_fold_partitions_every_sample_once;
         stratified_folds_balance_each_class;
         time_series_folds_never_train_on_the_future;

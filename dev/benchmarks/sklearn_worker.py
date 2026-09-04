@@ -227,6 +227,58 @@ def ridge_classifier(scenario: dict[str, object]) -> dict[str, object]:
     }
 
 
+def multinomial_logistic(scenario: dict[str, object]) -> dict[str, object]:
+    import numpy as np
+    from sklearn.linear_model import LogisticRegression
+
+    dataset = scenario["dataset"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    x = (
+        (rows * (17 + columns * 12) + columns * 31 + dataset["seed"]) % 1000
+    ).astype(np.float64)
+    x = (x / 100.0) - 5.0
+    target = np.where(
+        x[:, 0] + 0.25 * x[:, 1] > 1.0,
+        9,
+        np.where(x[:, 2] - 0.2 * x[:, 3] > 0.0, 2, -4),
+    )
+    sample_weight = 1.0 + (rows[:, 0] % 5).astype(np.float64) * 0.25
+    fitted = LogisticRegression(
+        C=scenario["c"],
+        solver=scenario["solver"],
+        tol=scenario["tolerance"],
+        max_iter=scenario["max_iterations"],
+    ).fit(x, target, sample_weight=sample_weight)
+    decisions = fitted.decision_function(x)
+    probabilities = fitted.predict_proba(x)
+    predictions = fitted.predict(x)
+    signature = np.asarray(
+        [
+            *decisions[0],
+            *probabilities[0],
+            *probabilities[-1],
+            predictions[0],
+            predictions[-1],
+        ],
+        dtype="<f8",
+    )
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "features": x.shape[1],
+        "operations": [
+            "weighted_multinomial_logistic_fit",
+            "decision_function",
+            "predict_proba",
+            "predict",
+        ],
+        "samples": x.shape[0],
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
 def splitters(scenario: dict[str, object]) -> dict[str, object]:
     import numpy as np
     from sklearn.model_selection import (
@@ -590,6 +642,8 @@ def main() -> None:
         result = linear_models(scenario)
     elif workload == "ridge_classifier":
         result = ridge_classifier(scenario)
+    elif workload == "multinomial_logistic":
+        result = multinomial_logistic(scenario)
     elif workload == "splitters":
         result = splitters(scenario)
     elif workload == "metrics":

@@ -127,6 +127,46 @@ The raw report is
 run, toolchain versions, thread limits, output signatures, allocations, and the
 full scenario.
 
+## Dense multinomial logistic regression v1
+
+`multinomial_logistic_dense_v1` fits a weighted three-class logistic model and
+computes decision scores, softmax probabilities, and predictions on the same
+deterministic 10,000 by 12 float64 matrix in ModelKit and scikit-learn. ModelKit
+uses its portable sum-to-zero damped Newton solver with QR linear solves;
+scikit-learn uses its Newton-Cholesky solver. Both workers are sequential.
+Selected scores, probabilities, and classes must agree within `1e-7` absolute
+and relative tolerance before a report is written.
+
+The harness performs one warmup and three interleaved measured runs in fresh
+processes, so timings include runtime startup, deterministic data generation,
+fitting, and inference. Peak RSS is sampled every millisecond, and the ModelKit
+worker reports OCaml heap allocation words.
+
+The committed macOS arm64 report recorded these medians:
+
+| Implementation | Wall time | Peak RSS |
+| --- | ---: | ---: |
+| ModelKit 0.4.0-dev / OCaml 5.3.0 | 1.057 s | 9,650,176 bytes |
+| scikit-learn 1.9.0 / Python 3.14.3 | 0.749 s | 129,236,992 bytes |
+
+This scenario is `claim_eligible: false`. It includes process startup and data
+generation, compares different Newton linear-system solvers, and has not run on
+independent CI targets. It records parity, deterministic output, allocations,
+and gross regressions, not support for a comparative performance claim.
+
+Build and run it from the repository root:
+
+```sh
+opam exec -- dune build bench/ocaml/multinomial_logistic_worker.exe
+env/bin/python dev/benchmarks/run.py \
+  --scenario dev/benchmarks/scenarios/multinomial_logistic_dense.json
+```
+
+The raw report is
+`results/multinomial_logistic_dense_v1.darwin-arm64.json`; it records every raw
+run, toolchain versions, thread limits, output signatures, allocations, and the
+full scenario.
+
 ## Dense splitters v1
 
 `splitters_dense_v1` generates five folds from the same deterministic 100,000

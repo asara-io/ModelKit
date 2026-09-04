@@ -11,6 +11,10 @@
  (libraries modelkit))
 
 (executable
+ (name multinomial_logistic_worker)
+ (libraries modelkit))
+
+(executable
  (name splitters_worker)
  (libraries modelkit))
 
