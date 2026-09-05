@@ -1,4 +1,4 @@
-# 0.4.0 (2026-09-04)
+# 0.4.1 (2026-09-04)
 
 - Add checked immutable CSR matrices with canonical structure validation,
   zero-copy indexed row views, explicit materialization, payload-memory
@@ -42,7 +42,7 @@
   every report remains development evidence with no performance claim.
 - Defer the optional Lacaml numerical backend to a later release, where
   LAPACK factorizations first have a consumer.
-- Artifacts written by this release record producer version 0.4.0; the
+- Artifacts written by this release record producer version 0.4.1; the
   artifact schema is unchanged and 0.3.x artifacts continue to load.
 
 # 0.3.2 (2026-08-17)
