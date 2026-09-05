@@ -750,6 +750,132 @@ def sparse_kernels(scenario: dict[str, object]) -> dict[str, object]:
     }
 
 
+def solver_shapes(scenario: dict[str, object]) -> dict[str, object]:
+    import time
+
+    import numpy as np
+    from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge
+
+    seed = scenario["seed"]
+
+    def timed(function):
+        started = time.perf_counter_ns()
+        result = function()
+        return result, time.perf_counter_ns() - started
+
+    def fit_record(elapsed_ns, converged, iterations, rank):
+        return {
+            "allocated_words": None,
+            "converged": converged,
+            "elapsed_ns": elapsed_ns,
+            "iterations": iterations,
+            "rank": rank,
+        }
+
+    signature = []
+    shapes = []
+    for shape in scenario["shapes"]:
+        samples = shape["samples"]
+        features = shape["features"]
+        duplicates = shape["duplicates"]
+        rows = np.arange(samples, dtype=np.int64)[:, np.newaxis]
+        columns = np.arange(features, dtype=np.int64)[np.newaxis, :]
+        source = np.where(columns >= features - duplicates, columns - (features - duplicates), columns)
+        x = ((rows * (17 + source * 12) + source * 31 + seed) % 1000).astype(np.float64)
+        x = (x / 100.0) - 5.0
+        coefficients = ((columns[0] % 5) - 2).astype(np.float64) * 0.2
+        noise = (((rows[:, 0] * 13 + 1729) % 11) - 5).astype(np.float64) * 0.01
+        regression = 1.25 + x @ coefficients + noise
+        binary = np.where(x[:, 0] + 0.25 * x[:, 1] - 0.1 * x[:, 2] > 0.0, 7, -3)
+        multiclass = np.where(
+            x[:, 0] + 0.25 * x[:, 1] > 1.0,
+            9,
+            np.where(x[:, 2] - 0.2 * x[:, 3] > 0.0, 2, -4),
+        )
+        sample_weight = 1.0 + (rows[:, 0] % 5).astype(np.float64) * 0.25
+
+        linear, linear_ns = timed(
+            lambda: LinearRegression().fit(x, regression, sample_weight=sample_weight)
+        )
+        linear_prediction = linear.predict(x)
+        ridge, ridge_ns = timed(
+            lambda: Ridge(alpha=scenario["ridge_alpha"], solver="auto").fit(
+                x, regression, sample_weight=sample_weight
+            )
+        )
+        ridge_prediction = ridge.predict(x)
+        logistic, logistic_ns = timed(
+            lambda: LogisticRegression(
+                C=scenario["c"],
+                solver=scenario["logistic_solver"],
+                tol=scenario["tolerance"],
+                max_iter=scenario["max_iterations"],
+            ).fit(x, binary, sample_weight=sample_weight)
+        )
+        probabilities = logistic.predict_proba(x)
+        multinomial, multinomial_ns = timed(
+            lambda: LogisticRegression(
+                C=scenario["c"],
+                solver=scenario["logistic_solver"],
+                tol=scenario["tolerance"],
+                max_iter=scenario["max_iterations"],
+            ).fit(x, multiclass, sample_weight=sample_weight)
+        )
+        multiclass_probabilities = multinomial.predict_proba(x)
+        signature.extend(
+            [
+                linear_prediction[0],
+                linear_prediction[-1],
+                float(linear.rank_),
+                ridge_prediction[0],
+                ridge_prediction[-1],
+                probabilities[0, 1],
+                probabilities[-1, 1],
+                multiclass_probabilities[0, 0],
+                multiclass_probabilities[0, 2],
+                multiclass_probabilities[-1, 1],
+            ]
+        )
+        shapes.append(
+            {
+                "duplicates": duplicates,
+                "features": features,
+                "fits": {
+                    "ordinary_least_squares": fit_record(linear_ns, True, 0, int(linear.rank_)),
+                    "ridge_regression": fit_record(ridge_ns, True, 0, None),
+                    "binary_logistic_regression": fit_record(
+                        logistic_ns,
+                        int(logistic.n_iter_[0]) < scenario["max_iterations"],
+                        int(logistic.n_iter_[0]),
+                        None,
+                    ),
+                    "multinomial_logistic_regression": fit_record(
+                        multinomial_ns,
+                        int(multinomial.n_iter_[0]) < scenario["max_iterations"],
+                        int(multinomial.n_iter_[0]),
+                        None,
+                    ),
+                },
+                "samples": samples,
+                "shape": shape["name"],
+            }
+        )
+    signature = np.asarray(signature, dtype="<f8")
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "operations": [
+            "weighted_ols_fit_predict",
+            "weighted_ridge_fit_predict",
+            "weighted_binary_logistic_fit_proba",
+            "weighted_multinomial_logistic_fit_proba",
+        ],
+        "shapes": shapes,
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
 def splitters(scenario: dict[str, object]) -> dict[str, object]:
     import numpy as np
     from sklearn.model_selection import (
@@ -1127,6 +1253,8 @@ def main() -> None:
         result = adapter_admission(scenario)
     elif workload == "sparse_kernels":
         result = sparse_kernels(scenario)
+    elif workload == "solver_shapes":
+        result = solver_shapes(scenario)
     elif workload == "splitters":
         result = splitters(scenario)
     elif workload == "metrics":

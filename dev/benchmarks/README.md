@@ -715,3 +715,103 @@ The raw report is `results/sparse_kernels_v1.darwin-arm64.json`; it records
 every raw run, per-kernel timings and allocations, CSR and dense memory
 accounting, toolchain versions, thread limits, output signatures, and the full
 scenario.
+
+## Solver shapes v1
+
+`solver_shapes_v1` fits weighted ordinary least squares, weighted ridge,
+weighted binary logistic regression, and weighted multinomial logistic
+regression on four deterministic float64 designs in ModelKit and scikit-learn:
+a tall 40,000 by 8 matrix, a square 2,000 by 200 matrix, a wide 300 by 400
+matrix with more features than samples, and a rank-deficient 5,000 by 24
+matrix whose last eight columns duplicate its first eight. ModelKit uses its
+portable column-pivoted Householder QR for the direct fits and for every
+damped Newton step; scikit-learn uses its LAPACK least-squares OLS, its
+shape-selected `auto` ridge solver, and Newton-Cholesky logistic solvers with
+the same regularization, tolerance, and iteration limit. Training-set
+predictions for the direct fits, the reported numerical rank of the OLS
+design, and selected binary and multiclass probabilities must agree within
+`1e-7` absolute and relative tolerance for every shape before a report is
+written. Predictions rather than coefficients are compared because the wide
+and rank-deficient least-squares problems have many exact solutions; both
+libraries report rank 299 for the wide design and rank 16 for the
+rank-deficient design.
+
+The harness performs one warmup and three interleaved measured runs in fresh
+processes; the per-fit timings, Newton iteration counts, convergence flags,
+and reported ranks inside the report isolate each solver. The ModelKit worker
+also reports OCaml heap allocation words per fit.
+
+The committed macOS arm64 report recorded these medians:
+
+| Implementation | Wall time | Peak RSS |
+| --- | ---: | ---: |
+| ModelKit 0.4.0-dev / OCaml 5.3.0 | 58.945 s | 76,103,680 bytes |
+| scikit-learn 1.9.0 / Python 3.14.3 | 1.288 s | 191,447,040 bytes |
+
+Per-fit medians, with Newton iteration counts in parentheses:
+
+| Shape | ModelKit OLS | scikit-learn OLS | ModelKit ridge | scikit-learn ridge | ModelKit logistic | scikit-learn logistic | ModelKit multinomial | scikit-learn multinomial |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| tall 40,000 × 8 | 36 ms | 5 ms | 36 ms | 2 ms | 511 ms (11) | 20 ms (11) | 2,262 ms (12) | 68 ms (11) |
+| square 2,000 × 200 | 255 ms | 14 ms | 280 ms | 3 ms | 4,808 ms (9) | 15 ms (8) | 24,369 ms (9) | 105 ms (9) |
+| wide 300 × 400 | 71 ms | 11 ms | 273 ms | 2 ms | 3,596 ms (8) | 23 ms (8) | 20,781 ms (8) | 235 ms (8) |
+| rank-deficient 5,000 × 24 | 17 ms | 2 ms | 19 ms | 1 ms | 288 ms (10) | 4 ms (10) | 1,182 ms (10) | 15 ms (10) |
+
+Convergence behaviour is the same in both libraries. Every Newton fit
+converged on every shape within at most one iteration of scikit-learn's count,
+and both direct solvers detected the rank deficiency. The scale behaviour is
+not. ModelKit's direct fits are five to one hundred times slower than LAPACK,
+and its Newton fits are twenty-five to three hundred times slower, with the
+gap widest on the square and wide shapes where each iteration assembles and
+factors a 200- or 400-dimensional Hessian, or a 600- or 1,200-dimensional
+joint Hessian for the multinomial fit. The allocation counts explain most of
+it: the square multinomial fit allocated 3,338,053,496 words over nine
+iterations, about one word per floating-point operation, because the Hessian
+assembly and the QR solve work on boxed `float array array` rows read through
+`Matrix.get`. This is the same defect class that the adapter-admission and
+sparse-kernel scenarios exposed and that the reference kernels have since been
+rewritten to avoid. It is recorded here as the standing performance debt of
+the 0.4.0 linear workbench: correctness and convergence parity are proven
+across shapes, throughput on wider designs is not competitive, and both the
+unboxed rewrite of the Newton solvers and the deferred Lacaml backend are
+the candidate remedies.
+
+This scenario is `claim_eligible: false`: it includes process startup and
+data generation, compares single fits rather than an end-to-end workflow, and
+has not run on the independent CI targets required for a comparative
+performance claim.
+
+Build and run it from the repository root:
+
+```sh
+opam exec -- dune build bench/ocaml/solver_shapes_worker.exe
+env/bin/python dev/benchmarks/run.py \
+  --scenario dev/benchmarks/scenarios/solver_shapes.json
+```
+
+The raw report is `results/solver_shapes_v1.darwin-arm64.json`; it records
+every raw run, per-fit timings, iteration counts, convergence flags, ranks,
+allocations, toolchain versions, thread limits, output signatures, and the
+full scenario.
+
+## Benchmark record for 0.4.0
+
+| Scenario | Evidence | Parity tolerance | ModelKit versus reference |
+| --- | --- | ---: | --- |
+| `preprocessing_dense_v1` | imputation, scaling, variance filtering | 1e-12 | comparable wall time, lower RSS |
+| `linear_models_dense_v1` | OLS, ridge, logistic on 10,000 × 12 | 1e-7 | faster wall time, lower RSS |
+| `regularized_linear_dense_v1` | lasso, elastic net, paths | 1e-6 | see section |
+| `ridge_classifier_dense_v1` | binary and multiclass ridge classification | 1e-7 | see section |
+| `multinomial_logistic_dense_v1` | multinomial fit on 10,000 × 12 | 1e-7 | see section |
+| `glm_dense_v1` | Poisson and Tweedie IRLS | 1e-6 | see section |
+| `sgd_regression_dense_v1`, `sgd_classification_dense_v1` | SGD fits and `partial_fit` chains | 1e-7 | comparable wall time, lower RSS |
+| `splitters_dense_v1`, `metrics_dense_v1` | split materialization, scoring | exact / 1e-7 | see sections |
+| `cross_validation_dense_v1`, `parallel_cross_validation_dense_v1`, `grid_search_dense_v1` | evaluation workflows | 1e-7 | see sections |
+| `adapter_admission_dense_v1` | Nx and Talon copy and allocation | 1e-7 | about five allocated bytes per retained byte |
+| `sparse_kernels_v1` | CSR versus dense dispatch, one-hot output, materialization | 1e-7 | same dispatch ordering, ten to twenty times slower per kernel |
+| `solver_shapes_v1` | direct and Newton solvers across tall, wide, square, and rank-deficient shapes | 1e-7 | convergence parity, five to three hundred times slower on wider designs |
+
+Every scenario is `claim_eligible: false`. None has run on independent CI
+targets, none isolates a workload that the product plan names as a release
+claim, and the wider-shape solver gap above rules out any comparative
+throughput statement for 0.4.0.

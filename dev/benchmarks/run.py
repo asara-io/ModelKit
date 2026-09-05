@@ -288,6 +288,27 @@ def worker_commands(scenario: dict[str, object], scenario_path: Path) -> dict[st
             str(one_hot["features"]),
             str(one_hot["cardinality"]),
         ]
+    elif workload == "solver_shapes":
+        modelkit_worker = (
+            ROOT / "_build" / "default" / "bench" / "ocaml" / "solver_shapes_worker.exe"
+        )
+        if not modelkit_worker.exists():
+            raise RuntimeError(
+                "ModelKit solver-shapes benchmark worker is missing; run "
+                "`opam exec -- dune build bench/ocaml/solver_shapes_worker.exe`"
+            )
+        commands["modelkit"] = [
+            str(modelkit_worker),
+            ",".join(
+                f"{shape['name']}:{shape['samples']}:{shape['features']}:{shape['duplicates']}"
+                for shape in scenario["shapes"]
+            ),
+            str(scenario["seed"]),
+            str(scenario["ridge_alpha"]),
+            str(scenario["c"]),
+            str(scenario["tolerance"]),
+            str(scenario["max_iterations"]),
+        ]
     elif workload == "splitters":
         modelkit_worker = (
             ROOT / "_build" / "default" / "bench" / "ocaml" / "splitters_worker.exe"
@@ -506,6 +527,7 @@ def main() -> None:
         "grid_search": 1e-7,
         "adapter_admission": 1e-7,
         "sparse_kernels": 1e-7,
+        "solver_shapes": 1e-7,
     }.get(scenario.get("workload"))
     if signature_tolerance is not None:
         signatures = {
