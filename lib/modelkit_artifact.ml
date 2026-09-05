@@ -55,7 +55,7 @@ module Artifact = struct
       max_metadata_entries = 128;
     }
 
-  let current_producer_version = "0.3.2"
+  let current_producer_version = "0.4.0"
 
   let limits ?(max_bytes = default_limits.max_bytes)
       ?(max_components = default_limits.max_components)
