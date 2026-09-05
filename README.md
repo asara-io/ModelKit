@@ -91,7 +91,7 @@ To refresh the Windows lockfiles:
 opam lock ./modelkit.opam ./modelkit-parallel.opam --lock-suffix=locked.windows-x86_64
 ```
 
-The Raven adapter packages are not locked, installed, or built on Windows; see `adapters/README.md`.
+The Raven adapter packages declare themselves unavailable on Windows in their opam metadata and are not locked, installed, or built there; see `adapters/README.md`.
 
 ### macOS (arm64)
 
