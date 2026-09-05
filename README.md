@@ -54,7 +54,9 @@ Not in this release, and planned for later versions: column transformers and fea
 
 ModelKit requires OCaml 5.2 or newer. The platform locks currently use OCaml 5.3.0. The following set of commands will assume that you have installed and configured `git` and `opam`. The generated documentation will be available at `_build/default/_doc/_html/index.html`.
 
-### Initial Setup
+The repository holds four packages. `modelkit` and `modelkit-parallel` are portable. `modelkit-nx` and `modelkit-talon` depend on Raven's `nx` and `talon`, which need OpenBLAS headers, zlib, and pkg-config on Linux and are not buildable on Windows; opam installs those system packages through its depext prompt when the adapter dependencies are resolved. A workspace-wide `dune build @all` includes the adapter libraries and their tests, so it needs `nx` and `talon` in the switch. Use `--only-packages modelkit,modelkit-parallel` to build and test the portable packages on a switch without them.
+
+### Initial Setup (Linux and macOS)
 
 ```commandline
 opam update
@@ -70,12 +72,26 @@ opam lint modelkit-talon.opam
 
 ### Windows
 
+Create the switch without installing anything, then install and build only the portable packages:
+
 ```commandline
-opam lock ./modelkit.opam ./modelkit-parallel.opam --lock-suffix=locked.windows-x86_64
+opam update
+opam switch create . 5.3.0 --no-install  # If running for the first time.
+opam install ocamlformat.0.29.0
 opam install ./modelkit.opam ./modelkit-parallel.opam --deps-only --with-test --with-doc --locked --lock-suffix=locked.windows-x86_64
+
+opam exec -- dune build --only-packages modelkit,modelkit-parallel @all @runtest @doc @fmt @opam @install --auto-promote
+opam lint modelkit.opam
+opam lint modelkit-parallel.opam
 ```
 
-The Raven adapter packages are not locked or installed on Windows; see `adapters/README.md`.
+To refresh the Windows lockfiles:
+
+```commandline
+opam lock ./modelkit.opam ./modelkit-parallel.opam --lock-suffix=locked.windows-x86_64
+```
+
+The Raven adapter packages are not locked, installed, or built on Windows; see `adapters/README.md`.
 
 ### macOS (arm64)
 

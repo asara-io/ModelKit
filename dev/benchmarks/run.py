@@ -256,7 +256,8 @@ def worker_commands(scenario: dict[str, object], scenario_path: Path) -> dict[st
         if not modelkit_worker.exists():
             raise RuntimeError(
                 "ModelKit adapter-admission benchmark worker is missing; run "
-                "`opam exec -- dune build bench/ocaml/adapter_admission_worker.exe`"
+                "`MODELKIT_ADAPTER_BENCH=1 opam exec -- dune build "
+                "bench/ocaml/adapter_admission_worker.exe`"
             )
         dataset = scenario["dataset"]
         commands["modelkit"] = [

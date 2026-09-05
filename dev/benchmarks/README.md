@@ -613,16 +613,20 @@ views without materializing them.
 This scenario is `claim_eligible: false`: it includes process startup and
 source construction, compares against validation utilities rather than a
 complete scikit-learn workflow, and has not run on the independent CI targets
-required for a comparative performance claim. The worker is excluded on
+required for a comparative performance claim. The worker is unavailable on
 Windows, where the Raven adapters are unsupported.
 
 Build and run it from the repository root:
 
 ```sh
-opam exec -- dune build bench/ocaml/adapter_admission_worker.exe
+MODELKIT_ADAPTER_BENCH=1 opam exec -- dune build bench/ocaml/adapter_admission_worker.exe
 env/bin/python dev/benchmarks/run.py \
   --scenario dev/benchmarks/scenarios/adapter_admission_dense.json
 ```
+
+The worker is opted in through `MODELKIT_ADAPTER_BENCH` because it depends on
+the optional Raven adapters, which are not installed on Windows or on switches
+that build only the portable packages.
 
 The raw report is `results/adapter_admission_dense_v1.darwin-arm64.json`; it
 records every raw run, per-adapter timings and allocations, payload accounting,

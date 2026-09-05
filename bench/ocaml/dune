@@ -50,10 +50,15 @@
  (name parallel_cross_validation_worker)
  (libraries modelkit modelkit-parallel))
 
+; The adapter admission worker depends on the optional Raven adapters, which
+; are absent on Windows and on any switch without nx and talon. Dune cannot
+; make an executable conditional on library availability, so this worker is
+; opted in explicitly by the benchmark runner through MODELKIT_ADAPTER_BENCH.
+
 (executable
  (name adapter_admission_worker)
  (enabled_if
-  (<> %{os_type} Win32))
+  (= %{env:MODELKIT_ADAPTER_BENCH=0} 1))
  (libraries modelkit modelkit-nx modelkit-talon nx talon unix))
 
 (executable
