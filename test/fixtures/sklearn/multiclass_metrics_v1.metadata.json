@@ -1,0 +1,39 @@
+{
+  "configuration": {
+    "averages": [
+      "micro",
+      "macro",
+      "weighted"
+    ],
+    "classes": 3,
+    "samples": 10,
+    "weighted": true,
+    "zero_division": 0.0
+  },
+  "environment": {
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "fixture": "multiclass_metrics_v1",
+  "generator": "dev/fixtures/generate.py",
+  "license": "Apache-2.0",
+  "references": [
+    "sklearn.metrics.accuracy_score",
+    "sklearn.metrics.balanced_accuracy_score",
+    "sklearn.metrics.confusion_matrix",
+    "sklearn.metrics.f1_score",
+    "sklearn.metrics.log_loss",
+    "sklearn.metrics.precision_recall_fscore_support",
+    "sklearn.metrics.precision_score",
+    "sklearn.metrics.recall_score"
+  ],
+  "schema_version": 1
+}

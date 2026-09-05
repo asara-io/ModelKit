@@ -105,6 +105,211 @@ def worker_commands(scenario: dict[str, object], scenario_path: Path) -> dict[st
             str(scenario["logistic_tolerance"]),
             str(scenario["logistic_max_iterations"]),
         ]
+    elif workload == "ridge_classifier":
+        modelkit_worker = (
+            ROOT
+            / "_build"
+            / "default"
+            / "bench"
+            / "ocaml"
+            / "ridge_classifier_worker.exe"
+        )
+        if not modelkit_worker.exists():
+            raise RuntimeError(
+                "ModelKit benchmark worker is missing; run "
+                "`opam exec -- dune build bench/ocaml/ridge_classifier_worker.exe`"
+            )
+        dataset = scenario["dataset"]
+        commands["modelkit"] = [
+            str(modelkit_worker),
+            str(dataset["samples"]),
+            str(dataset["features"]),
+            str(dataset["seed"]),
+            str(scenario["alpha"]),
+        ]
+    elif workload == "multinomial_logistic":
+        modelkit_worker = (
+            ROOT
+            / "_build"
+            / "default"
+            / "bench"
+            / "ocaml"
+            / "multinomial_logistic_worker.exe"
+        )
+        if not modelkit_worker.exists():
+            raise RuntimeError(
+                "ModelKit benchmark worker is missing; run `opam exec -- dune build "
+                "bench/ocaml/multinomial_logistic_worker.exe`"
+            )
+        dataset = scenario["dataset"]
+        commands["modelkit"] = [
+            str(modelkit_worker),
+            str(dataset["samples"]),
+            str(dataset["features"]),
+            str(dataset["seed"]),
+            str(scenario["c"]),
+            str(scenario["tolerance"]),
+            str(scenario["max_iterations"]),
+        ]
+    elif workload == "glm":
+        modelkit_worker = (
+            ROOT / "_build" / "default" / "bench" / "ocaml" / "glm_worker.exe"
+        )
+        if not modelkit_worker.exists():
+            raise RuntimeError(
+                "ModelKit GLM benchmark worker is missing; run `opam exec -- "
+                "dune build bench/ocaml/glm_worker.exe`"
+            )
+        dataset = scenario["dataset"]
+        commands["modelkit"] = [
+            str(modelkit_worker),
+            str(dataset["samples"]),
+            str(dataset["features"]),
+            str(dataset["seed"]),
+            str(scenario["alpha"]),
+            str(scenario["power"]),
+            str(scenario["tolerance"]),
+            str(scenario["max_iterations"]),
+        ]
+    elif workload == "regularized_linear":
+        modelkit_worker = (
+            ROOT
+            / "_build"
+            / "default"
+            / "bench"
+            / "ocaml"
+            / "regularized_linear_worker.exe"
+        )
+        if not modelkit_worker.exists():
+            raise RuntimeError(
+                "ModelKit regularized-linear benchmark worker is missing; run "
+                "`opam exec -- dune build "
+                "bench/ocaml/regularized_linear_worker.exe`"
+            )
+        dataset = scenario["dataset"]
+        commands["modelkit"] = [
+            str(modelkit_worker),
+            str(dataset["samples"]),
+            str(dataset["features"]),
+            str(dataset["seed"]),
+            str(scenario["alpha"]),
+            str(scenario["l1_ratio"]),
+            str(scenario["tolerance"]),
+            str(scenario["max_iterations"]),
+            ",".join(str(value) for value in scenario["path_alphas"]),
+        ]
+    elif workload == "sgd_regression":
+        modelkit_worker = (
+            ROOT
+            / "_build"
+            / "default"
+            / "bench"
+            / "ocaml"
+            / "sgd_regressor_worker.exe"
+        )
+        if not modelkit_worker.exists():
+            raise RuntimeError(
+                "ModelKit SGD-regressor benchmark worker is missing; run "
+                "`opam exec -- dune build bench/ocaml/sgd_regressor_worker.exe`"
+            )
+        dataset = scenario["dataset"]
+        commands["modelkit"] = [
+            str(modelkit_worker),
+            str(dataset["samples"]),
+            str(dataset["features"]),
+            str(dataset["seed"]),
+            str(scenario["eta0"]),
+            str(scenario["epochs"]),
+        ]
+    elif workload == "sgd_classification":
+        modelkit_worker = (
+            ROOT
+            / "_build"
+            / "default"
+            / "bench"
+            / "ocaml"
+            / "sgd_classifier_worker.exe"
+        )
+        if not modelkit_worker.exists():
+            raise RuntimeError(
+                "ModelKit SGD-classifier benchmark worker is missing; run "
+                "`opam exec -- dune build bench/ocaml/sgd_classifier_worker.exe`"
+            )
+        dataset = scenario["dataset"]
+        commands["modelkit"] = [
+            str(modelkit_worker),
+            str(dataset["samples"]),
+            str(dataset["features"]),
+            str(dataset["seed"]),
+            str(scenario["eta0"]),
+            str(scenario["epochs"]),
+        ]
+    elif workload == "adapter_admission":
+        modelkit_worker = (
+            ROOT
+            / "_build"
+            / "default"
+            / "bench"
+            / "ocaml"
+            / "adapter_admission_worker.exe"
+        )
+        if not modelkit_worker.exists():
+            raise RuntimeError(
+                "ModelKit adapter-admission benchmark worker is missing; run "
+                "`MODELKIT_ADAPTER_BENCH=1 opam exec -- dune build "
+                "bench/ocaml/adapter_admission_worker.exe`"
+            )
+        dataset = scenario["dataset"]
+        commands["modelkit"] = [
+            str(modelkit_worker),
+            str(dataset["samples"]),
+            str(dataset["features"]),
+            str(dataset["seed"]),
+            str(dataset["missing_modulus"]),
+        ]
+    elif workload == "sparse_kernels":
+        modelkit_worker = (
+            ROOT / "_build" / "default" / "bench" / "ocaml" / "sparse_kernels_worker.exe"
+        )
+        if not modelkit_worker.exists():
+            raise RuntimeError(
+                "ModelKit sparse-kernels benchmark worker is missing; run "
+                "`opam exec -- dune build bench/ocaml/sparse_kernels_worker.exe`"
+            )
+        dataset = scenario["dataset"]
+        one_hot = scenario["one_hot"]
+        commands["modelkit"] = [
+            str(modelkit_worker),
+            str(dataset["samples"]),
+            str(dataset["features"]),
+            str(dataset["seed"]),
+            ",".join(str(value) for value in dataset["densities"]),
+            str(scenario["repeats"]),
+            str(one_hot["samples"]),
+            str(one_hot["features"]),
+            str(one_hot["cardinality"]),
+        ]
+    elif workload == "solver_shapes":
+        modelkit_worker = (
+            ROOT / "_build" / "default" / "bench" / "ocaml" / "solver_shapes_worker.exe"
+        )
+        if not modelkit_worker.exists():
+            raise RuntimeError(
+                "ModelKit solver-shapes benchmark worker is missing; run "
+                "`opam exec -- dune build bench/ocaml/solver_shapes_worker.exe`"
+            )
+        commands["modelkit"] = [
+            str(modelkit_worker),
+            ",".join(
+                f"{shape['name']}:{shape['samples']}:{shape['features']}:{shape['duplicates']}"
+                for shape in scenario["shapes"]
+            ),
+            str(scenario["seed"]),
+            str(scenario["ridge_alpha"]),
+            str(scenario["c"]),
+            str(scenario["tolerance"]),
+            str(scenario["max_iterations"]),
+        ]
     elif workload == "splitters":
         modelkit_worker = (
             ROOT / "_build" / "default" / "bench" / "ocaml" / "splitters_worker.exe"
@@ -310,11 +515,20 @@ def main() -> None:
     signature_tolerance = {
         "preprocessing": 1e-12,
         "linear_models": 1e-7,
+        "ridge_classifier": 1e-7,
+        "multinomial_logistic": 1e-7,
+        "glm": 1e-6,
+        "regularized_linear": 1e-6,
+        "sgd_regression": 1e-7,
+        "sgd_classification": 1e-7,
         "splitters": 0.0,
         "metrics": 1e-7,
         "cross_validation": 1e-7,
         "parallel_cross_validation": 1e-7,
         "grid_search": 1e-7,
+        "adapter_admission": 1e-7,
+        "sparse_kernels": 1e-7,
+        "solver_shapes": 1e-7,
     }.get(scenario.get("workload"))
     if signature_tolerance is not None:
         signatures = {

@@ -1,0 +1,18 @@
+{
+  "claim_eligible": false,
+  "dataset": {
+    "features": 12,
+    "samples": 3000,
+    "seed": 2026
+  },
+  "alpha": 0.05,
+  "l1_ratio": 0.4,
+  "max_iterations": 1000,
+  "measured_runs": 5,
+  "path_alphas": [0.2, 0.1, 0.05],
+  "scenario": "regularized_linear_dense_v1",
+  "thread_limit": 1,
+  "tolerance": 1e-8,
+  "warmup_runs": 1,
+  "workload": "regularized_linear"
+}

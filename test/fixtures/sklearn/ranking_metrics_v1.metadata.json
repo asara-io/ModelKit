@@ -1,0 +1,40 @@
+{
+  "configuration": {
+    "classes": 3,
+    "one_vs_one_weighted": false,
+    "ranking_columns": 5,
+    "ranking_cutoffs": [
+      null,
+      3
+    ],
+    "samples": 10,
+    "top_k": [
+      1,
+      2
+    ],
+    "weighted": true
+  },
+  "environment": {
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "fixture": "ranking_metrics_v1",
+  "generator": "dev/fixtures/generate.py",
+  "license": "Apache-2.0",
+  "references": [
+    "sklearn.metrics.average_precision_score",
+    "sklearn.metrics.dcg_score",
+    "sklearn.metrics.ndcg_score",
+    "sklearn.metrics.roc_auc_score",
+    "sklearn.metrics.top_k_accuracy_score"
+  ],
+  "schema_version": 1
+}

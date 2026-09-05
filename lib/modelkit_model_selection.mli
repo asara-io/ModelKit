@@ -97,6 +97,29 @@ module Cross_validation : sig
       Target.classification Dataset.t ->
       (model report, Error.t) result
   end
+
+  module Multiclass_classification : sig
+    type model =
+      ( Target.classification Target.t,
+        Target.classification Target.t )
+      Pipeline.fitted
+
+    val cross_validate :
+      ?return_train_score:bool ->
+      ?return_models:bool ->
+      ?return_indices:bool ->
+      ?failure_policy:failure_policy ->
+      ?fit_seed:Seed.t ->
+      ?execution:Execution.t ->
+      splitter:Target.classification Target.t splitter ->
+      scorers:Multiclass_classification_scorer.t array ->
+      seed:Seed.t ->
+      ( Target.classification Target.t,
+        Target.classification Target.t )
+      Pipeline.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+  end
 end
 
 (** Typed exhaustive search over finite immutable configuration grids.
@@ -212,6 +235,26 @@ module Grid_search : sig
         grid ->
       splitter:Target.classification Target.t Cross_validation.splitter ->
       scorers:Binary_classification_scorer.t array ->
+      refit:string ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+  end
+
+  module Multiclass_classification : sig
+    type model = Cross_validation.Multiclass_classification.model
+
+    val search :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      grid:
+        ( 'configuration,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        grid ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Multiclass_classification_scorer.t array ->
       refit:string ->
       seed:Seed.t ->
       Target.classification Dataset.t ->

@@ -24,6 +24,7 @@ module Pipeline : sig
   type transformer = {
     transformer_name : string;
     fit_transform :
+      sample_weight:Sample_weight.t option ->
       rng:Rng.t ->
       feature_schema:Feature_schema.t ->
       x:Matrix.t ->
@@ -82,6 +83,7 @@ module Pipeline : sig
 
   val transformer_internal :
     ?encode:('fitted -> (encoded_component, Error.t) result) ->
+    ?route_sample_weight:bool ->
     name:string ->
     (module TRANSFORMER
        with type t = 'specification
@@ -92,6 +94,7 @@ module Pipeline : sig
     (transformer, Error.t) result
 
   val transformer :
+    ?route_sample_weight:bool ->
     name:string ->
     (module TRANSFORMER
        with type t = 'specification
@@ -103,6 +106,10 @@ module Pipeline : sig
 
   val estimator_internal :
     ?encode:('fitted -> (encoded_component, Error.t) result) ->
+    ?resolve_weights:
+      (?sample_weight:Sample_weight.t ->
+      'target ->
+      (Sample_weight.t option, Error.t) result) ->
     name:string ->
     (module ESTIMATOR
        with type t = 'specification
@@ -145,6 +152,53 @@ module Pipeline : sig
     ?classes:('fitted -> int array) ->
     'specification ->
     (('target, 'prediction) estimator, Error.t) result
+
+  val classifier_internal :
+    ?encode:('fitted -> (encoded_component, Error.t) result) ->
+    ?class_weight:Modelkit_class_weight.Class_weight.t ->
+    name:string ->
+    (module ESTIMATOR
+       with type t = 'specification
+        and type target = Target.classification Target.t
+        and type prediction = 'prediction
+        and type fitted = 'fitted
+        and type rng = Rng.t) ->
+    ?decision_function:
+      ('fitted ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      (Vector.t, Error.t) result) ->
+    ?predict_proba:
+      ('fitted ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      (Matrix.t, Error.t) result) ->
+    ?classes:('fitted -> int array) ->
+    'specification ->
+    ((Target.classification Target.t, 'prediction) estimator, Error.t) result
+
+  val classifier :
+    ?class_weight:Modelkit_class_weight.Class_weight.t ->
+    name:string ->
+    (module ESTIMATOR
+       with type t = 'specification
+        and type target = Target.classification Target.t
+        and type prediction = 'prediction
+        and type fitted = 'fitted
+        and type rng = Rng.t) ->
+    ?decision_function:
+      ('fitted ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      (Vector.t, Error.t) result) ->
+    ?predict_proba:
+      ('fitted ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      (Matrix.t, Error.t) result) ->
+    ?classes:('fitted -> int array) ->
+    'specification ->
+    ((Target.classification Target.t, 'prediction) estimator, Error.t) result
 
   val empty : builder
   val add_transformer : builder -> transformer -> (builder, Error.t) result

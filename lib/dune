@@ -3,11 +3,17 @@
  (public_name modelkit)
  (private_modules
   modelkit_artifact
+  modelkit_class_weight
   modelkit_data
+  modelkit_glm
+  modelkit_linear_classifiers
   modelkit_linear_models
   modelkit_metrics
   modelkit_model_selection
   modelkit_pipeline
   modelkit_preprocessing
   modelkit_protocols
-  modelkit_splitting))
+  modelkit_regularized_linear
+  modelkit_sgd
+  modelkit_splitting
+  modelkit_transforms))

@@ -1,0 +1,32 @@
+{
+  "configuration": {
+    "alpha": 2.5,
+    "classes": [
+      2,
+      3
+    ],
+    "features": 3,
+    "fit_intercept": true,
+    "prediction_samples": 4,
+    "samples": 8,
+    "solver": "svd",
+    "weighted": true
+  },
+  "environment": {
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "fixture": "ridge_classifier_v1",
+  "generator": "dev/fixtures/generate.py",
+  "license": "Apache-2.0",
+  "reference": "sklearn.linear_model.RidgeClassifier",
+  "schema_version": 1
+}

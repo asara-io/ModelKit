@@ -298,7 +298,10 @@ let is_data_length_mismatch = function
       ( Data_error.Negative_dimension _ | Data_error.Ragged_matrix _
       | Data_error.Index_out_of_bounds _ | Data_error.Non_finite _
       | Data_error.Negative_weight _ | Data_error.All_zero_weights
-      | Data_error.Empty_feature_name _ | Data_error.Duplicate_feature_name _ )
+      | Data_error.Empty_feature_name _ | Data_error.Duplicate_feature_name _
+      | Data_error.Csr_row_offset_mismatch _
+      | Data_error.Invalid_csr_row_offset _
+      | Data_error.Invalid_csr_column_order _ )
   | Error.Shape_mismatch _ | Error.Feature_schema_mismatch _
   | Error.Validation _ | Error.Numerical _ | Error.Convergence _
   | Error.Compatibility _ | Error.Artifact _ | Error.Cancelled ->
@@ -344,6 +347,42 @@ let test_fit_transform_predict () =
   in
   check_float "negative probability" 0.5 (Matrix.get probabilities 0 0);
   check_float "positive probability" 0.5 (Matrix.get probabilities 0 1)
+
+let test_additional_transform_pipeline () =
+  let schema = named_schema [| "a"; "b" |] in
+  let x =
+    Matrix.of_arrays [| [| 1.0; 2.0 |]; [| 2.0; 4.0 |]; [| 3.0; 8.0 |] |]
+    |> get_data
+  in
+  let builder =
+    add_transformer Pipeline.empty ~name:"min-max"
+      (module Min_max_scaler)
+      (Min_max_scaler.create () |> get)
+  in
+  let builder =
+    add_transformer builder ~name:"polynomial"
+      (module Polynomial_features)
+      (Polynomial_features.create ~include_bias:false () |> get)
+  in
+  let specification =
+    Pipeline.set_estimator builder (first_column_estimator "model") |> get
+  in
+  let fitted =
+    Pipeline.fit specification ~rng:(rng ()) ~feature_schema:schema ~x
+      ~y:(regression [| 0.0; 1.0; 2.0 |])
+      ()
+    |> get
+  in
+  let prediction =
+    Pipeline.predict fitted ~feature_schema:schema
+      ~x:(Matrix.of_arrays [| [| 2.0; 5.0 |] |] |> get_data)
+    |> get |> Target.regression_values
+  in
+  check_float "additional transforms compose in pipelines" 0.5
+    (Vector.get prediction 0);
+  check
+    (Feature_schema.feature_count (Pipeline.output_schema fitted) = 5)
+    "polynomial pipeline output schema has the wrong width"
 
 let test_feature_name_propagation () =
   let schema = named_schema [| "constant"; "signal" |] in
@@ -582,6 +621,8 @@ let () =
         [
           Alcotest.test_case "fit transform and dispatch" `Quick
             test_fit_transform_predict;
+          Alcotest.test_case "additional transforms" `Quick
+            test_additional_transform_pipeline;
           Alcotest.test_case "feature names" `Quick
             test_feature_name_propagation;
           Alcotest.test_case "target and sample weights" `Quick

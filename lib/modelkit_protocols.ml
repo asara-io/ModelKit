@@ -141,6 +141,12 @@ module type NUMERICAL_BACKEND = sig
 
   val transposed_matrix_vector_product :
     Matrix.t -> Vector.t -> (Vector.t, Error.t) result
+
+  val feature_matrix_vector_product :
+    Feature_matrix.t -> Vector.t -> (Vector.t, Error.t) result
+
+  val transposed_feature_matrix_vector_product :
+    Feature_matrix.t -> Vector.t -> (Vector.t, Error.t) result
 end
 
 module Seed = struct
@@ -240,43 +246,57 @@ end
 module Reference_backend = struct
   let name = "reference"
 
+  (* Neumaier compensated summation with explicit non-finite tracking.
+
+     The state flags are kept as bits of a float so that every field of the
+     accumulator is a float and the record is stored flat with unboxed fields;
+     [add] then allocates nothing. The kernels below inline the same update on
+     local references so that their inner loops allocate nothing either and
+     produce bit-identical results to folding with [Accumulator.add] in the
+     same order. *)
+  let positive_infinity_flag = 1
+  let negative_infinity_flag = 2
+  let nan_flag = 4
+
+  let non_finite_flag value =
+    if Float.is_nan value then nan_flag
+    else if value > 0.0 then positive_infinity_flag
+    else negative_infinity_flag
+
+  let resolve ~total ~correction ~flags =
+    if
+      flags land nan_flag <> 0
+      || flags land positive_infinity_flag <> 0
+         && flags land negative_infinity_flag <> 0
+    then Float.nan
+    else if flags land positive_infinity_flag <> 0 then Float.infinity
+    else if flags land negative_infinity_flag <> 0 then Float.neg_infinity
+    else total +. correction
+
   module Accumulator = struct
     type t = {
       mutable total : float;
       mutable correction : float;
-      mutable positive_infinity : bool;
-      mutable negative_infinity : bool;
-      mutable nan : bool;
+      mutable state : float;
     }
 
-    let create () =
-      {
-        total = 0.0;
-        correction = 0.0;
-        positive_infinity = false;
-        negative_infinity = false;
-        nan = false;
-      }
+    let create () = { total = 0.0; correction = 0.0; state = 0.0 }
+    let flags accumulator = Float.to_int accumulator.state
 
     let record_non_finite accumulator value =
-      if Float.is_nan value then accumulator.nan <- true
-      else if value > 0.0 then accumulator.positive_infinity <- true
-      else accumulator.negative_infinity <- true
+      accumulator.state <-
+        Float.of_int (flags accumulator lor non_finite_flag value)
 
     let add accumulator value =
       if not (Float.is_finite value) then record_non_finite accumulator value
-      else if
-        not
-          (accumulator.nan || accumulator.positive_infinity
-         || accumulator.negative_infinity)
-      then (
-        let next = accumulator.total +. value in
+      else if accumulator.state = 0.0 then (
+        let total = accumulator.total in
+        let next = total +. value in
         if not (Float.is_finite next) then record_non_finite accumulator next
         else
           let correction =
-            if Float.abs accumulator.total >= Float.abs value then
-              accumulator.total -. next +. value
-            else value -. next +. accumulator.total
+            if Float.abs total >= Float.abs value then total -. next +. value
+            else value -. next +. total
           in
           let corrected = accumulator.correction +. correction in
           if Float.is_finite corrected then accumulator.correction <- corrected
@@ -284,13 +304,8 @@ module Reference_backend = struct
           accumulator.total <- next)
 
     let value accumulator =
-      if
-        accumulator.nan
-        || (accumulator.positive_infinity && accumulator.negative_infinity)
-      then Float.nan
-      else if accumulator.positive_infinity then Float.infinity
-      else if accumulator.negative_infinity then Float.neg_infinity
-      else accumulator.total +. accumulator.correction
+      resolve ~total:accumulator.total ~correction:accumulator.correction
+        ~flags:(flags accumulator)
   end
 
   let length_error ~name ~expected ~observed =
@@ -304,12 +319,35 @@ module Reference_backend = struct
           (Error.of_data_error
              ~remediation:"provide a representable output dimension" error)
 
+  (* [ACCUMULATE value] is the inlined Neumaier step over the local references
+     [total], [correction], and [flags] declared by the enclosing kernel. It is
+     written out in each kernel because a shared closure would box every
+     float that crosses it. *)
+
   let sum vector =
-    let accumulator = Accumulator.create () in
-    for index = 0 to Vector.length vector - 1 do
-      Accumulator.add accumulator (Vector.get vector index)
+    let storage = Vector.storage vector in
+    let total = ref 0.0 and correction = ref 0.0 and flags = ref 0 in
+    for index = 0 to Bigarray.Array1.dim storage - 1 do
+      let value = Bigarray.Array1.unsafe_get storage index in
+      if not (Float.is_finite value) then
+        flags := !flags lor non_finite_flag value
+      else if !flags = 0 then begin
+        let next = !total +. value in
+        if not (Float.is_finite next) then
+          flags := !flags lor non_finite_flag next
+        else begin
+          let step =
+            if Float.abs !total >= Float.abs value then !total -. next +. value
+            else value -. next +. !total
+          in
+          let corrected = !correction +. step in
+          if Float.is_finite corrected then correction := corrected
+          else flags := !flags lor non_finite_flag corrected;
+          total := next
+        end
+      end
     done;
-    Accumulator.value accumulator
+    resolve ~total:!total ~correction:!correction ~flags:!flags
 
   let dot left right =
     let expected = Vector.length left in
@@ -317,12 +355,33 @@ module Reference_backend = struct
     if expected <> observed then
       Error (length_error ~name:"dot-product right operand" ~expected ~observed)
     else
-      let accumulator = Accumulator.create () in
+      let left = Vector.storage left and right = Vector.storage right in
+      let total = ref 0.0 and correction = ref 0.0 and flags = ref 0 in
       for index = 0 to expected - 1 do
-        Accumulator.add accumulator
-          (Vector.get left index *. Vector.get right index)
+        let value =
+          Bigarray.Array1.unsafe_get left index
+          *. Bigarray.Array1.unsafe_get right index
+        in
+        if not (Float.is_finite value) then
+          flags := !flags lor non_finite_flag value
+        else if !flags = 0 then begin
+          let next = !total +. value in
+          if not (Float.is_finite next) then
+            flags := !flags lor non_finite_flag next
+          else begin
+            let step =
+              if Float.abs !total >= Float.abs value then
+                !total -. next +. value
+              else value -. next +. !total
+            in
+            let corrected = !correction +. step in
+            if Float.is_finite corrected then correction := corrected
+            else flags := !flags lor non_finite_flag corrected;
+            total := next
+          end
+        end
       done;
-      Ok (Accumulator.value accumulator)
+      Ok (resolve ~total:!total ~correction:!correction ~flags:!flags)
 
   let matrix_vector_product matrix vector =
     let expected = Matrix.columns matrix in
@@ -330,14 +389,35 @@ module Reference_backend = struct
     if expected <> observed then
       Error (length_error ~name:"matrix-vector operand" ~expected ~observed)
     else
+      let storage = Matrix.storage matrix and operand = Vector.storage vector in
       vector_result
         (Vector.init ~length:(Matrix.rows matrix) (fun row ->
-             let accumulator = Accumulator.create () in
+             let total = ref 0.0 and correction = ref 0.0 and flags = ref 0 in
              for column = 0 to expected - 1 do
-               Accumulator.add accumulator
-                 (Matrix.get matrix row column *. Vector.get vector column)
+               let value =
+                 Bigarray.Array2.unsafe_get storage row column
+                 *. Bigarray.Array1.unsafe_get operand column
+               in
+               if not (Float.is_finite value) then
+                 flags := !flags lor non_finite_flag value
+               else if !flags = 0 then begin
+                 let next = !total +. value in
+                 if not (Float.is_finite next) then
+                   flags := !flags lor non_finite_flag next
+                 else begin
+                   let step =
+                     if Float.abs !total >= Float.abs value then
+                       !total -. next +. value
+                     else value -. next +. !total
+                   in
+                   let corrected = !correction +. step in
+                   if Float.is_finite corrected then correction := corrected
+                   else flags := !flags lor non_finite_flag corrected;
+                   total := next
+                 end
+               end
              done;
-             Accumulator.value accumulator))
+             resolve ~total:!total ~correction:!correction ~flags:!flags))
 
   let transposed_matrix_vector_product matrix vector =
     let expected = Matrix.rows matrix in
@@ -347,12 +427,140 @@ module Reference_backend = struct
         (length_error ~name:"transposed-matrix-vector operand" ~expected
            ~observed)
     else
+      let storage = Matrix.storage matrix and operand = Vector.storage vector in
       vector_result
         (Vector.init ~length:(Matrix.columns matrix) (fun column ->
-             let accumulator = Accumulator.create () in
+             let total = ref 0.0 and correction = ref 0.0 and flags = ref 0 in
              for row = 0 to expected - 1 do
-               Accumulator.add accumulator
-                 (Matrix.get matrix row column *. Vector.get vector row)
+               let value =
+                 Bigarray.Array2.unsafe_get storage row column
+                 *. Bigarray.Array1.unsafe_get operand row
+               in
+               if not (Float.is_finite value) then
+                 flags := !flags lor non_finite_flag value
+               else if !flags = 0 then begin
+                 let next = !total +. value in
+                 if not (Float.is_finite next) then
+                   flags := !flags lor non_finite_flag next
+                 else begin
+                   let step =
+                     if Float.abs !total >= Float.abs value then
+                       !total -. next +. value
+                     else value -. next +. !total
+                   in
+                   let corrected = !correction +. step in
+                   if Float.is_finite corrected then correction := corrected
+                   else flags := !flags lor non_finite_flag corrected;
+                   total := next
+                 end
+               end
              done;
-             Accumulator.value accumulator))
+             resolve ~total:!total ~correction:!correction ~flags:!flags))
+
+  let csr_matrix_vector_product matrix vector =
+    let row_offsets, column_indices, values = Csr_matrix.storage matrix in
+    let operand = Vector.storage vector in
+    vector_result
+      (Vector.init ~length:(Csr_matrix.rows matrix) (fun row ->
+           let total = ref 0.0 and correction = ref 0.0 and flags = ref 0 in
+           for
+             entry = Array.unsafe_get row_offsets row
+             to Array.unsafe_get row_offsets (row + 1) - 1
+           do
+             let value =
+               Bigarray.Array1.unsafe_get values entry
+               *. Bigarray.Array1.unsafe_get operand
+                    (Array.unsafe_get column_indices entry)
+             in
+             if not (Float.is_finite value) then
+               flags := !flags lor non_finite_flag value
+             else if !flags = 0 then begin
+               let next = !total +. value in
+               if not (Float.is_finite next) then
+                 flags := !flags lor non_finite_flag next
+               else begin
+                 let step =
+                   if Float.abs !total >= Float.abs value then
+                     !total -. next +. value
+                   else value -. next +. !total
+                 in
+                 let corrected = !correction +. step in
+                 if Float.is_finite corrected then correction := corrected
+                 else flags := !flags lor non_finite_flag corrected;
+                 total := next
+               end
+             end
+           done;
+           resolve ~total:!total ~correction:!correction ~flags:!flags))
+
+  let transposed_csr_matrix_vector_product matrix vector =
+    let row_offsets, column_indices, values = Csr_matrix.storage matrix in
+    let operand = Vector.storage vector in
+    let columns = Csr_matrix.columns matrix in
+    let totals = Array.make columns 0.0 in
+    let corrections = Array.make columns 0.0 in
+    let flags = Array.make columns 0 in
+    for row = 0 to Csr_matrix.rows matrix - 1 do
+      let factor = Bigarray.Array1.unsafe_get operand row in
+      for
+        entry = Array.unsafe_get row_offsets row
+        to Array.unsafe_get row_offsets (row + 1) - 1
+      do
+        let column = Array.unsafe_get column_indices entry in
+        let value = Bigarray.Array1.unsafe_get values entry *. factor in
+        let column_flags = Array.unsafe_get flags column in
+        if not (Float.is_finite value) then
+          Array.unsafe_set flags column (column_flags lor non_finite_flag value)
+        else if column_flags = 0 then begin
+          let total = Array.unsafe_get totals column in
+          let next = total +. value in
+          if not (Float.is_finite next) then
+            Array.unsafe_set flags column (column_flags lor non_finite_flag next)
+          else begin
+            let step =
+              if Float.abs total >= Float.abs value then total -. next +. value
+              else value -. next +. total
+            in
+            let corrected = Array.unsafe_get corrections column +. step in
+            if Float.is_finite corrected then
+              Array.unsafe_set corrections column corrected
+            else
+              Array.unsafe_set flags column
+                (column_flags lor non_finite_flag corrected);
+            Array.unsafe_set totals column next
+          end
+        end
+      done
+    done;
+    vector_result
+      (Vector.init ~length:columns (fun column ->
+           resolve ~total:totals.(column) ~correction:corrections.(column)
+             ~flags:flags.(column)))
+
+  let feature_matrix_vector_product matrix vector =
+    let expected = Feature_matrix.columns matrix in
+    let observed = Vector.length vector in
+    if expected <> observed then
+      Error
+        (length_error ~name:"feature-matrix-vector operand" ~expected ~observed)
+    else
+      match matrix with
+      | Feature_matrix.Dense_matrix matrix ->
+          matrix_vector_product matrix vector
+      | Feature_matrix.Csr_matrix matrix ->
+          csr_matrix_vector_product matrix vector
+
+  let transposed_feature_matrix_vector_product matrix vector =
+    let expected = Feature_matrix.rows matrix in
+    let observed = Vector.length vector in
+    if expected <> observed then
+      Error
+        (length_error ~name:"transposed-feature-matrix-vector operand" ~expected
+           ~observed)
+    else
+      match matrix with
+      | Feature_matrix.Dense_matrix matrix ->
+          transposed_matrix_vector_product matrix vector
+      | Feature_matrix.Csr_matrix matrix ->
+          transposed_csr_matrix_vector_product matrix vector
 end

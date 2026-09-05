@@ -23,6 +23,18 @@ module Data_error : sig
         first_index : int;
         duplicate_index : int;
       }
+    | Csr_row_offset_mismatch of {
+        position : int;
+        expected : int;
+        observed : int;
+      }
+    | Invalid_csr_row_offset of {
+        position : int;
+        previous : int;
+        observed : int;
+        nonzero_count : int;
+      }
+    | Invalid_csr_column_order of { row : int; previous : int; observed : int }
 
   val pp : Format.formatter -> t -> unit
   val to_string : t -> string
@@ -86,6 +98,26 @@ module Matrix : sig
   val to_bigarray : t -> bigarray
 end
 
+(** Immutable rank-two missing-value identity aligned to a feature matrix.
+
+    [true] identifies a source null. The mask is kept separately from feature
+    values so adapters can preserve the distinction between an explicit null and
+    a genuine IEEE NaN. *)
+module Null_mask : sig
+  type t
+
+  val init :
+    rows:int -> columns:int -> (int -> int -> bool) -> (t, Data_error.t) result
+
+  val of_arrays : bool array array -> (t, Data_error.t) result
+  val rows : t -> int
+  val columns : t -> int
+  val shape : t -> int * int
+  val get : t -> int -> int -> bool
+  val null_count : t -> int
+  val to_arrays : t -> bool array array
+end
+
 (** An immutable ordered selection of rows from an aligned source.
 
     Construction copies and validates the indices. Order and duplicates are
@@ -104,6 +136,100 @@ module Row_view : sig
       Raises [Invalid_argument] if [position] is outside the view. *)
 
   val indices : t -> int array
+end
+
+(** Payload memory used by dense or CSR matrix storage.
+
+    Counts exclude OCaml and Bigarray headers and allocator overhead. The dense
+    equivalent is [None] only when its byte count exceeds [Int64.max_int]. *)
+module Matrix_memory : sig
+  type t = {
+    value_bytes : int64;
+    column_index_bytes : int64;
+    row_offset_bytes : int64;
+    total_bytes : int64;
+    dense_equivalent_bytes : int64 option;
+  }
+end
+
+(** Immutable checked compressed sparse row storage.
+
+    Row offsets must begin at zero, end at the stored-value count, and be
+    nondecreasing. Column indices must be in bounds and strictly increasing
+    within each row. Admission copies index arrays; [of_arrays] also copies
+    values. Explicit stored zeroes are retained. *)
+module Csr_matrix : sig
+  type t
+  type view
+
+  type view_memory = {
+    allocated_bytes : int64;
+    shared_bytes : int64;
+    materialized_bytes : int64;
+  }
+
+  val create :
+    rows:int ->
+    columns:int ->
+    row_offsets:int array ->
+    column_indices:int array ->
+    values:Vector.t ->
+    (t, Data_error.t) result
+
+  val of_arrays :
+    rows:int ->
+    columns:int ->
+    row_offsets:int array ->
+    column_indices:int array ->
+    values:float array ->
+    (t, Data_error.t) result
+
+  val of_dense : Matrix.t -> t
+  val to_dense : t -> Matrix.t
+  val rows : t -> int
+  val columns : t -> int
+  val shape : t -> int * int
+  val nonzero_count : t -> int
+  val row_offsets : t -> int array
+  val column_indices : t -> int array
+  val values : t -> Vector.t
+
+  val get : t -> int -> int -> float
+  (** Raises [Invalid_argument] if either index is outside the matrix. *)
+
+  val iter_row : t -> row:int -> f:(column:int -> value:float -> unit) -> unit
+  (** Iterates stored entries in ascending column order without allocating.
+      Raises [Invalid_argument] if [row] is outside the matrix. *)
+
+  val memory : t -> Matrix_memory.t
+  val all : t -> view
+  val view : t -> Row_view.t -> (view, Data_error.t) result
+  val view_rows : view -> int
+  val view_columns : view -> int
+  val view_nonzero_count : view -> int
+  val row_view : view -> Row_view.t
+  val source_row : view -> int -> int
+  val view_get : view -> row:int -> column:int -> float
+  val materialize : view -> t
+
+  val view_memory : view -> view_memory
+  (** Reports bytes allocated for row indices, bytes shared with the source, and
+      the payload bytes that explicit materialization would require. *)
+end
+
+(** A dense or CSR feature matrix selected explicitly at an API boundary. *)
+module Feature_matrix : sig
+  type format = Dense | Csr
+  type t = Dense_matrix of Matrix.t | Csr_matrix of Csr_matrix.t
+
+  val dense : Matrix.t -> t
+  val csr : Csr_matrix.t -> t
+  val format : t -> format
+  val rows : t -> int
+  val columns : t -> int
+  val shape : t -> int * int
+  val get : t -> int -> int -> float
+  val memory : t -> Matrix_memory.t
 end
 
 (** Regression or classification targets aligned by sample.
@@ -318,6 +444,71 @@ module Error : sig
   val to_string : t -> string
 end
 
+(** Numeric payload allocation performed by one adapter conversion.
+
+    Byte counts exclude OCaml headers, allocator metadata, names, and the
+    adapter result record. [temporary_payload_bytes] counts full-size staging
+    payloads discarded after admission; [retained_payload_bytes] counts the
+    immutable payload retained by ModelKit. *)
+module Conversion_report : sig
+  type t
+
+  val create :
+    source:string ->
+    source_dtype:string ->
+    source_shape:int array ->
+    source_contiguous:bool option ->
+    temporary_payload_bytes:int64 ->
+    retained_payload_bytes:int64 ->
+    (t, Error.t) result
+
+  val source : t -> string
+  val source_dtype : t -> string
+  val source_shape : t -> int array
+  val source_contiguous : t -> bool option
+  val temporary_payload_bytes : t -> int64
+  val retained_payload_bytes : t -> int64
+  val allocated_payload_bytes : t -> int64
+end
+
+(** Adapter-neutral admission results.
+
+    Every ModelKit adapter returns these records so that conformance tests,
+    allocation benchmarks, and application code can treat admitted data
+    uniformly regardless of the source library. Each [conversion] pairs an
+    immutable ModelKit value with the {!Conversion_report.t} describing the
+    payload allocated to produce it. [features] carries the admitted matrix, its
+    schema, an explicit null mask when the source supplied one, and the reports
+    for the matrix and mask. [dataset] carries a complete {!Dataset.t} together
+    with the feature null mask and every report produced while admitting
+    features, target, weights, and groups. *)
+module Admission : sig
+  type 'a conversion = { value : 'a; report : Conversion_report.t }
+
+  type features = {
+    matrix : Matrix.t;
+    schema : Feature_schema.t;
+    null_mask : Null_mask.t option;
+    feature_reports : Conversion_report.t list;
+  }
+
+  type 'kind dataset = {
+    dataset : 'kind Dataset.t;
+    feature_null_mask : Null_mask.t option;
+    dataset_reports : Conversion_report.t list;
+  }
+
+  val retained_payload_bytes : Conversion_report.t list -> int64
+  (** Total retained payload across a list of reports. *)
+
+  val temporary_payload_bytes : Conversion_report.t list -> int64
+  (** Total discarded staging payload across a list of reports. *)
+
+  val allocated_payload_bytes : Conversion_report.t list -> int64
+  (** Total allocated payload (retained plus temporary) across a list of
+      reports. *)
+end
+
 (** Shared convention for immutable configured components.
 
     Concrete modules expose [params] as a public typed value. [clone] returns an
@@ -492,6 +683,15 @@ module type NUMERICAL_BACKEND = sig
 
   val transposed_matrix_vector_product :
     Matrix.t -> Vector.t -> (Vector.t, Error.t) result
+
+  val feature_matrix_vector_product :
+    Feature_matrix.t -> Vector.t -> (Vector.t, Error.t) result
+  (** Dispatches to dense or CSR storage without densifying sparse input. CSR
+      kernels visit stored entries only; dense and CSR results agree for finite
+      operands representing the same matrix. *)
+
+  val transposed_feature_matrix_vector_product :
+    Feature_matrix.t -> Vector.t -> (Vector.t, Error.t) result
 end
 
 (** Stable, platform-independent seed values.
@@ -579,8 +779,10 @@ end
 
     Fitting and transformation require finite inputs. Constant features use a
     scale of one, so centering maps them to zero without division by zero.
-    Sample weights are rejected. Fit and transform are [O(rows * columns)] and
-    transform allocates one dense output matrix. *)
+    Optional sample weights give weighted means and weighted population
+    variances over positively weighted rows; an all-zero weight vector is a
+    typed error. Fit and transform are [O(rows * columns)] and transform
+    allocates one dense output matrix. *)
 module Standard_scaler : sig
   type params = { with_mean : bool; with_std : bool }
   type t
@@ -624,6 +826,310 @@ module Variance_threshold : sig
        and type rng = Rng.t
 end
 
+(** Per-feature affine scaling into a configured finite range.
+
+    Fitting learns finite minima, maxima, scales, and offsets. Constant features
+    use a unit denominator and therefore map to the range's lower bound. When
+    [clip] is true, values transformed outside the training range are clipped to
+    the configured bounds. Sample weights are rejected. *)
+module Min_max_scaler : sig
+  type params = { feature_range : float * float; clip : bool }
+  type t
+  type fitted
+
+  val create :
+    ?feature_range:float * float -> ?clip:bool -> unit -> (t, Error.t) result
+
+  val data_min : fitted -> Vector.t
+  val data_max : fitted -> Vector.t
+  val data_range : fitted -> Vector.t
+  val scale : fitted -> Vector.t
+  val offset : fitted -> Vector.t
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Per-feature scaling by the largest absolute training value.
+
+    Zero-valued features use a scale of one and remain zero. Input values must
+    be finite, fitted schemas are checked during transform, and sample weights
+    are rejected. *)
+module Max_abs_scaler : sig
+  type params = unit
+  type t
+  type fitted
+
+  val create : unit -> t
+  val max_abs : fitted -> Vector.t
+  val scale : fitted -> Vector.t
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Median centering and percentile-range scaling.
+
+    Quantiles use linear interpolation over sorted training values. A zero
+    percentile range is replaced by one. Centering and scaling can be disabled
+    independently; input values and quantile bounds must be finite, and sample
+    weights are rejected. *)
+module Robust_scaler : sig
+  type params = {
+    with_centering : bool;
+    with_scaling : bool;
+    quantile_range : float * float;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?with_centering:bool ->
+    ?with_scaling:bool ->
+    ?quantile_range:float * float ->
+    unit ->
+    (t, Error.t) result
+
+  val center : fitted -> Vector.t
+  val scale : fitted -> Vector.t
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Independent L1, L2, or maximum-norm scaling of each sample.
+
+    This transform learns only the fitted input schema. Each finite row is
+    divided by its selected norm, while a zero-norm row remains unchanged.
+    Sample weights are rejected. *)
+module Normalizer : sig
+  type norm = L1 | L2 | Max
+  type params = { norm : norm }
+  type t
+  type fitted
+
+  val create : ?norm:norm -> unit -> t
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Encoding of finite float64 categories as dense or CSR indicator columns.
+
+    Categories are learned independently per feature and sorted ascending.
+    Output columns follow input-feature order, then category order. [Reject]
+    reports a category absent during fitting; [Ignore] emits an all-zero group
+    for that feature. [max_output_features] bounds the fitted output width, and
+    sample weights are rejected. *)
+module One_hot_encoder : sig
+  type unknown_category = Reject | Ignore
+
+  type params = {
+    unknown_category : unknown_category;
+    max_output_features : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?unknown_category:unknown_category ->
+    ?max_output_features:int ->
+    unit ->
+    (t, Error.t) result
+
+  val categories : fitted -> Vector.t array
+
+  val transform_csr :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Csr_matrix.t, Error.t) result
+  (** Applies the fitted encoder directly into canonical checked CSR storage
+      without allocating the equivalent dense indicator matrix. *)
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Encoding of finite float64 categories as ordered integer-valued columns.
+
+    Each feature's categories are sorted ascending and encoded from zero.
+    Unknown values either fail or map to a caller-selected finite value that
+    must not collide with a learned integer code. Sample weights are rejected.
+*)
+module Ordinal_encoder : sig
+  type unknown_category = Reject | Use_encoded_value of float
+  type params = { unknown_category : unknown_category }
+  type t
+  type fitted
+
+  val create : ?unknown_category:unknown_category -> unit -> (t, Error.t) result
+  val categories : fitted -> Vector.t array
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Reversible sorted encoding of integer classification targets.
+
+    Fitting records ascending distinct class labels. [transform] maps them to
+    contiguous codes starting at zero; [inverse_transform] rejects invalid codes
+    and restores the original labels. This target-specific utility is
+    deliberately separate from the matrix transformer protocol. *)
+module Label_encoder : sig
+  type t
+  type fitted
+
+  val create : unit -> t
+  val fit : t -> y:Target.classification Target.t -> (fitted, Error.t) result
+
+  val transform :
+    fitted ->
+    Target.classification Target.t ->
+    (Target.classification Target.t, Error.t) result
+
+  val inverse_transform :
+    fitted ->
+    Target.classification Target.t ->
+    (Target.classification Target.t, Error.t) result
+
+  val classes : fitted -> int array
+end
+
+(** Deterministically ordered polynomial and interaction feature expansion.
+
+    Terms follow scikit-learn's degree-major combinations-with-replacement
+    order, or strictly distinct combinations when [interaction_only] is true.
+    [include_bias] controls the degree-zero constant column and
+    [max_output_features] bounds allocation. Finite input is required and sample
+    weights are rejected. *)
+module Polynomial_features : sig
+  type params = {
+    degree : int;
+    include_bias : bool;
+    interaction_only : bool;
+    max_output_features : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?degree:int ->
+    ?include_bias:bool ->
+    ?interaction_only:bool ->
+    ?max_output_features:int ->
+    unit ->
+    (t, Error.t) result
+
+  val terms : fitted -> int array array
+  (** Returns one source-feature index sequence for every output column. *)
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Binary indicators for NaN missing-value markers.
+
+    [Missing_only] learns columns containing NaN during fitting; [All] emits one
+    indicator per input feature. With [error_on_new], transformation fails when
+    NaN appears in a previously complete, unselected column. Infinities are
+    rejected and sample weights are not accepted. *)
+module Missing_indicator : sig
+  type features = Missing_only | All
+  type params = { features : features; error_on_new : bool }
+  type t
+  type fitted
+
+  val create : ?features:features -> ?error_on_new:bool -> unit -> t
+
+  val selected_features : fitted -> int array
+  (** Returns source-column indices in output order. *)
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Class-weight specifications resolved into per-row sample weights.
+
+    [Balanced] weights every class by [total / (classes * class_total)] over
+    weighted class frequencies, so rarer classes receive larger weights and the
+    weighted total is preserved. [Explicit] assigns listed labels their weight
+    and every other label one. Resolution multiplies the class weight into the
+    supplied sample weight, or into one when no sample weight is given; rows
+    with zero weight stay zero and classes with no positive weight are absent
+    from {!Class_weight.class_weights}. Labels listed by [Explicit] but absent
+    from the rows are ignored rather than rejected, so fold-local training
+    subsets that miss a rare class still resolve.
+
+    {!Pipeline.classifier} resolves a class weight on each fit's own rows, which
+    keeps balanced weights fold-local under cross-validation. Resolution is
+    [O(rows)] time and space. *)
+module Class_weight : sig
+  type t = Balanced | Explicit of (int * float) array
+
+  val balanced : t
+
+  val explicit : (int * float) list -> (t, Error.t) result
+  (** Validates distinct labels and finite non-negative weights. *)
+
+  val class_weights :
+    t ->
+    ?sample_weight:Sample_weight.t ->
+    Target.classification Target.t ->
+    ((int * float) array, Error.t) result
+  (** Returns the effective weight of each positively weighted class in
+      ascending label order. *)
+
+  val resolve :
+    t ->
+    ?sample_weight:Sample_weight.t ->
+    Target.classification Target.t ->
+    (Sample_weight.t, Error.t) result
+end
+
 (** Immutable sequential composition of fitted preprocessing and an estimator.
 
     Transformer stages are fitted only from the matrix supplied to [fit]. Their
@@ -632,10 +1138,11 @@ end
     unique across the whole pipeline, and failures carry the responsible
     [Error.Stage] context.
 
-    Current transformers are unsupervised and do not receive targets or sample
-    weights. Sample weights route to the terminal estimator. Each stage receives
-    a child RNG derived from its logical name and position. Fit and inference
-    are sequential and allocate one dense matrix per transformer stage. *)
+    Current transformers are unsupervised and do not receive targets. Sample
+    weights always route to the terminal estimator and reach a transformer stage
+    only when it was packaged with [route_sample_weight]. Each stage receives a
+    child RNG derived from its logical name and position. Fit and inference are
+    sequential and allocate one dense matrix per transformer stage. *)
 module Pipeline : sig
   type transformer
   type builder
@@ -645,6 +1152,7 @@ module Pipeline : sig
   type capabilities = { decision_function : bool; predict_proba : bool }
 
   val transformer :
+    ?route_sample_weight:bool ->
     name:string ->
     (module TRANSFORMER
        with type t = 'specification
@@ -653,7 +1161,10 @@ module Pipeline : sig
         and type rng = Rng.t) ->
     'specification ->
     (transformer, Error.t) result
-  (** Packages an unsupervised transformer specification as a named stage. *)
+  (** Packages an unsupervised transformer specification as a named stage.
+      Sample weights reach the stage's [fit] only when [route_sample_weight] is
+      true; by default the stage fits unweighted, matching transformers that
+      declare no weight support. *)
 
   val estimator :
     name:string ->
@@ -679,6 +1190,32 @@ module Pipeline : sig
   (** Packages a terminal estimator and its explicitly supported capabilities.
       When supplied, [classes] declares the class label corresponding to each
       [predict_proba] column. *)
+
+  val classifier :
+    ?class_weight:Class_weight.t ->
+    name:string ->
+    (module ESTIMATOR
+       with type t = 'specification
+        and type target = Target.classification Target.t
+        and type prediction = 'prediction
+        and type fitted = 'fitted
+        and type rng = Rng.t) ->
+    ?decision_function:
+      ('fitted ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      (Vector.t, Error.t) result) ->
+    ?predict_proba:
+      ('fitted ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      (Matrix.t, Error.t) result) ->
+    ?classes:('fitted -> int array) ->
+    'specification ->
+    ((Target.classification Target.t, 'prediction) estimator, Error.t) result
+  (** Packages a classification terminal like {!val:estimator} and, when
+      [class_weight] is supplied, resolves it on each fit's own labels and
+      sample weights before the estimator sees them. *)
 
   val empty : builder
   val add_transformer : builder -> transformer -> (builder, Error.t) result
@@ -802,6 +1339,565 @@ module Ridge_regression : sig
        and type rng = Rng.t
 end
 
+(** Weighted L1-regularized scalar regression.
+
+    The portable solver uses deterministic cyclic coordinate descent to minimize
+    weighted mean squared error plus [alpha] times the L1 coefficient norm. The
+    optional intercept is not penalized. [alpha] is finite and non-negative;
+    [tolerance] and [max_iterations] control checked convergence. Iteration
+    exhaustion returns a typed convergence error. For [n] samples and [p]
+    features, each coordinate-descent sweep costs [O(n * p)] and fitting uses
+    [O(n + p)] working storage. *)
+module Lasso_regression : sig
+  type params = {
+    alpha : float;
+    fit_intercept : bool;
+    tolerance : float;
+    max_iterations : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?alpha:float ->
+    ?fit_intercept:bool ->
+    ?tolerance:float ->
+    ?max_iterations:int ->
+    unit ->
+    (t, Error.t) result
+
+  val coefficients : fitted -> Vector.t
+  val intercept : fitted -> float
+  val report : fitted -> Solver_report.t
+
+  include
+    REGRESSOR
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Weighted scalar regression with combined L1 and L2 regularization.
+
+    The minimized penalty is [alpha * l1_ratio * L1] plus
+    [0.5 * alpha * (1 - l1_ratio) * L2 squared]. [l1_ratio] is in [[0, 1]]; one
+    is lasso and zero is a pure L2 penalty. The optional intercept remains
+    unpenalized. Deterministic cyclic coordinate descent returns a
+    {!Solver_report.t} or a typed convergence failure. For [n] samples and [p]
+    features, each sweep costs [O(n * p)] and fitting uses [O(n + p)] working
+    storage. *)
+module Elastic_net_regression : sig
+  type params = {
+    alpha : float;
+    l1_ratio : float;
+    fit_intercept : bool;
+    tolerance : float;
+    max_iterations : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?alpha:float ->
+    ?l1_ratio:float ->
+    ?fit_intercept:bool ->
+    ?tolerance:float ->
+    ?max_iterations:int ->
+    unit ->
+    (t, Error.t) result
+
+  val coefficients : fitted -> Vector.t
+  val intercept : fitted -> float
+  val report : fitted -> Solver_report.t
+
+  include
+    REGRESSOR
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** A descending lasso regularization path fitted with deterministic warm
+    starts.
+
+    Without explicit [alphas], [fit] constructs [count] logarithmically spaced
+    values from the smallest alpha producing the all-zero centered solution to
+    [epsilon] times that value. Explicit alphas are copied, validated, and
+    sorted descending. Coefficient-matrix rows, intercepts, reports, and model
+    indices all use this same order. A path of [a] alpha values costs the sum of
+    its warm-started coordinate-descent sweeps and stores [O(a * p)] fitted
+    coefficients. *)
+module Lasso_path : sig
+  type params = {
+    fit_intercept : bool;
+    epsilon : float;
+    count : int;
+    tolerance : float;
+    max_iterations : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?fit_intercept:bool ->
+    ?epsilon:float ->
+    ?count:int ->
+    ?tolerance:float ->
+    ?max_iterations:int ->
+    unit ->
+    (t, Error.t) result
+
+  val fit :
+    t ->
+    ?alphas:Vector.t ->
+    ?sample_weight:Sample_weight.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:Target.regression Target.t ->
+    unit ->
+    (fitted, Error.t) result
+
+  val params : t -> params
+  val alphas : fitted -> Vector.t
+
+  val coefficients : fitted -> Matrix.t
+  (** Returns one coefficient row per descending alpha. *)
+
+  val intercepts : fitted -> Vector.t
+  val reports : fitted -> Solver_report.t array
+  val model : fitted -> index:int -> (Lasso_regression.fitted, Error.t) result
+end
+
+(** A descending elastic-net regularization path with deterministic warm starts.
+
+    Path ordering and access follow {!Lasso_path}. Automatic alpha generation
+    requires positive [l1_ratio], because a pure L2 penalty has no finite alpha
+    at which every coefficient is forced to zero; explicit alphas remain valid
+    when [l1_ratio] is zero. A path of [a] alpha values stores [O(a * p)] fitted
+    coefficients. *)
+module Elastic_net_path : sig
+  type params = {
+    l1_ratio : float;
+    fit_intercept : bool;
+    epsilon : float;
+    count : int;
+    tolerance : float;
+    max_iterations : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?l1_ratio:float ->
+    ?fit_intercept:bool ->
+    ?epsilon:float ->
+    ?count:int ->
+    ?tolerance:float ->
+    ?max_iterations:int ->
+    unit ->
+    (t, Error.t) result
+
+  val fit :
+    t ->
+    ?alphas:Vector.t ->
+    ?sample_weight:Sample_weight.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:Target.regression Target.t ->
+    unit ->
+    (fitted, Error.t) result
+
+  val params : t -> params
+  val alphas : fitted -> Vector.t
+
+  val coefficients : fitted -> Matrix.t
+  (** Returns one coefficient row per descending alpha. *)
+
+  val intercepts : fitted -> Vector.t
+  val reports : fitted -> Solver_report.t array
+
+  val model :
+    fitted -> index:int -> (Elastic_net_regression.fitted, Error.t) result
+end
+
+(** Incremental scalar regression trained by stochastic gradient descent.
+
+    A specification is immutable. [start] creates an opaque zero-initialized
+    checkpoint that owns its RNG continuation, and each [partial_fit] call
+    processes the supplied non-empty batch exactly once before returning a new
+    checkpoint. The input checkpoint remains unchanged. When [shuffle] is false,
+    rows retain input order and the RNG is not advanced; when true, each batch
+    uses a deterministic Fisher-Yates permutation from the checkpoint's current
+    stream and stores the successor stream.
+
+    [fit] implements the common estimator protocol by processing one matrix for
+    at most [max_epochs] passes. Omitting [tolerance] requests exactly that
+    fixed epoch budget. Supplying it stops when the largest parameter change in
+    an epoch is at most [tolerance] times the largest absolute parameter or one;
+    exhaustion then returns a typed convergence error. A fitted value produced
+    from a checkpoint reports [Partial_fit] and remains resumable through
+    [checkpoint].
+
+    The squared-error data gradient is multiplied by the sample weight without
+    normalizing individual online updates. The reported objective uses weighted
+    mean half-squared error plus the declared coefficient penalty. Intercepts
+    are never penalized. [No_penalty], [L1], [L2], and [Elastic_net] use a
+    proximal per-sample update; [l1_ratio] controls the L1 share only for
+    [Elastic_net].
+
+    One batch costs [O(n * p)] time and [O(n + p)] temporary storage for [n]
+    samples and [p] features. Checkpoints and fitted values store [O(p)] data.
+    Checkpoints are in-memory training state, not a persistent artifact format.
+*)
+module Sgd_regressor : sig
+  type penalty = No_penalty | L1 | L2 | Elastic_net
+  type learning_rate = Constant | Inverse_scaling of { power_t : float }
+  type stopping_reason = Epoch_limit | Step_tolerance | Partial_fit
+
+  type report = {
+    converged : bool;
+    batches_processed : int;
+    updates : int;
+    objective : float;
+    stopping_reason : stopping_reason;
+  }
+
+  type params = {
+    penalty : penalty;
+    alpha : float;
+    l1_ratio : float;
+    fit_intercept : bool;
+    learning_rate : learning_rate;
+    eta0 : float;
+    max_epochs : int;
+    tolerance : float option;
+    shuffle : bool;
+  }
+
+  type t
+  type fitted
+  type checkpoint
+
+  val create :
+    ?penalty:penalty ->
+    ?alpha:float ->
+    ?l1_ratio:float ->
+    ?fit_intercept:bool ->
+    ?learning_rate:learning_rate ->
+    ?eta0:float ->
+    ?max_epochs:int ->
+    ?tolerance:float ->
+    ?shuffle:bool ->
+    unit ->
+    (t, Error.t) result
+
+  val start : t -> rng:Rng.t -> feature_schema:Feature_schema.t -> checkpoint
+  (** Starts a zero-initialized checkpoint without consuming the RNG. *)
+
+  val partial_fit :
+    checkpoint ->
+    ?sample_weight:Sample_weight.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:Target.regression Target.t ->
+    unit ->
+    (checkpoint, Error.t) result
+
+  val to_fitted : checkpoint -> (fitted, Error.t) result
+  (** Returns a prediction-ready snapshot after at least one batch. *)
+
+  val checkpoint : fitted -> checkpoint
+  (** Returns an independent checkpoint suitable for further training. *)
+
+  val checkpoint_updates : checkpoint -> int
+  val checkpoint_batches_processed : checkpoint -> int
+  val coefficients : fitted -> Vector.t
+  val intercept : fitted -> float
+  val report : fitted -> report
+
+  include
+    REGRESSOR
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Incremental linear classification trained by stochastic gradient descent.
+
+    Penalties, learning-rate schedules, stopping reasons, batch semantics, and
+    checkpoint immutability follow {!Sgd_regressor}; the shared variant types
+    are re-exported so schedule values interoperate. [start] additionally
+    registers the complete class set for the stream: labels are sorted into
+    ascending order, must be distinct, and must number at least two. Every
+    positively weighted row of a later batch must carry a registered class or
+    [partial_fit] returns a typed validation error; zero-weight rows are never
+    inspected because they cannot change the parameters. [fit] registers the
+    positively weighted classes of its single matrix, matching the other
+    built-in classifiers.
+
+    Two registered classes train one model whose positive class is the higher
+    label; three or more train one one-versus-rest model per ascending class.
+    All models share the update counter, learning rate, and per-batch
+    permutation, and each row updates every model before the counter advances.
+    [Hinge] uses the margin loss [max 0 (1 - y * score)] with [y] in [-1, +1];
+    [Log_loss] uses the stable binomial deviance with gradient
+    [sigmoid score - y] for [y] in [0, 1]. Sample weights scale the loss
+    gradient without normalizing individual updates; intercepts are never
+    penalized. The reported objective is the weighted mean over rows of the
+    summed per-model loss plus the declared penalty over all coefficient rows.
+
+    {!Sgd_classifier.coefficients} has one row for binary problems and one row
+    per class otherwise, and {!Sgd_classifier.decision_function} returns one
+    column per model in the same order. Binary prediction selects the higher
+    class when its score is strictly positive; multiclass prediction takes the
+    first maximum score, so exact ties select the lowest label.
+    {!Sgd_classifier.binary_decision_function} exposes the single binary score
+    column as a vector for pipeline dispatch and returns a typed compatibility
+    error for multiclass models. {!Sgd_classifier.predict_proba} is available
+    only for [Log_loss]: binary probabilities are the sigmoid of the score and
+    its complement, and multiclass probabilities normalize the one-versus-rest
+    sigmoids, becoming uniform when every sigmoid underflows.
+
+    One batch costs [O(n * m * p)] time and [O(n + m * p)] temporary storage for
+    [n] samples, [m] models, and [p] features. Checkpoints and fitted values
+    store [O(m * p)] data and are in-memory training state, not a persistent
+    artifact format. *)
+module Sgd_classifier : sig
+  type penalty = Sgd_regressor.penalty = No_penalty | L1 | L2 | Elastic_net
+
+  type learning_rate = Sgd_regressor.learning_rate =
+    | Constant
+    | Inverse_scaling of { power_t : float }
+
+  type stopping_reason = Sgd_regressor.stopping_reason =
+    | Epoch_limit
+    | Step_tolerance
+    | Partial_fit
+
+  type loss = Hinge | Log_loss
+
+  type report = {
+    converged : bool;
+    batches_processed : int;
+    updates : int;
+    objective : float;
+    stopping_reason : stopping_reason;
+  }
+
+  type params = {
+    loss : loss;
+    penalty : penalty;
+    alpha : float;
+    l1_ratio : float;
+    fit_intercept : bool;
+    learning_rate : learning_rate;
+    eta0 : float;
+    max_epochs : int;
+    tolerance : float option;
+    shuffle : bool;
+  }
+
+  type t
+  type fitted
+  type checkpoint
+
+  val create :
+    ?loss:loss ->
+    ?penalty:penalty ->
+    ?alpha:float ->
+    ?l1_ratio:float ->
+    ?fit_intercept:bool ->
+    ?learning_rate:learning_rate ->
+    ?eta0:float ->
+    ?max_epochs:int ->
+    ?tolerance:float ->
+    ?shuffle:bool ->
+    unit ->
+    (t, Error.t) result
+
+  val start :
+    t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    classes:int array ->
+    (checkpoint, Error.t) result
+  (** Registers the distinct class labels and starts a zero-initialized
+      checkpoint without consuming the RNG. *)
+
+  val partial_fit :
+    checkpoint ->
+    ?sample_weight:Sample_weight.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:Target.classification Target.t ->
+    unit ->
+    (checkpoint, Error.t) result
+
+  val to_fitted : checkpoint -> (fitted, Error.t) result
+  (** Returns a prediction-ready snapshot after at least one batch. *)
+
+  val checkpoint : fitted -> checkpoint
+  (** Returns an independent checkpoint suitable for further training. *)
+
+  val checkpoint_classes : checkpoint -> int array
+  val checkpoint_updates : checkpoint -> int
+  val checkpoint_batches_processed : checkpoint -> int
+
+  val classes : fitted -> int array
+  (** Returns the registered labels in ascending order. *)
+
+  val coefficients : fitted -> Matrix.t
+  (** Returns a [1 * features] matrix for two classes and a [classes * features]
+      matrix in {!classes} order otherwise. *)
+
+  val intercepts : fitted -> Vector.t
+  val report : fitted -> report
+
+  val decision_function :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+  (** Returns one score column per model: a single column for two classes and
+      one column per ascending class otherwise. *)
+
+  val binary_decision_function :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Vector.t, Error.t) result
+
+  val predict_proba :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+  (** Returns a [samples * classes] matrix for [Log_loss] and a typed
+      compatibility error for [Hinge]. *)
+
+  include
+    CLASSIFIER
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Weighted binary and multiclass classification through ridge regression.
+
+    Fitting sorts positively weighted classes and solves one [-1 versus +1]
+    ridge problem per class. Coefficients and intercepts have one row or entry
+    per ascending class, including for binary classification.
+    [decision_function] consequently always returns a [samples * classes]
+    matrix. Prediction takes the first maximum score, making an exact tie select
+    the lowest class label.
+
+    [alpha] is finite and non-negative, coefficients but not intercepts are
+    penalized, and each class fit has its own direct {!Solver_report.t}. At
+    least two positively weighted classes are required. For [k] classes, [n]
+    samples, and [p] features, fitting costs [O(k * (n * p squared + p cubed))]
+    with dense QR solves and stores [O(k * p)] fitted parameters; prediction
+    costs [O(n * k * p)]. *)
+module Ridge_classifier : sig
+  type params = { alpha : float; fit_intercept : bool }
+  type t
+  type fitted
+
+  val create :
+    ?alpha:float -> ?fit_intercept:bool -> unit -> (t, Error.t) result
+
+  val coefficients : fitted -> Matrix.t
+  (** Returns a [classes * features] matrix in {!classes} order. *)
+
+  val intercepts : fitted -> Vector.t
+  val classes : fitted -> int array
+  val reports : fitted -> Solver_report.t array
+
+  val decision_function :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  include
+    CLASSIFIER
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Weighted multinomial logistic regression with an L2 coefficient penalty.
+
+    At least three positively weighted integer classes are required and stored
+    in ascending order. The solver jointly minimizes stable softmax
+    cross-entropy and the coefficient penalty under a sum-to-zero class-score
+    constraint; intercepts are not penalized. [c] is the positive inverse
+    regularization strength. Deterministic damped Newton iterations stop on
+    gradient or step tolerance, and iteration exhaustion is a typed convergence
+    failure.
+
+    Coefficient rows, intercept entries, decision columns, and probability
+    columns all follow ascending class order. Exact prediction ties select the
+    lowest label. For [k] classes, [n] samples, and [p] augmented features,
+    fitting costs
+    [O(iterations * (n * k squared * p squared + k cubed * p cubed))];
+    prediction costs [O(n * k * p)]. *)
+module Multinomial_logistic_regression : sig
+  type params = {
+    c : float;
+    fit_intercept : bool;
+    tolerance : float;
+    max_iterations : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?c:float ->
+    ?fit_intercept:bool ->
+    ?tolerance:float ->
+    ?max_iterations:int ->
+    unit ->
+    (t, Error.t) result
+
+  val coefficients : fitted -> Matrix.t
+  (** Returns a [classes * features] matrix in {!classes} order. *)
+
+  val intercepts : fitted -> Vector.t
+  val classes : fitted -> int array
+  val report : fitted -> Solver_report.t
+
+  val decision_function :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val predict_proba :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  include
+    CLASSIFIER
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
 (** Weighted binary logistic regression with an L2 coefficient penalty.
 
     Exactly two positively weighted integer classes are supported and stored in
@@ -849,6 +1945,98 @@ module Logistic_regression : sig
 
   include
     CLASSIFIER
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Weighted Poisson regression with a stable log link.
+
+    Targets must be finite and non-negative, with a positive effective mean when
+    fitting an intercept. [alpha] applies an L2 penalty to coefficients but not
+    the intercept. Deterministic damped IRLS iterations return typed numerical
+    or convergence failures rather than non-finite fitted values. Prediction
+    returns finite, strictly positive means or a typed error. For [n] samples
+    and [p] features, fitting costs [O(iterations * (n * p squared + p cubed))],
+    with [O(p squared)] solver storage; prediction costs [O(n * p)]. *)
+module Poisson_regression : sig
+  type params = {
+    alpha : float;
+    fit_intercept : bool;
+    tolerance : float;
+    max_iterations : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?alpha:float ->
+    ?fit_intercept:bool ->
+    ?tolerance:float ->
+    ?max_iterations:int ->
+    unit ->
+    (t, Error.t) result
+
+  val coefficients : fitted -> Vector.t
+  val intercept : fitted -> float
+  val report : fitted -> Solver_report.t
+
+  include
+    REGRESSOR
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Weighted Tweedie generalized linear regression.
+
+    [power <= 0] accepts real targets, [0 < power < 2] accepts non-negative
+    targets, and [power >= 2] requires positive targets. [Auto] selects the
+    identity link for nonpositive powers and the log link for positive powers.
+    An identity-linked nonzero-power model also requires positive fitted means.
+    [alpha] penalizes coefficients but not the intercept. The portable,
+    deterministic damped IRLS solver reports checked convergence and prediction
+    rejects inverse-link overflow or out-of-domain means. For [n] samples and
+    [p] features, fitting costs [O(iterations * (n * p squared + p cubed))],
+    with [O(p squared)] solver storage; prediction costs [O(n * p)]. *)
+module Tweedie_regression : sig
+  type link = Auto | Identity | Log
+
+  type params = {
+    power : float;
+    alpha : float;
+    fit_intercept : bool;
+    link : link;
+    tolerance : float;
+    max_iterations : int;
+  }
+
+  type t
+  type fitted
+
+  val create :
+    ?power:float ->
+    ?alpha:float ->
+    ?fit_intercept:bool ->
+    ?link:link ->
+    ?tolerance:float ->
+    ?max_iterations:int ->
+    unit ->
+    (t, Error.t) result
+
+  val coefficients : fitted -> Vector.t
+  val intercept : fitted -> float
+
+  val resolved_link : fitted -> link
+  (** Returns [Identity] or [Log]; a fitted model never retains [Auto]. *)
+
+  val report : fitted -> Solver_report.t
+
+  include
+    REGRESSOR
       with type t := t
        and type params := params
        and type fitted := fitted
@@ -1040,9 +2228,11 @@ end
     descending and begin with infinity; precision-recall thresholds are
     ascending. ROC and precision-recall curves require positive and negative
     weighted support. Scalar fallbacks are zero for undefined precision, recall,
-    F1, and balanced accuracy, and [0.5] for ROC AUC. Scalar label and loss
-    metrics are [O(samples)] with [O(1)] scratch. Ranking curves are
-    [O(samples * log samples)] time and [O(samples)] space. *)
+    F1, and balanced accuracy, [0.5] for ROC AUC, and zero for average
+    precision, which sums precision over recall steps of the precision-recall
+    curve without interpolation. Scalar label and loss metrics are [O(samples)]
+    with [O(1)] scratch. Ranking curves are [O(samples * log samples)] time and
+    [O(samples)] space. *)
 module Binary_classification_metrics : sig
   type roc_curve = {
     thresholds : Vector.t;
@@ -1116,6 +2306,15 @@ module Binary_classification_metrics : sig
     unit ->
     (float, Error.t) result
 
+  val average_precision :
+    ?positive_label:int ->
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    truth:Target.classification Target.t ->
+    positive_probabilities:Vector.t ->
+    unit ->
+    (float, Error.t) result
+
   val roc_curve :
     ?positive_label:int ->
     ?sample_weight:Sample_weight.t ->
@@ -1163,8 +2362,9 @@ end
 
 (** Higher-is-better binary classification scorer specifications.
 
-    Label metrics request {!Binary_prediction.labels}; log loss and ROC AUC
-    request positive-class probabilities. Log loss is negated for selection. *)
+    Label metrics request {!Binary_prediction.labels}; log loss, ROC AUC, and
+    average precision request positive-class probabilities. Log loss is negated
+    for selection. *)
 module Binary_classification_scorer : sig
   type metric =
     | Accuracy
@@ -1174,6 +2374,7 @@ module Binary_classification_scorer : sig
     | F1
     | Log_loss
     | Roc_auc
+    | Average_precision
 
   type response = Labels | Positive_probabilities
 
@@ -1208,12 +2409,277 @@ module Binary_classification_scorer : sig
   val roc_auc :
     ?positive_label:int -> ?undefined:Undefined_metric_policy.t -> unit -> t
 
+  val average_precision :
+    ?positive_label:int -> ?undefined:Undefined_metric_policy.t -> unit -> t
+
   include
     SCORER
       with type t := t
        and type params := params
        and type truth = Target.classification Target.t
        and type prediction = Binary_prediction.t
+end
+
+(** Aligned multiclass classifier outputs used by scorer specifications.
+
+    At least one response must be present. Probabilities require their class
+    order, must be finite values in [[0., 1.]], and each row must sum to one
+    within [1e-6]. When both responses are supplied, their lengths must agree.
+*)
+module Multiclass_prediction : sig
+  type t
+
+  val create :
+    ?labels:Target.classification Target.t ->
+    ?classes:int array ->
+    ?probabilities:Matrix.t ->
+    unit ->
+    (t, Error.t) result
+
+  val length : t -> int
+  val labels : t -> Target.classification Target.t option
+  val classes : t -> int array option
+  val probabilities : t -> Matrix.t option
+end
+
+(** Confusion-matrix and averaged classification metrics for any label count.
+
+    The label set defaults to the ascending union of observed truth and
+    prediction labels; an explicit [labels] array fixes the confusion-matrix
+    order and drops rows whose labels fall outside it. [Micro] pools weighted
+    counts before dividing, [Macro] averages per-class ratios equally, and
+    [Weighted] averages them by weighted truth support. A per-class ratio with a
+    zero denominator follows the undefined policy, with a fallback of zero,
+    matching scikit-learn's default zero-division handling. Balanced accuracy
+    averages recall over classes with positive support. Log loss clips
+    probabilities to the machine epsilon and requires every truth label to have
+    a probability column. Label metrics are [O(samples + classes squared)] with
+    [O(classes squared)] scratch. *)
+module Multiclass_classification_metrics : sig
+  type average = Micro | Macro | Weighted
+  type confusion_matrix = { labels : int array; counts : Matrix.t }
+
+  type class_scores = {
+    class_labels : int array;
+    precisions : Vector.t;
+    recalls : Vector.t;
+    f1_scores : Vector.t;
+    supports : Vector.t;
+  }
+
+  val confusion_matrix :
+    ?sample_weight:Sample_weight.t ->
+    ?labels:int array ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (confusion_matrix, Error.t) result
+  (** Rows are truth labels and columns are predicted labels. *)
+
+  val accuracy :
+    ?sample_weight:Sample_weight.t ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (float, Error.t) result
+
+  val balanced_accuracy :
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (float, Error.t) result
+
+  val class_scores :
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    ?labels:int array ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (class_scores, Error.t) result
+
+  val precision :
+    ?average:average ->
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    ?labels:int array ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (float, Error.t) result
+
+  val recall :
+    ?average:average ->
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    ?labels:int array ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (float, Error.t) result
+
+  val f1 :
+    ?average:average ->
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    ?labels:int array ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (float, Error.t) result
+
+  val log_loss :
+    ?sample_weight:Sample_weight.t ->
+    truth:Target.classification Target.t ->
+    classes:int array ->
+    probabilities:Matrix.t ->
+    unit ->
+    (float, Error.t) result
+end
+
+(** Ranking metrics over class-probability matrices.
+
+    One-versus-rest ROC AUC scores every class column against its indicator;
+    [Macro] averages classes equally, [Weighted] by weighted truth support, and
+    [Micro] pools every row-class indicator into one binary curve.
+    One-versus-one ROC AUC averages, over every pair of classes with positive
+    weighted support in ascending order, the mean of the two directional AUCs on
+    the rows belonging to that pair; [Weighted] uses the pair's weighted
+    prevalence, and [Micro] is a typed validation error. A class without
+    weighted support follows the undefined policy with a fallback of [0.5].
+    scikit-learn refuses sample weights for one-versus-one AUC; ModelKit applies
+    them to both the pairwise curves and the prevalences.
+
+    Top-k accuracy counts a row as a hit when fewer than [k] other classes
+    outrank the truth class, with exact ties broken toward the higher column
+    index as scikit-learn does. [k] must lie in [\[1, classes)]. One-versus-rest
+    costs [O(classes * n log n)]; one-versus-one costs
+    [O(classes squared * n log n)]; top-k costs [O(n * classes)]. *)
+module Multiclass_ranking : sig
+  type strategy = One_vs_rest | One_vs_one
+
+  val roc_auc :
+    ?strategy:strategy ->
+    ?average:Multiclass_classification_metrics.average ->
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    truth:Target.classification Target.t ->
+    classes:int array ->
+    probabilities:Matrix.t ->
+    unit ->
+    (float, Error.t) result
+
+  val top_k_accuracy :
+    k:int ->
+    ?sample_weight:Sample_weight.t ->
+    truth:Target.classification Target.t ->
+    classes:int array ->
+    probabilities:Matrix.t ->
+    unit ->
+    (float, Error.t) result
+end
+
+(** Discounted cumulative gain over per-row graded relevance.
+
+    Each row of [relevance] holds finite non-negative gains for the row's items
+    and each row of [scores] holds the ranking scores; both matrices share one
+    shape with at least two columns. Rank [r] receives discount
+    [1 / log2 (r + 2)], and [k] zeroes discounts from rank [k] onward. By
+    default tied scores share the mean gain of their group times the group's
+    summed discount, following McSherry and Najork; [ignore_ties] instead ranks
+    tied items by descending column index as scikit-learn's reversed stable sort
+    does. NDCG divides each row by its ideal DCG and scores an all-zero row as
+    zero. Both metrics average rows by sample weight and cost
+    [O(rows * columns log columns)]. *)
+module Ranking_metrics : sig
+  val dcg :
+    ?k:int ->
+    ?ignore_ties:bool ->
+    ?sample_weight:Sample_weight.t ->
+    relevance:Matrix.t ->
+    scores:Matrix.t ->
+    unit ->
+    (float, Error.t) result
+
+  val ndcg :
+    ?k:int ->
+    ?ignore_ties:bool ->
+    ?sample_weight:Sample_weight.t ->
+    relevance:Matrix.t ->
+    scores:Matrix.t ->
+    unit ->
+    (float, Error.t) result
+end
+
+(** Higher-is-better multiclass scorer specifications.
+
+    Label metrics request {!Multiclass_prediction.labels}; log loss, ROC AUC,
+    and top-k accuracy request class probabilities, and log loss is negated for
+    selection. Averaged metrics default to [Macro] and carry the averaging mode
+    in their name, for example [f1_weighted]. *)
+module Multiclass_classification_scorer : sig
+  type metric =
+    | Accuracy
+    | Balanced_accuracy
+    | Precision of Multiclass_classification_metrics.average
+    | Recall of Multiclass_classification_metrics.average
+    | F1 of Multiclass_classification_metrics.average
+    | Log_loss
+    | Roc_auc of {
+        strategy : Multiclass_ranking.strategy;
+        average : Multiclass_classification_metrics.average;
+      }
+    | Top_k_accuracy of int
+
+  type response = Labels | Class_probabilities
+  type params = { metric : metric; undefined : Undefined_metric_policy.t }
+  type t
+
+  val create : ?undefined:Undefined_metric_policy.t -> metric -> t
+  val response : t -> response
+  val accuracy : t
+  val balanced_accuracy : ?undefined:Undefined_metric_policy.t -> unit -> t
+
+  val precision :
+    ?undefined:Undefined_metric_policy.t ->
+    ?average:Multiclass_classification_metrics.average ->
+    unit ->
+    t
+
+  val recall :
+    ?undefined:Undefined_metric_policy.t ->
+    ?average:Multiclass_classification_metrics.average ->
+    unit ->
+    t
+
+  val f1 :
+    ?undefined:Undefined_metric_policy.t ->
+    ?average:Multiclass_classification_metrics.average ->
+    unit ->
+    t
+
+  val neg_log_loss : t
+
+  val roc_auc :
+    ?undefined:Undefined_metric_policy.t ->
+    ?strategy:Multiclass_ranking.strategy ->
+    ?average:Multiclass_classification_metrics.average ->
+    unit ->
+    t
+  (** Named [roc_auc_ovr] or [roc_auc_ovo] for macro averaging, with a
+      [_weighted] or [_micro] suffix otherwise. *)
+
+  val top_k_accuracy : k:int -> t
+  (** Named [top_<k>_accuracy] so several cutoffs can share one report. *)
+
+  include
+    SCORER
+      with type t := t
+       and type params := params
+       and type truth = Target.classification Target.t
+       and type prediction = Multiclass_prediction.t
 end
 
 (** Stable [O(scores)] population aggregation with [O(1)] scratch.
@@ -1249,7 +2715,16 @@ end
     retains typed failures in the report and continues with later folds. Models
     and indices are retained only when requested. [execution] defaults to
     {!Execution.sequential}; every backend must return outputs and the
-    lowest-index failure in logical fold order. *)
+    lowest-index failure in logical fold order.
+
+    [Binary_classification] scores with {!Binary_classification_scorer} and
+    requires exactly two declared classes for probability scorers.
+    [Multiclass_classification] scores with {!Multiclass_classification_scorer},
+    accepts any pipeline that declares two or more distinct classes, and passes
+    the full probability matrix in declared class order to log-loss scorers.
+    Both request predicted labels and probabilities only when a scorer needs
+    them; a pipeline without the requested capability records a typed prediction
+    failure for the fold. *)
 module Cross_validation : sig
   type failure_policy = Abort | Record
   type partition = Train | Test
@@ -1337,6 +2812,29 @@ module Cross_validation : sig
       ?execution:Execution.t ->
       splitter:Target.classification Target.t splitter ->
       scorers:Binary_classification_scorer.t array ->
+      seed:Seed.t ->
+      ( Target.classification Target.t,
+        Target.classification Target.t )
+      Pipeline.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+  end
+
+  module Multiclass_classification : sig
+    type model =
+      ( Target.classification Target.t,
+        Target.classification Target.t )
+      Pipeline.fitted
+
+    val cross_validate :
+      ?return_train_score:bool ->
+      ?return_models:bool ->
+      ?return_indices:bool ->
+      ?failure_policy:failure_policy ->
+      ?fit_seed:Seed.t ->
+      ?execution:Execution.t ->
+      splitter:Target.classification Target.t splitter ->
+      scorers:Multiclass_classification_scorer.t array ->
       seed:Seed.t ->
       ( Target.classification Target.t,
         Target.classification Target.t )
@@ -1464,6 +2962,26 @@ module Grid_search : sig
       Target.classification Dataset.t ->
       (model report, Error.t) result
   end
+
+  module Multiclass_classification : sig
+    type model = Cross_validation.Multiclass_classification.model
+
+    val search :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      grid:
+        ( 'configuration,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        grid ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Multiclass_classification_scorer.t array ->
+      refit:string ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+  end
 end
 
 (** Portable, versioned persistence for fitted built-in pipelines.
@@ -1527,7 +3045,10 @@ module Artifact : sig
     name:string -> Simple_imputer.t -> (Pipeline.transformer, Error.t) result
 
   val standard_scaler_stage :
-    name:string -> Standard_scaler.t -> (Pipeline.transformer, Error.t) result
+    ?route_sample_weight:bool ->
+    name:string ->
+    Standard_scaler.t ->
+    (Pipeline.transformer, Error.t) result
 
   val variance_threshold_stage :
     name:string ->
@@ -1549,6 +3070,7 @@ module Artifact : sig
     result
 
   val logistic_regression_estimator :
+    ?class_weight:Class_weight.t ->
     name:string ->
     Logistic_regression.t ->
     ( ( Target.classification Target.t,

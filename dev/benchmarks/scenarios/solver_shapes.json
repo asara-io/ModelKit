@@ -1,0 +1,40 @@
+{
+  "c": 0.05,
+  "claim_eligible": false,
+  "logistic_solver": "newton-cholesky",
+  "max_iterations": 200,
+  "measured_runs": 3,
+  "ridge_alpha": 2.5,
+  "scenario": "solver_shapes_v1",
+  "seed": 1729,
+  "shapes": [
+    {
+      "duplicates": 0,
+      "features": 8,
+      "name": "tall",
+      "samples": 40000
+    },
+    {
+      "duplicates": 0,
+      "features": 200,
+      "name": "square",
+      "samples": 2000
+    },
+    {
+      "duplicates": 0,
+      "features": 400,
+      "name": "wide",
+      "samples": 300
+    },
+    {
+      "duplicates": 8,
+      "features": 24,
+      "name": "rank_deficient",
+      "samples": 5000
+    }
+  ],
+  "thread_limit": 1,
+  "tolerance": 1e-10,
+  "warmup_runs": 1,
+  "workload": "solver_shapes"
+}

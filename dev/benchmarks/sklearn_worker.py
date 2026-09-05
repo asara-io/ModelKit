@@ -171,6 +171,711 @@ def linear_models(scenario: dict[str, object]) -> dict[str, object]:
     }
 
 
+def ridge_classifier(scenario: dict[str, object]) -> dict[str, object]:
+    import numpy as np
+    from sklearn.linear_model import RidgeClassifier
+
+    dataset = scenario["dataset"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    x = (
+        (rows * (17 + columns * 12) + columns * 31 + dataset["seed"]) % 1000
+    ).astype(np.float64)
+    x = (x / 100.0) - 5.0
+    binary_score = x[:, 0] + 0.25 * x[:, 1] - 0.1 * x[:, 2]
+    binary_target = np.where(binary_score > 0.0, 7, -3)
+    multiclass_target = np.where(
+        x[:, 0] + 0.25 * x[:, 1] > 1.0,
+        9,
+        np.where(x[:, 2] - 0.2 * x[:, 3] > 0.0, 2, -4),
+    )
+    sample_weight = 1.0 + (rows[:, 0] % 5).astype(np.float64) * 0.25
+    binary = RidgeClassifier(alpha=scenario["alpha"], solver="svd").fit(
+        x, binary_target, sample_weight=sample_weight
+    )
+    multiclass = RidgeClassifier(alpha=scenario["alpha"], solver="svd").fit(
+        x, multiclass_target, sample_weight=sample_weight
+    )
+    binary_decisions = binary.decision_function(x)
+    binary_predictions = binary.predict(x)
+    multiclass_decisions = multiclass.decision_function(x)
+    multiclass_predictions = multiclass.predict(x)
+    signature = np.asarray(
+        [
+            binary_decisions[0],
+            binary_decisions[-1],
+            binary_predictions[0],
+            binary_predictions[-1],
+            *multiclass_decisions[0],
+            *multiclass_decisions[-1],
+            multiclass_predictions[0],
+            multiclass_predictions[-1],
+        ],
+        dtype="<f8",
+    )
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "features": x.shape[1],
+        "operations": [
+            "binary_ridge_classification",
+            "multiclass_ridge_classification",
+        ],
+        "samples": x.shape[0],
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
+def multinomial_logistic(scenario: dict[str, object]) -> dict[str, object]:
+    import numpy as np
+    from sklearn.linear_model import LogisticRegression
+
+    dataset = scenario["dataset"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    x = (
+        (rows * (17 + columns * 12) + columns * 31 + dataset["seed"]) % 1000
+    ).astype(np.float64)
+    x = (x / 100.0) - 5.0
+    target = np.where(
+        x[:, 0] + 0.25 * x[:, 1] > 1.0,
+        9,
+        np.where(x[:, 2] - 0.2 * x[:, 3] > 0.0, 2, -4),
+    )
+    sample_weight = 1.0 + (rows[:, 0] % 5).astype(np.float64) * 0.25
+    fitted = LogisticRegression(
+        C=scenario["c"],
+        solver=scenario["solver"],
+        tol=scenario["tolerance"],
+        max_iter=scenario["max_iterations"],
+    ).fit(x, target, sample_weight=sample_weight)
+    decisions = fitted.decision_function(x)
+    probabilities = fitted.predict_proba(x)
+    predictions = fitted.predict(x)
+    signature = np.asarray(
+        [
+            *decisions[0],
+            *probabilities[0],
+            *probabilities[-1],
+            predictions[0],
+            predictions[-1],
+        ],
+        dtype="<f8",
+    )
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "features": x.shape[1],
+        "operations": [
+            "weighted_multinomial_logistic_fit",
+            "decision_function",
+            "predict_proba",
+            "predict",
+        ],
+        "samples": x.shape[0],
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
+def glm(scenario: dict[str, object]) -> dict[str, object]:
+    import numpy as np
+    from sklearn.linear_model import PoissonRegressor, TweedieRegressor
+
+    dataset = scenario["dataset"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    x = (
+        (rows * (17 + columns * 12) + columns * 31 + dataset["seed"]) % 1000
+    ).astype(np.float64)
+    x = (x / 100.0) - 5.0
+    raw = 0.2 + 0.08 * x[:, 0] - 0.04 * x[:, 1] + 0.03 * x[:, 2]
+    target = np.exp(raw) * (0.8 + (rows[:, 0] % 5).astype(np.float64) * 0.1)
+    sample_weight = 1.0 + (rows[:, 0] % 5).astype(np.float64) * 0.25
+    common = {
+        "alpha": scenario["alpha"],
+        "solver": scenario["solver"],
+        "tol": scenario["tolerance"],
+        "max_iter": scenario["max_iterations"],
+    }
+    poisson = PoissonRegressor(**common).fit(
+        x, target, sample_weight=sample_weight
+    )
+    tweedie = TweedieRegressor(
+        power=scenario["power"], link="log", **common
+    ).fit(x, target, sample_weight=sample_weight)
+    poisson_predictions = poisson.predict(x)
+    tweedie_predictions = tweedie.predict(x)
+    signature = np.asarray(
+        [
+            poisson.coef_[0],
+            poisson.intercept_,
+            poisson_predictions[0],
+            poisson_predictions[-1],
+            tweedie.coef_[0],
+            tweedie.intercept_,
+            tweedie_predictions[0],
+            tweedie_predictions[-1],
+        ],
+        dtype="<f8",
+    )
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "features": x.shape[1],
+        "operations": [
+            "weighted_poisson_fit_predict",
+            "weighted_tweedie_fit_predict",
+        ],
+        "samples": x.shape[0],
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
+def regularized_linear(scenario: dict[str, object]) -> dict[str, object]:
+    import numpy as np
+    from sklearn.linear_model import ElasticNet, Lasso
+
+    dataset = scenario["dataset"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    x = (
+        (rows * (17 + columns * 12) + columns * 31 + dataset["seed"]) % 1000
+    ).astype(np.float64)
+    x = (x / 100.0) - 5.0
+    target = (
+        2.0
+        + 1.5 * x[:, 0]
+        - 0.8 * x[:, 1]
+        + 0.3 * x[:, 2]
+        + ((rows[:, 0] % 7).astype(np.float64) - 3.0) * 0.02
+    )
+    sample_weight = 1.0 + (rows[:, 0] % 5).astype(np.float64) * 0.25
+    common = {
+        "fit_intercept": True,
+        "tol": scenario["tolerance"],
+        "max_iter": scenario["max_iterations"],
+        "selection": "cyclic",
+    }
+    lasso = Lasso(alpha=scenario["alpha"], **common).fit(
+        x, target, sample_weight=sample_weight
+    )
+    elastic = ElasticNet(
+        alpha=scenario["alpha"], l1_ratio=scenario["l1_ratio"], **common
+    ).fit(x, target, sample_weight=sample_weight)
+
+    def path(estimator):
+        coefficients = []
+        for alpha in scenario["path_alphas"]:
+            estimator.set_params(alpha=alpha)
+            estimator.fit(x, target, sample_weight=sample_weight)
+            coefficients.append(estimator.coef_.copy())
+        return np.asarray(coefficients)
+
+    lasso_path = path(Lasso(alpha=scenario["path_alphas"][0], warm_start=True, **common))
+    elastic_path = path(
+        ElasticNet(
+            alpha=scenario["path_alphas"][0],
+            l1_ratio=scenario["l1_ratio"],
+            warm_start=True,
+            **common,
+        )
+    )
+    lasso_predictions = lasso.predict(x)
+    elastic_predictions = elastic.predict(x)
+    signature = np.asarray(
+        [
+            lasso.coef_[0],
+            lasso.intercept_,
+            lasso_predictions[0],
+            lasso_predictions[-1],
+            elastic.coef_[0],
+            elastic.intercept_,
+            elastic_predictions[0],
+            elastic_predictions[-1],
+            lasso_path[0, 0],
+            lasso_path[-1, 0],
+            elastic_path[0, 0],
+            elastic_path[-1, 0],
+        ],
+        dtype="<f8",
+    )
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "features": x.shape[1],
+        "operations": [
+            "weighted_lasso_fit_predict",
+            "weighted_elastic_net_fit_predict",
+            "weighted_lasso_path",
+            "weighted_elastic_net_path",
+        ],
+        "samples": x.shape[0],
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
+def sgd_regression(scenario: dict[str, object]) -> dict[str, object]:
+    import numpy as np
+    from sklearn.linear_model import SGDRegressor
+
+    dataset = scenario["dataset"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    x = (
+        (rows * (17 + columns * 12) + columns * 31 + dataset["seed"]) % 1000
+    ).astype(np.float64)
+    x = (x / 100.0) - 5.0
+    target = (
+        2.0
+        + 1.5 * x[:, 0]
+        - 0.8 * x[:, 1]
+        + 0.3 * x[:, 2]
+        + ((rows[:, 0] % 7).astype(np.float64) - 3.0) * 0.02
+    )
+    sample_weight = 1.0 + (rows[:, 0] % 5).astype(np.float64) * 0.25
+    configuration = {
+        "loss": "squared_error",
+        "penalty": None,
+        "alpha": 0.0,
+        "fit_intercept": True,
+        "max_iter": scenario["epochs"],
+        "tol": None,
+        "shuffle": False,
+        "learning_rate": "constant",
+        "eta0": scenario["eta0"],
+        "average": False,
+    }
+    fitted = SGDRegressor(**configuration).fit(
+        x, target, sample_weight=sample_weight
+    )
+    incremental = SGDRegressor(**configuration)
+    for _ in range(scenario["epochs"]):
+        incremental.partial_fit(x, target, sample_weight=sample_weight)
+    predictions = fitted.predict(x)
+    incremental_predictions = incremental.predict(x)
+    signature = np.asarray(
+        [
+            fitted.coef_[0],
+            fitted.intercept_[0],
+            predictions[0],
+            predictions[-1],
+            incremental.coef_[0],
+            incremental.intercept_[0],
+            incremental_predictions[0],
+            incremental_predictions[-1],
+            fitted.t_ - 1.0,
+            incremental.t_ - 1.0,
+        ],
+        dtype="<f8",
+    )
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "features": x.shape[1],
+        "operations": [
+            "weighted_sgd_regressor_fit_predict",
+            "weighted_sgd_regressor_partial_fit_predict",
+        ],
+        "samples": x.shape[0],
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
+def sgd_classification(scenario: dict[str, object]) -> dict[str, object]:
+    import numpy as np
+    from sklearn.linear_model import SGDClassifier
+
+    dataset = scenario["dataset"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    x = (
+        (rows * (17 + columns * 12) + columns * 31 + dataset["seed"]) % 1000
+    ).astype(np.float64)
+    x = (x / 100.0) - 5.0
+    binary = np.where(x[:, 0] + 0.25 * x[:, 1] > 1.0, 9, -4)
+    multiclass = np.where(
+        x[:, 0] + 0.25 * x[:, 1] > 1.0,
+        9,
+        np.where(x[:, 2] - 0.2 * x[:, 3] > 0.0, 2, -4),
+    )
+    sample_weight = 1.0 + (rows[:, 0] % 5).astype(np.float64) * 0.25
+
+    def configuration(loss: str) -> dict[str, object]:
+        return {
+            "loss": loss,
+            "penalty": None,
+            "alpha": 0.0,
+            "fit_intercept": True,
+            "max_iter": scenario["epochs"],
+            "tol": None,
+            "shuffle": False,
+            "learning_rate": "constant",
+            "eta0": scenario["eta0"],
+            "average": False,
+        }
+
+    hinge = SGDClassifier(**configuration("hinge")).fit(
+        x, binary, sample_weight=sample_weight
+    )
+    log_loss = SGDClassifier(**configuration("log_loss")).fit(
+        x, multiclass, sample_weight=sample_weight
+    )
+    incremental = SGDClassifier(**configuration("log_loss"))
+    classes = np.array([-4, 2, 9], dtype=np.int64)
+    for _ in range(scenario["epochs"]):
+        incremental.partial_fit(
+            x, multiclass, classes=classes, sample_weight=sample_weight
+        )
+    hinge_decisions = hinge.decision_function(x)
+    hinge_predictions = hinge.predict(x)
+    probabilities = log_loss.predict_proba(x)
+    predictions = log_loss.predict(x)
+    incremental_probabilities = incremental.predict_proba(x)
+    signature = np.asarray(
+        [
+            hinge.coef_[0, 0],
+            hinge.intercept_[0],
+            hinge_decisions[0],
+            hinge_decisions[-1],
+            hinge_predictions[0],
+            hinge_predictions[-1],
+            log_loss.coef_[0, 0],
+            log_loss.intercept_[0],
+            *probabilities[0],
+            *probabilities[-1],
+            predictions[0],
+            predictions[-1],
+            incremental_probabilities[-1, 2],
+            log_loss.t_ - 1.0,
+            incremental.t_ - 1.0,
+        ],
+        dtype="<f8",
+    )
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "features": x.shape[1],
+        "operations": [
+            "weighted_binary_hinge_sgd_fit_decision_predict",
+            "weighted_multiclass_log_loss_sgd_fit_proba_predict",
+            "weighted_multiclass_log_loss_sgd_partial_fit_proba",
+        ],
+        "samples": x.shape[0],
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
+def adapter_admission(scenario: dict[str, object]) -> dict[str, object]:
+    import numpy as np
+    from sklearn.utils import check_array, check_consistent_length
+    from sklearn.utils.validation import _check_sample_weight
+
+    dataset = scenario["dataset"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    x = ((rows * 17 + columns * 31 + dataset["seed"]) % 1000).astype(np.float64)
+    x /= 100.0
+    missing = (columns > 0) & (
+        (rows * 101 + columns * 53 + dataset["seed"]) % dataset["missing_modulus"] == 0
+    )
+    x[missing] = np.nan
+    y = rows[:, 0] % 3
+    weights = 1.0 + (rows[:, 0] % 5).astype(np.float64) * 0.25
+    groups = rows[:, 0] // 10
+
+    def admit(features):
+        admitted = check_array(features, dtype=np.float64, ensure_all_finite="allow-nan")
+        labels = check_array(y, ensure_2d=False, dtype=np.int64)
+        admitted_weights = _check_sample_weight(weights, admitted)
+        admitted_groups = check_array(groups, ensure_2d=False, dtype=np.int64)
+        check_consistent_length(admitted, labels, admitted_weights, admitted_groups)
+        return [
+            float(admitted.shape[0]),
+            float(admitted.shape[1]),
+            float(np.nansum(admitted)),
+            float(np.isnan(admitted).sum()),
+            float(labels.sum()),
+            float(admitted_weights.sum()),
+            float(admitted_groups.sum()),
+        ]
+
+    tensor_signature = admit(x)
+    table = {f"feature_{index}": x[:, index].copy() for index in range(x.shape[1])}
+    table_signature = admit(np.column_stack(list(table.values())))
+    signature = np.asarray([*tensor_signature, *table_signature], dtype="<f8")
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "features": x.shape[1],
+        "operations": [
+            "numpy_tensor_check_array_admission",
+            "numpy_column_stack_check_array_admission",
+        ],
+        "samples": x.shape[0],
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
+def sparse_kernels(scenario: dict[str, object]) -> dict[str, object]:
+    import time
+
+    import numpy as np
+    import scipy.sparse as sparse
+    from sklearn.preprocessing import OneHotEncoder
+
+    def timed(function, repeats):
+        started = time.perf_counter_ns()
+        result = function()
+        for _ in range(repeats - 1):
+            result = function()
+        return result, {"allocated_words": None, "elapsed_ns": time.perf_counter_ns() - started}
+
+    dataset = scenario["dataset"]
+    seed = dataset["seed"]
+    repeats = scenario["repeats"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    values = (((rows * 17 + columns * 31 + seed) % 1000).astype(np.float64) + 0.5) / 100.0 - 5.0
+    hashes = (rows * 101 + columns * 53 + seed) % 10000
+    operand = ((columns[0] * 7) % 13).astype(np.float64) / 13.0 - 0.5
+    transposed_operand = ((rows[:, 0] * 3) % 11).astype(np.float64) / 11.0 - 0.5
+    signature = []
+    cases = []
+    matrices = []
+    for density in dataset["densities"]:
+        threshold = int(round(density * 10000))
+        dense = np.where(hashes < threshold, values, 0.0)
+        csr = sparse.csr_matrix(dense)
+        matrices.append(csr)
+        csr_product, csr_timing = timed(lambda: csr @ operand, repeats)
+        dense_product, dense_timing = timed(lambda: dense @ operand, repeats)
+        csr_transposed, csr_transposed_timing = timed(
+            lambda: csr.T @ transposed_operand, repeats
+        )
+        dense_transposed, dense_transposed_timing = timed(
+            lambda: dense.T @ transposed_operand, repeats
+        )
+        signature.extend(
+            [
+                float(csr.nnz),
+                float(csr_product.sum()),
+                float(dense_product.sum()),
+                float(csr_transposed.sum()),
+                float(dense_transposed.sum()),
+            ]
+        )
+        cases.append(
+            {
+                "csr_memory": {
+                    "dense_equivalent_bytes": int(dense.nbytes),
+                    "total_bytes": int(csr.data.nbytes + csr.indices.nbytes + csr.indptr.nbytes),
+                },
+                "csr_product": csr_timing,
+                "csr_transposed_product": csr_transposed_timing,
+                "dense_product": dense_timing,
+                "dense_transposed_product": dense_transposed_timing,
+                "density": density,
+                "nonzeros": int(csr.nnz),
+            }
+        )
+    one_hot = scenario["one_hot"]
+    one_hot_rows = np.arange(one_hot["samples"], dtype=np.int64)[:, np.newaxis]
+    one_hot_features = np.arange(one_hot["features"], dtype=np.int64)[np.newaxis, :]
+    one_hot_input = ((one_hot_rows * 13 + one_hot_features * 7) % one_hot["cardinality"]).astype(
+        np.float64
+    )
+    dense_encoder = OneHotEncoder(handle_unknown="error", sparse_output=False).fit(one_hot_input)
+    sparse_encoder = OneHotEncoder(handle_unknown="error", sparse_output=True).fit(one_hot_input)
+    one_hot_dense, one_hot_dense_timing = timed(lambda: dense_encoder.transform(one_hot_input), 1)
+    one_hot_csr, one_hot_csr_timing = timed(
+        lambda: sparse_encoder.transform(one_hot_input).tocsr(), 1
+    )
+    source = matrices[len(matrices) // 2]
+    even_rows = np.arange(0, dataset["samples"], 2)
+    materialized, materialize_timing = timed(lambda: source[even_rows], 1)
+    signature.extend(
+        [
+            float(one_hot_dense.shape[1]),
+            float(one_hot_csr.nnz),
+            float((one_hot_dense * np.arange(one_hot_dense.shape[1])).sum()),
+            float((one_hot_csr.indices * one_hot_csr.data).sum()),
+            float(materialized.shape[0]),
+            float(materialized.nnz),
+            float(materialized.data.sum()),
+        ]
+    )
+    signature = np.asarray(signature, dtype="<f8")
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "densities": cases,
+        "features": dataset["features"],
+        "materialization": {
+            "allocated_bytes": None,
+            "materialize": materialize_timing,
+            "materialized_bytes": int(
+                materialized.data.nbytes + materialized.indices.nbytes + materialized.indptr.nbytes
+            ),
+            "shared_bytes": None,
+            "view_rows": int(materialized.shape[0]),
+        },
+        "one_hot": {
+            "csr_memory": {
+                "dense_equivalent_bytes": int(one_hot_dense.nbytes),
+                "total_bytes": int(
+                    one_hot_csr.data.nbytes + one_hot_csr.indices.nbytes + one_hot_csr.indptr.nbytes
+                ),
+            },
+            "csr_transform": one_hot_csr_timing,
+            "dense_bytes": int(one_hot_dense.nbytes),
+            "dense_transform": one_hot_dense_timing,
+            "output_columns": int(one_hot_dense.shape[1]),
+        },
+        "operations": [
+            "csr_and_dense_feature_matrix_vector_products",
+            "one_hot_dense_and_csr_transform",
+            "csr_row_view_materialization",
+        ],
+        "repeats": repeats,
+        "samples": dataset["samples"],
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
+def solver_shapes(scenario: dict[str, object]) -> dict[str, object]:
+    import time
+
+    import numpy as np
+    from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge
+
+    seed = scenario["seed"]
+
+    def timed(function):
+        started = time.perf_counter_ns()
+        result = function()
+        return result, time.perf_counter_ns() - started
+
+    def fit_record(elapsed_ns, converged, iterations, rank):
+        return {
+            "allocated_words": None,
+            "converged": converged,
+            "elapsed_ns": elapsed_ns,
+            "iterations": iterations,
+            "rank": rank,
+        }
+
+    signature = []
+    shapes = []
+    for shape in scenario["shapes"]:
+        samples = shape["samples"]
+        features = shape["features"]
+        duplicates = shape["duplicates"]
+        rows = np.arange(samples, dtype=np.int64)[:, np.newaxis]
+        columns = np.arange(features, dtype=np.int64)[np.newaxis, :]
+        source = np.where(columns >= features - duplicates, columns - (features - duplicates), columns)
+        x = ((rows * (17 + source * 12) + source * 31 + seed) % 1000).astype(np.float64)
+        x = (x / 100.0) - 5.0
+        coefficients = ((columns[0] % 5) - 2).astype(np.float64) * 0.2
+        noise = (((rows[:, 0] * 13 + 1729) % 11) - 5).astype(np.float64) * 0.01
+        regression = 1.25 + x @ coefficients + noise
+        binary = np.where(x[:, 0] + 0.25 * x[:, 1] - 0.1 * x[:, 2] > 0.0, 7, -3)
+        multiclass = np.where(
+            x[:, 0] + 0.25 * x[:, 1] > 1.0,
+            9,
+            np.where(x[:, 2] - 0.2 * x[:, 3] > 0.0, 2, -4),
+        )
+        sample_weight = 1.0 + (rows[:, 0] % 5).astype(np.float64) * 0.25
+
+        linear, linear_ns = timed(
+            lambda: LinearRegression().fit(x, regression, sample_weight=sample_weight)
+        )
+        linear_prediction = linear.predict(x)
+        ridge, ridge_ns = timed(
+            lambda: Ridge(alpha=scenario["ridge_alpha"], solver="auto").fit(
+                x, regression, sample_weight=sample_weight
+            )
+        )
+        ridge_prediction = ridge.predict(x)
+        logistic, logistic_ns = timed(
+            lambda: LogisticRegression(
+                C=scenario["c"],
+                solver=scenario["logistic_solver"],
+                tol=scenario["tolerance"],
+                max_iter=scenario["max_iterations"],
+            ).fit(x, binary, sample_weight=sample_weight)
+        )
+        probabilities = logistic.predict_proba(x)
+        multinomial, multinomial_ns = timed(
+            lambda: LogisticRegression(
+                C=scenario["c"],
+                solver=scenario["logistic_solver"],
+                tol=scenario["tolerance"],
+                max_iter=scenario["max_iterations"],
+            ).fit(x, multiclass, sample_weight=sample_weight)
+        )
+        multiclass_probabilities = multinomial.predict_proba(x)
+        signature.extend(
+            [
+                linear_prediction[0],
+                linear_prediction[-1],
+                float(linear.rank_),
+                ridge_prediction[0],
+                ridge_prediction[-1],
+                probabilities[0, 1],
+                probabilities[-1, 1],
+                multiclass_probabilities[0, 0],
+                multiclass_probabilities[0, 2],
+                multiclass_probabilities[-1, 1],
+            ]
+        )
+        shapes.append(
+            {
+                "duplicates": duplicates,
+                "features": features,
+                "fits": {
+                    "ordinary_least_squares": fit_record(linear_ns, True, 0, int(linear.rank_)),
+                    "ridge_regression": fit_record(ridge_ns, True, 0, None),
+                    "binary_logistic_regression": fit_record(
+                        logistic_ns,
+                        int(logistic.n_iter_[0]) < scenario["max_iterations"],
+                        int(logistic.n_iter_[0]),
+                        None,
+                    ),
+                    "multinomial_logistic_regression": fit_record(
+                        multinomial_ns,
+                        int(multinomial.n_iter_[0]) < scenario["max_iterations"],
+                        int(multinomial.n_iter_[0]),
+                        None,
+                    ),
+                },
+                "samples": samples,
+                "shape": shape["name"],
+            }
+        )
+    signature = np.asarray(signature, dtype="<f8")
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "operations": [
+            "weighted_ols_fit_predict",
+            "weighted_ridge_fit_predict",
+            "weighted_binary_logistic_fit_proba",
+            "weighted_multinomial_logistic_fit_proba",
+        ],
+        "shapes": shapes,
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
 def splitters(scenario: dict[str, object]) -> dict[str, object]:
     import numpy as np
     from sklearn.model_selection import (
@@ -532,6 +1237,24 @@ def main() -> None:
         result = preprocessing(scenario)
     elif workload == "linear_models":
         result = linear_models(scenario)
+    elif workload == "ridge_classifier":
+        result = ridge_classifier(scenario)
+    elif workload == "multinomial_logistic":
+        result = multinomial_logistic(scenario)
+    elif workload == "glm":
+        result = glm(scenario)
+    elif workload == "regularized_linear":
+        result = regularized_linear(scenario)
+    elif workload == "sgd_regression":
+        result = sgd_regression(scenario)
+    elif workload == "sgd_classification":
+        result = sgd_classification(scenario)
+    elif workload == "adapter_admission":
+        result = adapter_admission(scenario)
+    elif workload == "sparse_kernels":
+        result = sparse_kernels(scenario)
+    elif workload == "solver_shapes":
+        result = solver_shapes(scenario)
     elif workload == "splitters":
         result = splitters(scenario)
     elif workload == "metrics":

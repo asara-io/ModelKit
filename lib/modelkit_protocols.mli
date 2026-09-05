@@ -169,6 +169,15 @@ module type NUMERICAL_BACKEND = sig
 
   val transposed_matrix_vector_product :
     Matrix.t -> Vector.t -> (Vector.t, Error.t) result
+
+  val feature_matrix_vector_product :
+    Feature_matrix.t -> Vector.t -> (Vector.t, Error.t) result
+  (** Dispatches to dense or CSR storage without densifying sparse input. CSR
+      kernels visit stored entries only; dense and CSR results agree for finite
+      operands representing the same matrix. *)
+
+  val transposed_feature_matrix_vector_product :
+    Feature_matrix.t -> Vector.t -> (Vector.t, Error.t) result
 end
 
 (** Stable, platform-independent seed values.

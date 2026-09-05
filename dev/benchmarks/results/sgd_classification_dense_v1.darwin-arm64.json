@@ -1,0 +1,516 @@
+{
+  "claim_eligible": false,
+  "environment": {
+    "cpu_count": 8,
+    "machine": "arm64",
+    "operating_system": "macOS-15.5-arm64-arm-64bit-Mach-O",
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "generated_at": "2026-09-04T07:33:05.666605+00:00",
+  "methodology": {
+    "measurement": "interleaved fresh-process wall time and sampled resident set size",
+    "rss_sample_interval_seconds": 0.001,
+    "signature_tolerance": {
+      "absolute": 1e-07,
+      "relative": 1e-07
+    },
+    "thread_limit": 1,
+    "warmup_runs": 1
+  },
+  "runs": {
+    "modelkit": [
+      {
+        "elapsed_ns": 900332417,
+        "peak_rss_bytes": 12828672,
+        "worker": {
+          "allocated_words": 333347875,
+          "checksum": "2.9167350000000725:-2.9024999999999133:-20.107914400000137:-21.237474600000141:-4:-4:-1.0140647565437462:-2.7257459792795649:0.91915792746328218:0.080842072402962623:1.3375524743551342e-10:0.94396579383750157:0.056034206119029546:4.3468884031880505e-11:-4:-4:4.3468884031880505e-11:100000:100000",
+          "features": 16,
+          "ocaml": "5.3.0",
+          "operations": [
+            "weighted_binary_hinge_sgd_fit_decision_predict",
+            "weighted_multiclass_log_loss_sgd_fit_proba_predict",
+            "weighted_multiclass_log_loss_sgd_partial_fit_proba"
+          ],
+          "samples": 5000,
+          "signature": [
+            2.9167350000000725,
+            -2.9024999999999133,
+            -20.107914400000137,
+            -21.23747460000014,
+            -4,
+            -4,
+            -1.0140647565437462,
+            -2.725745979279565,
+            0.9191579274632822,
+            0.08084207240296262,
+            1.3375524743551342e-10,
+            0.9439657938375016,
+            0.056034206119029546,
+            4.3468884031880505e-11,
+            -4,
+            -4,
+            4.3468884031880505e-11,
+            100000,
+            100000
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 896018000,
+        "peak_rss_bytes": 11927552,
+        "worker": {
+          "allocated_words": 333347875,
+          "checksum": "2.9167350000000725:-2.9024999999999133:-20.107914400000137:-21.237474600000141:-4:-4:-1.0140647565437462:-2.7257459792795649:0.91915792746328218:0.080842072402962623:1.3375524743551342e-10:0.94396579383750157:0.056034206119029546:4.3468884031880505e-11:-4:-4:4.3468884031880505e-11:100000:100000",
+          "features": 16,
+          "ocaml": "5.3.0",
+          "operations": [
+            "weighted_binary_hinge_sgd_fit_decision_predict",
+            "weighted_multiclass_log_loss_sgd_fit_proba_predict",
+            "weighted_multiclass_log_loss_sgd_partial_fit_proba"
+          ],
+          "samples": 5000,
+          "signature": [
+            2.9167350000000725,
+            -2.9024999999999133,
+            -20.107914400000137,
+            -21.23747460000014,
+            -4,
+            -4,
+            -1.0140647565437462,
+            -2.725745979279565,
+            0.9191579274632822,
+            0.08084207240296262,
+            1.3375524743551342e-10,
+            0.9439657938375016,
+            0.056034206119029546,
+            4.3468884031880505e-11,
+            -4,
+            -4,
+            4.3468884031880505e-11,
+            100000,
+            100000
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 893877459,
+        "peak_rss_bytes": 12156928,
+        "worker": {
+          "allocated_words": 333347875,
+          "checksum": "2.9167350000000725:-2.9024999999999133:-20.107914400000137:-21.237474600000141:-4:-4:-1.0140647565437462:-2.7257459792795649:0.91915792746328218:0.080842072402962623:1.3375524743551342e-10:0.94396579383750157:0.056034206119029546:4.3468884031880505e-11:-4:-4:4.3468884031880505e-11:100000:100000",
+          "features": 16,
+          "ocaml": "5.3.0",
+          "operations": [
+            "weighted_binary_hinge_sgd_fit_decision_predict",
+            "weighted_multiclass_log_loss_sgd_fit_proba_predict",
+            "weighted_multiclass_log_loss_sgd_partial_fit_proba"
+          ],
+          "samples": 5000,
+          "signature": [
+            2.9167350000000725,
+            -2.9024999999999133,
+            -20.107914400000137,
+            -21.23747460000014,
+            -4,
+            -4,
+            -1.0140647565437462,
+            -2.725745979279565,
+            0.9191579274632822,
+            0.08084207240296262,
+            1.3375524743551342e-10,
+            0.9439657938375016,
+            0.056034206119029546,
+            4.3468884031880505e-11,
+            -4,
+            -4,
+            4.3468884031880505e-11,
+            100000,
+            100000
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 896342333,
+        "peak_rss_bytes": 11976704,
+        "worker": {
+          "allocated_words": 333347875,
+          "checksum": "2.9167350000000725:-2.9024999999999133:-20.107914400000137:-21.237474600000141:-4:-4:-1.0140647565437462:-2.7257459792795649:0.91915792746328218:0.080842072402962623:1.3375524743551342e-10:0.94396579383750157:0.056034206119029546:4.3468884031880505e-11:-4:-4:4.3468884031880505e-11:100000:100000",
+          "features": 16,
+          "ocaml": "5.3.0",
+          "operations": [
+            "weighted_binary_hinge_sgd_fit_decision_predict",
+            "weighted_multiclass_log_loss_sgd_fit_proba_predict",
+            "weighted_multiclass_log_loss_sgd_partial_fit_proba"
+          ],
+          "samples": 5000,
+          "signature": [
+            2.9167350000000725,
+            -2.9024999999999133,
+            -20.107914400000137,
+            -21.23747460000014,
+            -4,
+            -4,
+            -1.0140647565437462,
+            -2.725745979279565,
+            0.9191579274632822,
+            0.08084207240296262,
+            1.3375524743551342e-10,
+            0.9439657938375016,
+            0.056034206119029546,
+            4.3468884031880505e-11,
+            -4,
+            -4,
+            4.3468884031880505e-11,
+            100000,
+            100000
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 901229708,
+        "peak_rss_bytes": 11747328,
+        "worker": {
+          "allocated_words": 333347875,
+          "checksum": "2.9167350000000725:-2.9024999999999133:-20.107914400000137:-21.237474600000141:-4:-4:-1.0140647565437462:-2.7257459792795649:0.91915792746328218:0.080842072402962623:1.3375524743551342e-10:0.94396579383750157:0.056034206119029546:4.3468884031880505e-11:-4:-4:4.3468884031880505e-11:100000:100000",
+          "features": 16,
+          "ocaml": "5.3.0",
+          "operations": [
+            "weighted_binary_hinge_sgd_fit_decision_predict",
+            "weighted_multiclass_log_loss_sgd_fit_proba_predict",
+            "weighted_multiclass_log_loss_sgd_partial_fit_proba"
+          ],
+          "samples": 5000,
+          "signature": [
+            2.9167350000000725,
+            -2.9024999999999133,
+            -20.107914400000137,
+            -21.23747460000014,
+            -4,
+            -4,
+            -1.0140647565437462,
+            -2.725745979279565,
+            0.9191579274632822,
+            0.08084207240296262,
+            1.3375524743551342e-10,
+            0.9439657938375016,
+            0.056034206119029546,
+            4.3468884031880505e-11,
+            -4,
+            -4,
+            4.3468884031880505e-11,
+            100000,
+            100000
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      }
+    ],
+    "sklearn": [
+      {
+        "elapsed_ns": 776684542,
+        "peak_rss_bytes": 127516672,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "f04090f534e270f74896e38e36c0bd1567f533f486039d9611c55fd15287c830",
+          "features": 16,
+          "operations": [
+            "weighted_binary_hinge_sgd_fit_decision_predict",
+            "weighted_multiclass_log_loss_sgd_fit_proba_predict",
+            "weighted_multiclass_log_loss_sgd_partial_fit_proba"
+          ],
+          "samples": 5000,
+          "signature": [
+            2.9167350000000725,
+            -2.9024999999999133,
+            -20.10791440000013,
+            -21.237474600000127,
+            -4.0,
+            -4.0,
+            -1.0140647565437462,
+            -2.7257459792795653,
+            0.9191579274632822,
+            0.08084207240296258,
+            1.337552474355125e-10,
+            0.9439657938375016,
+            0.05603420611902954,
+            4.346888403188035e-11,
+            -4.0,
+            -4.0,
+            4.346888403188035e-11,
+            100000.0,
+            100000.0
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 777215250,
+        "peak_rss_bytes": 127811584,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "f04090f534e270f74896e38e36c0bd1567f533f486039d9611c55fd15287c830",
+          "features": 16,
+          "operations": [
+            "weighted_binary_hinge_sgd_fit_decision_predict",
+            "weighted_multiclass_log_loss_sgd_fit_proba_predict",
+            "weighted_multiclass_log_loss_sgd_partial_fit_proba"
+          ],
+          "samples": 5000,
+          "signature": [
+            2.9167350000000725,
+            -2.9024999999999133,
+            -20.10791440000013,
+            -21.237474600000127,
+            -4.0,
+            -4.0,
+            -1.0140647565437462,
+            -2.7257459792795653,
+            0.9191579274632822,
+            0.08084207240296258,
+            1.337552474355125e-10,
+            0.9439657938375016,
+            0.05603420611902954,
+            4.346888403188035e-11,
+            -4.0,
+            -4.0,
+            4.346888403188035e-11,
+            100000.0,
+            100000.0
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 782423542,
+        "peak_rss_bytes": 127238144,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "f04090f534e270f74896e38e36c0bd1567f533f486039d9611c55fd15287c830",
+          "features": 16,
+          "operations": [
+            "weighted_binary_hinge_sgd_fit_decision_predict",
+            "weighted_multiclass_log_loss_sgd_fit_proba_predict",
+            "weighted_multiclass_log_loss_sgd_partial_fit_proba"
+          ],
+          "samples": 5000,
+          "signature": [
+            2.9167350000000725,
+            -2.9024999999999133,
+            -20.10791440000013,
+            -21.237474600000127,
+            -4.0,
+            -4.0,
+            -1.0140647565437462,
+            -2.7257459792795653,
+            0.9191579274632822,
+            0.08084207240296258,
+            1.337552474355125e-10,
+            0.9439657938375016,
+            0.05603420611902954,
+            4.346888403188035e-11,
+            -4.0,
+            -4.0,
+            4.346888403188035e-11,
+            100000.0,
+            100000.0
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 778848666,
+        "peak_rss_bytes": 127254528,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "f04090f534e270f74896e38e36c0bd1567f533f486039d9611c55fd15287c830",
+          "features": 16,
+          "operations": [
+            "weighted_binary_hinge_sgd_fit_decision_predict",
+            "weighted_multiclass_log_loss_sgd_fit_proba_predict",
+            "weighted_multiclass_log_loss_sgd_partial_fit_proba"
+          ],
+          "samples": 5000,
+          "signature": [
+            2.9167350000000725,
+            -2.9024999999999133,
+            -20.10791440000013,
+            -21.237474600000127,
+            -4.0,
+            -4.0,
+            -1.0140647565437462,
+            -2.7257459792795653,
+            0.9191579274632822,
+            0.08084207240296258,
+            1.337552474355125e-10,
+            0.9439657938375016,
+            0.05603420611902954,
+            4.346888403188035e-11,
+            -4.0,
+            -4.0,
+            4.346888403188035e-11,
+            100000.0,
+            100000.0
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 771474209,
+        "peak_rss_bytes": 127746048,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "f04090f534e270f74896e38e36c0bd1567f533f486039d9611c55fd15287c830",
+          "features": 16,
+          "operations": [
+            "weighted_binary_hinge_sgd_fit_decision_predict",
+            "weighted_multiclass_log_loss_sgd_fit_proba_predict",
+            "weighted_multiclass_log_loss_sgd_partial_fit_proba"
+          ],
+          "samples": 5000,
+          "signature": [
+            2.9167350000000725,
+            -2.9024999999999133,
+            -20.10791440000013,
+            -21.237474600000127,
+            -4.0,
+            -4.0,
+            -1.0140647565437462,
+            -2.7257459792795653,
+            0.9191579274632822,
+            0.08084207240296258,
+            1.337552474355125e-10,
+            0.9439657938375016,
+            0.05603420611902954,
+            4.346888403188035e-11,
+            -4.0,
+            -4.0,
+            4.346888403188035e-11,
+            100000.0,
+            100000.0
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "scenario": {
+    "claim_eligible": false,
+    "dataset": {
+      "features": 16,
+      "samples": 5000,
+      "seed": 2026
+    },
+    "epochs": 20,
+    "eta0": 0.001,
+    "measured_runs": 5,
+    "scenario": "sgd_classification_dense_v1",
+    "thread_limit": 1,
+    "warmup_runs": 1,
+    "workload": "sgd_classification"
+  },
+  "schema_version": 2
+}

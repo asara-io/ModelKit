@@ -26,6 +26,57 @@ module Solver_report : sig
     t
 end
 
+module Linear_model_internal : sig
+  type least_squares_solution = {
+    least_squares_coefficients : float array;
+    least_squares_rank : int;
+  }
+
+  val validation : name:string -> reason:string -> remediation:string -> Error.t
+
+  val numerical :
+    operation:string -> reason:string -> remediation:string -> Error.t
+
+  val validate_matrix :
+    ?require_samples:bool ->
+    Feature_schema.t ->
+    Matrix.t ->
+    (unit, Error.t) result
+
+  val validate_prediction_input :
+    schema:Feature_schema.t ->
+    Feature_schema.t ->
+    Matrix.t ->
+    (unit, Error.t) result
+
+  val validate_target_length : Matrix.t -> int -> (unit, Error.t) result
+
+  val validate_sample_weight :
+    Matrix.t -> Sample_weight.t option -> (unit, Error.t) result
+
+  val weight : Sample_weight.t option -> int -> float
+  val stable_sigmoid : float -> float
+  val softplus : float -> float
+
+  val solve_least_squares :
+    operation:string ->
+    float array array ->
+    float array ->
+    (least_squares_solution, Error.t) result
+
+  val weighted_means :
+    Matrix.t -> Vector.t -> Sample_weight.t option -> float array * float
+
+  val regression_prediction :
+    operation:string ->
+    schema:Feature_schema.t ->
+    coefficients:float array ->
+    intercept:float ->
+    Feature_schema.t ->
+    Matrix.t ->
+    (Target.regression Target.t, Error.t) result
+end
+
 module Linear_regression : sig
   type params = { fit_intercept : bool }
   type t = params

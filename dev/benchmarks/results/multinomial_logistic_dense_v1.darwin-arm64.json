@@ -1,0 +1,290 @@
+{
+  "claim_eligible": false,
+  "environment": {
+    "cpu_count": 8,
+    "machine": "arm64",
+    "operating_system": "macOS-15.5-arm64-arm-64bit-Mach-O",
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "generated_at": "2026-09-04T03:21:22.859336+00:00",
+  "methodology": {
+    "measurement": "interleaved fresh-process wall time and sampled resident set size",
+    "rss_sample_interval_seconds": 0.001,
+    "signature_tolerance": {
+      "absolute": 1e-07,
+      "relative": 1e-07
+    },
+    "thread_limit": 1,
+    "warmup_runs": 1
+  },
+  "runs": {
+    "modelkit": [
+      {
+        "elapsed_ns": 1053164542,
+        "peak_rss_bytes": 9682944,
+        "worker": {
+          "allocated_words": 208423832,
+          "checksum": "-23.863865911184234:-14.649299127752307:38.513165038936549:8.128298814151734e-28:8.1627250478447832e-24:1:2.6490466155447675e-23:2.1504308716698431e-19:1:9:9",
+          "features": 12,
+          "ocaml": "5.3.0",
+          "operations": [
+            "weighted_multinomial_logistic_fit",
+            "decision_function",
+            "predict_proba",
+            "predict"
+          ],
+          "samples": 10000,
+          "signature": [
+            -23.863865911184234,
+            -14.649299127752307,
+            38.51316503893655,
+            8.128298814151734e-28,
+            8.162725047844783e-24,
+            1,
+            2.6490466155447675e-23,
+            2.1504308716698431e-19,
+            1,
+            9,
+            9
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 1056759458,
+        "peak_rss_bytes": 9650176,
+        "worker": {
+          "allocated_words": 208423832,
+          "checksum": "-23.863865911184234:-14.649299127752307:38.513165038936549:8.128298814151734e-28:8.1627250478447832e-24:1:2.6490466155447675e-23:2.1504308716698431e-19:1:9:9",
+          "features": 12,
+          "ocaml": "5.3.0",
+          "operations": [
+            "weighted_multinomial_logistic_fit",
+            "decision_function",
+            "predict_proba",
+            "predict"
+          ],
+          "samples": 10000,
+          "signature": [
+            -23.863865911184234,
+            -14.649299127752307,
+            38.51316503893655,
+            8.128298814151734e-28,
+            8.162725047844783e-24,
+            1,
+            2.6490466155447675e-23,
+            2.1504308716698431e-19,
+            1,
+            9,
+            9
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 1059289042,
+        "peak_rss_bytes": 9650176,
+        "worker": {
+          "allocated_words": 208423832,
+          "checksum": "-23.863865911184234:-14.649299127752307:38.513165038936549:8.128298814151734e-28:8.1627250478447832e-24:1:2.6490466155447675e-23:2.1504308716698431e-19:1:9:9",
+          "features": 12,
+          "ocaml": "5.3.0",
+          "operations": [
+            "weighted_multinomial_logistic_fit",
+            "decision_function",
+            "predict_proba",
+            "predict"
+          ],
+          "samples": 10000,
+          "signature": [
+            -23.863865911184234,
+            -14.649299127752307,
+            38.51316503893655,
+            8.128298814151734e-28,
+            8.162725047844783e-24,
+            1,
+            2.6490466155447675e-23,
+            2.1504308716698431e-19,
+            1,
+            9,
+            9
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      }
+    ],
+    "sklearn": [
+      {
+        "elapsed_ns": 749577125,
+        "peak_rss_bytes": 127172608,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "023bd0bda6661254acb25c2100e1f973dd6b6b39c008fa0d0946e2bf0ccd86d8",
+          "features": 12,
+          "operations": [
+            "weighted_multinomial_logistic_fit",
+            "decision_function",
+            "predict_proba",
+            "predict"
+          ],
+          "samples": 10000,
+          "signature": [
+            -23.863865910301122,
+            -14.649299127012858,
+            38.51316503731602,
+            8.128298834502067e-28,
+            8.162725067108613e-24,
+            1.0,
+            2.649046622060759e-23,
+            2.1504308766411036e-19,
+            1.0,
+            9.0,
+            9.0
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 745995666,
+        "peak_rss_bytes": 130924544,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "023bd0bda6661254acb25c2100e1f973dd6b6b39c008fa0d0946e2bf0ccd86d8",
+          "features": 12,
+          "operations": [
+            "weighted_multinomial_logistic_fit",
+            "decision_function",
+            "predict_proba",
+            "predict"
+          ],
+          "samples": 10000,
+          "signature": [
+            -23.863865910301122,
+            -14.649299127012858,
+            38.51316503731602,
+            8.128298834502067e-28,
+            8.162725067108613e-24,
+            1.0,
+            2.649046622060759e-23,
+            2.1504308766411036e-19,
+            1.0,
+            9.0,
+            9.0
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 748848334,
+        "peak_rss_bytes": 129236992,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "023bd0bda6661254acb25c2100e1f973dd6b6b39c008fa0d0946e2bf0ccd86d8",
+          "features": 12,
+          "operations": [
+            "weighted_multinomial_logistic_fit",
+            "decision_function",
+            "predict_proba",
+            "predict"
+          ],
+          "samples": 10000,
+          "signature": [
+            -23.863865910301122,
+            -14.649299127012858,
+            38.51316503731602,
+            8.128298834502067e-28,
+            8.162725067108613e-24,
+            1.0,
+            2.649046622060759e-23,
+            2.1504308766411036e-19,
+            1.0,
+            9.0,
+            9.0
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "scenario": {
+    "c": 1.7,
+    "claim_eligible": false,
+    "dataset": {
+      "features": 12,
+      "samples": 10000,
+      "seed": 1729
+    },
+    "max_iterations": 100,
+    "measured_runs": 3,
+    "scenario": "multinomial_logistic_dense_v1",
+    "solver": "newton-cholesky",
+    "thread_limit": 1,
+    "tolerance": 1e-08,
+    "warmup_runs": 1,
+    "workload": "multinomial_logistic"
+  },
+  "schema_version": 2
+}

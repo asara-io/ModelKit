@@ -41,7 +41,10 @@ module Make (Config : CONFIG) = struct
             | Data_error.Index_out_of_bounds _ | Data_error.Non_finite _
             | Data_error.Negative_weight _ | Data_error.All_zero_weights
             | Data_error.Empty_feature_name _
-            | Data_error.Duplicate_feature_name _ )
+            | Data_error.Duplicate_feature_name _
+            | Data_error.Csr_row_offset_mismatch _
+            | Data_error.Invalid_csr_row_offset _
+            | Data_error.Invalid_csr_column_order _ )
         | Error.Shape_mismatch _ | Error.Feature_schema_mismatch _
         | Error.Validation _ | Error.Numerical _ | Error.Convergence _
         | Error.Compatibility _ | Error.Artifact _ | Error.Cancelled ->
@@ -111,6 +114,48 @@ module Make (Config : CONFIG) = struct
       (Backend.transposed_matrix_vector_product matrix
          (Vector.of_array [| 1.0 |]))
 
+  let test_feature_matrix_dispatch () =
+    let dense =
+      Result.get_ok
+        (Matrix.of_arrays [| [| 1.0; 0.0; 3.0 |]; [| 0.0; -2.0; 0.0 |] |])
+    in
+    let csr = Csr_matrix.of_dense dense in
+    let operand = Vector.of_array [| 2.0; 3.0; -1.0 |] in
+    let dense_product =
+      get_ok
+        (Backend.feature_matrix_vector_product
+           (Feature_matrix.dense dense)
+           operand)
+    in
+    let csr_product =
+      get_ok
+        (Backend.feature_matrix_vector_product (Feature_matrix.csr csr) operand)
+    in
+    check_vector "dense feature-matrix product" [| -1.0; -6.0 |] dense_product;
+    check_vector "CSR feature-matrix product" [| -1.0; -6.0 |] csr_product;
+    let transposed_operand = Vector.of_array [| 2.0; -1.0 |] in
+    let dense_transposed =
+      get_ok
+        (Backend.transposed_feature_matrix_vector_product
+           (Feature_matrix.dense dense)
+           transposed_operand)
+    in
+    let csr_transposed =
+      get_ok
+        (Backend.transposed_feature_matrix_vector_product
+           (Feature_matrix.csr csr) transposed_operand)
+    in
+    check_vector "dense transposed feature-matrix product" [| 2.0; 2.0; 6.0 |]
+      dense_transposed;
+    check_vector "CSR transposed feature-matrix product" [| 2.0; 2.0; 6.0 |]
+      csr_transposed;
+    check_length_mismatch ~expected:3 ~observed:1
+      (Backend.feature_matrix_vector_product (Feature_matrix.csr csr)
+         (Vector.of_array [| 1.0 |]));
+    check_length_mismatch ~expected:2 ~observed:1
+      (Backend.transposed_feature_matrix_vector_product (Feature_matrix.csr csr)
+         (Vector.of_array [| 1.0 |]))
+
   let tests =
     [
       Alcotest.test_case "stable reductions" `Quick test_sum;
@@ -119,5 +164,7 @@ module Make (Config : CONFIG) = struct
         test_matrix_vector_product;
       Alcotest.test_case "transposed matrix-vector product" `Quick
         test_transposed_matrix_vector_product;
+      Alcotest.test_case "dense and CSR feature-matrix dispatch" `Quick
+        test_feature_matrix_dispatch;
     ]
 end

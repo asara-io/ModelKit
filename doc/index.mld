@@ -8,24 +8,35 @@ The supported API is the flat {!Modelkit} namespace documented below. Physical
 additional public namespaces or compatibility targets. Optional integrations,
 such as bounded Domainslib execution, are distributed as separate packages.
 
-Version 0.3.2 provides immutable dense {!Modelkit.Dataset} admission, explicit
+Version 0.4.0 provides immutable dense {!Modelkit.Dataset} admission, explicit
 feature-finiteness policies, stable schema fingerprints, zero-copy row-index
 views, and copy/view reports for opaque float64 {!Modelkit.Vector} and
-{!Modelkit.Matrix} values. Public specification, estimator, transformer, scorer,
+{!Modelkit.Matrix} values, together with checked {!Modelkit.Csr_matrix}
+storage, indexed CSR views, payload-memory accounting, and dense/CSR dispatch
+through {!Modelkit.Feature_matrix}. Public specification,
+estimator, transformer, scorer,
 splitter, execution, RNG, and numerical-backend module types define the
 extension boundaries with separate unfitted and fitted states. The portable
 runtime includes fixed-order compensated numerical kernels, sequential
 stable-order execution, deterministic logical seed derivation, and a pure
 SplitMix64 random-number stream. Mean, median, and constant imputation,
 population standardization, and variance-threshold feature filtering are
-available as immutable specifications with distinct fitted states. Sequential
+available as immutable specifications with distinct fitted states. Numeric
+scalers, per-sample normalization, categorical and target encoders, polynomial
+features, and missing indicators extend the same immutable fit/transform model.
+Sequential
 {!Modelkit.Pipeline} values fit those stages only on their training input,
 preserve feature schemas, derive stage-local random streams, and dispatch
 terminal prediction capabilities. Weighted ordinary least squares and ridge
 regression use the portable rank-revealing QR solver. Weighted binary logistic
 regression uses stable sigmoid and softplus formulas with deterministic damped
-Newton iterations. Each fitted estimator exposes coefficients, an intercept,
-and a {!Modelkit.Solver_report}. K-fold, stratified K-fold, group K-fold, and
+Newton iterations. Weighted lasso and elastic-net regression use deterministic
+cyclic coordinate descent and can fit descending warm-started regularization
+paths. Weighted binary and multiclass ridge classification solves one ridge
+problem per class. Weighted multinomial logistic regression jointly fits three
+or more classes with stable softmax probabilities. Each fitted estimator
+exposes coefficients, intercepts, and {!Modelkit.Solver_report} values. K-fold,
+stratified K-fold, group K-fold, and
 expanding-window time-series splitters produce validated source-row views;
 {!Modelkit.Split.materialize} is the explicit boundary for copying train and
 test selections into aligned datasets. Weighted regression and binary
@@ -38,6 +49,371 @@ optional bounded Domainslib fold execution is supplied by the separate
 built-in pipelines under explicit reader limits and task-specific loaders.
 Portable tests consume committed scikit-learn reference data without requiring
 Python during a normal build or test run.
+
+{1 Sparse storage foundation}
+
+{!Modelkit.Csr_matrix} copies admitted index arrays and requires canonical CSR
+structure: offsets begin at zero, end at the stored-value count, and never
+decrease; columns are in bounds and strictly increase within each row. Explicit
+stored zeroes are retained. Row selections share the source matrix until
+{!Modelkit.Csr_matrix.materialize} is called, while
+{!val:Modelkit.Csr_matrix.view_memory} makes the selection, sharing, and
+prospective materialization payload costs observable.
+
+{!Modelkit.Feature_matrix} selects dense or CSR storage at a numerical boundary.
+The portable {!Modelkit.Reference_backend.feature_matrix_vector_product} and
+{!Modelkit.Reference_backend.transposed_feature_matrix_vector_product} functions
+dispatch without densifying CSR input. Dense and sparse forms agree for finite
+operands; sparse kernels visit only stored entries. Estimators and workflow APIs
+remain dense-only in 0.4.0; sparse estimator integration is scheduled for a
+later release.
+
+{@ocaml[
+# open Modelkit;;
+# let sparse =
+    Csr_matrix.of_arrays ~rows:2 ~columns:3
+      ~row_offsets:[|0; 2; 3|] ~column_indices:[|0; 2; 1|]
+      ~values:[|1.; 3.; 2.|]
+    |> Result.get_ok;;
+val sparse : Csr_matrix.t = <abstr>
+# Reference_backend.feature_matrix_vector_product
+    (Feature_matrix.csr sparse) (Vector.of_array [|2.; 4.; -1.|])
+  |> Result.get_ok |> Vector.to_array;;
+- : float array = [|-1.; 8.|]
+]}
+
+{1 Extended preprocessing}
+
+{!Modelkit.Min_max_scaler}, {!Modelkit.Max_abs_scaler}, and
+{!Modelkit.Robust_scaler} learn per-feature statistics from a finite training
+matrix. {!Modelkit.Normalizer} instead scales each sample independently using
+its L1, L2, or maximum norm and leaves zero-norm rows unchanged. Constant
+features use a finite unit denominator where needed. Every fitted transformer
+checks the incoming feature schema before reuse.
+
+{!Modelkit.One_hot_encoder} and {!Modelkit.Ordinal_encoder} learn ascending
+finite float64 categories. Their unknown-category policies are explicit rather
+than inferred at transform time. One-hot output follows a deterministic
+feature/category order and is available both through the dense transformer
+protocol and directly as checked CSR storage through
+{!val:Modelkit.One_hot_encoder.transform_csr}. A configured output-width limit
+guards allocations. The portable core has no heterogeneous string table type;
+callers or table adapters map textual categories to stable finite values before
+fitting these encoders. {!Modelkit.Label_encoder} independently maps sorted
+integer classification labels to contiguous integer codes and reverses those
+codes with a checked inverse transform.
+
+{!Modelkit.Polynomial_features} expands dense inputs in deterministic
+scikit-learn-compatible term order, with explicit degree, bias,
+interaction-only, and output-width choices. {!Modelkit.Missing_indicator}
+turns NaN missing markers into binary features, either for all columns or only
+columns observed missing during fitting. It can reject a missing marker that
+appears later in a previously complete column. Infinity is invalid input to
+all of these transforms.
+
+The matrix transforms can be installed with {!val:Modelkit.Pipeline.transformer}
+for leakage-safe in-memory workflows. This development increment does not add
+artifact codecs for the new stages. Encoding a generally packaged transformer
+without a reviewed codec returns a typed artifact error.
+
+{@ocaml[
+# open Modelkit;;
+# let x =
+    Matrix.of_arrays [|[|0.; 2.|]; [|10.; 4.|]|] |> Result.get_ok;;
+val x : Matrix.t = <abstr>
+# let schema = Feature_schema.anonymous ~feature_count:2 |> Result.get_ok;;
+val schema : Feature_schema.t = <abstr>
+# let fitted =
+    Min_max_scaler.fit (Min_max_scaler.create () |> Result.get_ok)
+      ~rng:(Rng.create (Seed.of_int 42)) ~feature_schema:schema ~x ~y:None ()
+    |> Result.get_ok;;
+val fitted : Min_max_scaler.fitted = <abstr>
+# Min_max_scaler.transform fitted ~feature_schema:schema ~x
+  |> Result.get_ok |> Matrix.to_arrays;;
+- : float array array = [|[|0.; 0.|]; [|1.; 1.|]|]
+]}
+
+{1 Regularized linear paths}
+
+{!Modelkit.Lasso_regression} minimizes weighted mean squared error plus an L1
+coefficient penalty. {!Modelkit.Elastic_net_regression} adds an L2 penalty and
+uses [l1_ratio] to mix the two. Both normalize the loss by total positive sample
+weight, leave the optional intercept unpenalized, and use deterministic cyclic
+coordinate descent. Convergence checks coordinate updates and the optimality
+residual; exhausting the configured iteration bound returns a typed
+{!Modelkit.Error.Convergence} failure.
+
+{!Modelkit.Lasso_path} and {!Modelkit.Elastic_net_path} fit alpha values in
+descending order and warm-start each point from its stronger-penalty
+predecessor. Explicit alpha vectors are copied, validated, and sorted.
+Otherwise, [epsilon] and [count] define a logarithmic sequence beginning at the
+smallest L1 penalty that gives an all-zero centered solution. Coefficient matrix
+rows, intercepts, solver reports, and checked [model] indices share that alpha
+order. Automatic elastic-net paths require a positive L1 ratio; callers can
+still fit pure-L2 paths by providing explicit alphas.
+
+The estimators implement the common regression protocol and can be packaged
+with {!val:Modelkit.Pipeline.estimator}. Their current implementation consumes
+dense matrices. Artifact codecs for these development estimators are deferred;
+generally packaged pipelines remain available in memory and artifact encoding
+returns the existing typed unsupported-component error.
+
+{@ocaml[
+# open Modelkit;;
+# let x = Matrix.of_arrays [|[|-1.|]; [|0.|]; [|1.|]|] |> Result.get_ok;;
+val x : Matrix.t = <abstr>
+# let schema = Feature_schema.of_matrix x |> Result.get_ok;;
+val schema : Feature_schema.t = <abstr>
+# let y =
+    Target.regression (Vector.of_array [|-2.; 0.; 2.|]) |> Result.get_ok;;
+val y : Target.regression Target.t = <abstr>
+# let path =
+    Lasso_path.fit (Lasso_path.create ~count:3 () |> Result.get_ok)
+      ~rng:(Rng.create (Seed.of_int 42)) ~feature_schema:schema ~x ~y ()
+    |> Result.get_ok;;
+val path : Lasso_path.fitted = <abstr>
+# Lasso_path.alphas path |> Vector.length;;
+- : int = 3
+# Lasso_path.model path ~index:1 |> Result.get_ok
+  |> Lasso_regression.coefficients |> Vector.length;;
+- : int = 1
+]}
+
+{1 Ridge classification}
+
+{!Modelkit.Ridge_classifier} fits one weighted ridge problem per ascending
+positively weighted class, encoding that class as [+1] and every other class as
+[-1]. Its coefficient matrix, intercept vector, decision-score columns, and
+solver-report array all use the same class order. The decision function always
+returns a [samples * classes] matrix for a uniform binary and multiclass API.
+Prediction selects the first maximum, so exact ties resolve to the lowest class
+label.
+
+The classifier implements the common classifier protocol and supports direct
+and pipeline prediction. Pass [~classes:Ridge_classifier.classes] to
+{!val:Modelkit.Pipeline.estimator} to retain terminal class metadata. The
+current pipeline decision capability is vector-valued, so obtain this
+classifier's matrix-valued scores directly from
+{!val:Modelkit.Ridge_classifier.decision_function}. Input is currently dense,
+and artifact codecs remain deferred for this development estimator.
+
+{@ocaml[
+# open Modelkit;;
+# let x =
+    Matrix.of_arrays
+      [|[|-2.|]; [|-1.|]; [|1.|]; [|2.|]|] |> Result.get_ok;;
+val x : Matrix.t = <abstr>
+# let schema = Feature_schema.of_matrix x |> Result.get_ok;;
+val schema : Feature_schema.t = <abstr>
+# let fitted =
+    Ridge_classifier.fit (Ridge_classifier.create () |> Result.get_ok)
+      ~rng:(Rng.create (Seed.of_int 42)) ~feature_schema:schema ~x
+      ~y:(Target.classification [|10; 10; 20; 20|]) ()
+    |> Result.get_ok;;
+val fitted : Ridge_classifier.fitted = <abstr>
+# Ridge_classifier.classes fitted;;
+- : int array = [|10; 20|]
+# Ridge_classifier.decision_function fitted ~feature_schema:schema ~x
+  |> Result.get_ok |> Matrix.shape;;
+- : int * int = (4, 2)
+]}
+
+{1 Multinomial logistic regression}
+
+{!Modelkit.Multinomial_logistic_regression} jointly minimizes weighted softmax
+cross-entropy and an L2 coefficient penalty for three or more ascending,
+positively weighted classes. The portable damped Newton solver uses a
+sum-to-zero class-score constraint to remove the common direction that softmax
+cannot identify. Intercepts remain unpenalized. Coefficient rows, intercepts,
+decision columns, probability columns, and class labels use the same order.
+
+Subtracting each row's maximum score before exponentiation keeps probabilities
+finite under extreme score differences. The probabilities sum to one, and
+exact prediction ties select the lowest class label. Fitting returns one
+{!Modelkit.Solver_report} for the joint optimization; invalid inputs,
+non-finite arithmetic, rank-deficient Newton systems, line-search failure, and
+iteration exhaustion use typed errors.
+
+The classifier supports pipeline prediction, probability dispatch, and class
+metadata when packaged with {!val:Modelkit.Pipeline.estimator}. The current
+pipeline decision capability is vector-valued, so obtain its matrix-valued
+scores directly from
+{!val:Modelkit.Multinomial_logistic_regression.decision_function}. Input is
+currently dense, and artifact codecs remain deferred for this development
+estimator.
+
+{@ocaml[
+# open Modelkit;;
+# let x =
+    Matrix.of_arrays
+      [|[|2.; 0.|]; [|3.; 0.|]; [|0.; 2.|]; [|0.; 3.|];
+        [|-2.; -2.|]; [|-3.; -3.|]|]
+    |> Result.get_ok;;
+val x : Matrix.t = <abstr>
+# let schema = Feature_schema.of_matrix x |> Result.get_ok;;
+val schema : Feature_schema.t = <abstr>
+# let fitted =
+    Multinomial_logistic_regression.fit
+      (Multinomial_logistic_regression.create () |> Result.get_ok)
+      ~rng:(Rng.create (Seed.of_int 42)) ~feature_schema:schema ~x
+      ~y:(Target.classification [|0; 0; 1; 1; 2; 2|]) ()
+    |> Result.get_ok;;
+val fitted : Multinomial_logistic_regression.fitted = <abstr>
+# Multinomial_logistic_regression.predict_proba fitted
+    ~feature_schema:schema ~x
+  |> Result.get_ok |> Matrix.shape;;
+- : int * int = (6, 3)
+]}
+
+{1 Incremental training}
+
+{!Modelkit.Sgd_regressor} and {!Modelkit.Sgd_classifier} train linear models
+by stochastic gradient descent and share one immutable checkpoint contract.
+[start] creates a zero-initialized checkpoint that owns its RNG continuation;
+each [partial_fit] call processes exactly one non-empty batch and returns a new
+checkpoint while leaving its input reusable. [fit] implements the common
+estimator protocol by running the same batch update for a fixed epoch budget
+or until the largest parameter step falls under an optional tolerance. Both
+estimators accept no penalty, L1, L2, or elastic-net regularization and
+constant or inverse-scaling learning rates.
+
+Streams are deterministic. With [shuffle] disabled, rows keep input order and
+cutting a stream into batches never changes the parameters; with it enabled,
+each batch draws a Fisher-Yates permutation from the checkpoint's stream and
+stores the successor, so results depend only on the seed. Sample weights
+scale each row's loss gradient. A zero-weight row contributes no loss
+gradient but still advances the update counter and applies the penalty step,
+matching scikit-learn's online semantics.
+
+The classifier registers its complete class set at [start]. Later batches may
+omit classes but never introduce unregistered ones. Two classes train one model
+scoring the higher label; more train one one-versus-rest model per ascending
+class, all sharing the update counter and permutation. [Hinge] supports
+prediction and decision scores; [Log_loss] additionally supports
+probabilities. Binary models can join a pipeline with
+{!val:Modelkit.Sgd_classifier.binary_decision_function} and
+{!val:Modelkit.Sgd_classifier.predict_proba}, which lets probability scorers
+participate in cross-validation and grid search. Checkpoints are in-memory
+state, not artifacts.
+
+{@ocaml[
+# open Modelkit;;
+# let x =
+    Matrix.of_arrays [|[|-2.|]; [|-1.|]; [|1.|]; [|2.|]|] |> Result.get_ok;;
+val x : Matrix.t = <abstr>
+# let schema = Feature_schema.of_matrix x |> Result.get_ok;;
+val schema : Feature_schema.t = <abstr>
+# let specification =
+    Sgd_classifier.create ~loss:Sgd_classifier.Log_loss
+      ~penalty:Sgd_classifier.No_penalty
+      ~learning_rate:Sgd_classifier.Constant ~eta0:0.5 ~shuffle:false ()
+    |> Result.get_ok;;
+val specification : Sgd_classifier.t = <abstr>
+# let checkpoint =
+    Sgd_classifier.start specification ~rng:(Rng.create (Seed.of_int 42))
+      ~feature_schema:schema ~classes:[|1; 0|]
+    |> Result.get_ok;;
+val checkpoint : Sgd_classifier.checkpoint = <abstr>
+# let checkpoint =
+    Sgd_classifier.partial_fit checkpoint ~feature_schema:schema ~x
+      ~y:(Target.classification [|0; 0; 1; 1|]) ()
+    |> Result.get_ok;;
+val checkpoint : Sgd_classifier.checkpoint = <abstr>
+# Sgd_classifier.checkpoint_updates checkpoint;;
+- : int = 4
+# let fitted = Sgd_classifier.to_fitted checkpoint |> Result.get_ok;;
+val fitted : Sgd_classifier.fitted = <abstr>
+# Sgd_classifier.classes fitted;;
+- : int array = [|0; 1|]
+# Sgd_classifier.predict fitted ~feature_schema:schema ~x
+  |> Result.get_ok |> Target.classification_values;;
+- : int array = [|0; 0; 1; 1|]
+# Sgd_classifier.predict_proba fitted ~feature_schema:schema ~x
+  |> Result.get_ok |> Matrix.shape;;
+- : int * int = (4, 2)
+]}
+
+{1 Multiclass scoring}
+
+{!Modelkit.Multiclass_classification_metrics} scores predictions with any
+number of integer labels. The confusion matrix uses ascending truth rows and
+prediction columns, or an explicit label order, and weights every cell by
+sample weight. Accuracy, balanced accuracy, per-class scores, and [Micro],
+[Macro], and [Weighted] averages of precision, recall, and F1 follow
+scikit-learn's definitions: micro averaging pools counts, macro averaging
+weights every class equally, weighted averaging uses truth support, and a
+class without predictions or support follows the undefined-metric policy with
+a zero fallback. Log loss consumes a probability matrix with its declared class
+order.
+
+{!Modelkit.Multiclass_classification_scorer} carries the averaging mode in its
+name, so [f1_macro] and [f1_weighted] can share one grid-search report.
+{!Modelkit.Cross_validation.Multiclass_classification} and
+{!Modelkit.Grid_search.Multiclass_classification} accept any pipeline whose
+terminal declares two or more classes and request probabilities only when a
+scorer needs them.
+
+Ranking metrics score probability and relevance orderings rather than hard
+labels. {!Modelkit.Binary_classification_metrics.average_precision} summarizes
+the precision-recall curve; {!Modelkit.Multiclass_ranking.roc_auc} extends ROC
+AUC to several classes by one-versus-rest or one-versus-one averaging;
+{!Modelkit.Multiclass_ranking.top_k_accuracy} accepts a row whenever the truth
+class ranks inside the first [k]; and {!Modelkit.Ranking_metrics.ndcg} scores
+per-row graded relevance with a logarithmic discount and tie-averaged gains.
+Each of these has a scorer, so a grid search can refit on
+[roc_auc_ovo_weighted] or [top_2_accuracy] exactly as it does on [f1_macro].
+
+{@ocaml[
+# open Modelkit;;
+# let truth = Target.classification [|0; 0; 1; 1; 2; 2|];;
+val truth : Target.classification Target.t = <abstr>
+# let prediction = Target.classification [|0; 1; 1; 1; 2; 0|];;
+val prediction : Target.classification Target.t = <abstr>
+# Multiclass_classification_metrics.confusion_matrix ~truth ~prediction ()
+  |> Result.get_ok
+  |> fun confusion ->
+     Matrix.to_arrays confusion.Multiclass_classification_metrics.counts;;
+- : float array array = [|[|1.; 1.; 0.|]; [|0.; 2.; 0.|]; [|1.; 0.; 1.|]|]
+# Multiclass_classification_metrics.f1
+    ~average:Multiclass_classification_metrics.Macro ~truth ~prediction ()
+  |> Result.get_ok |> Printf.sprintf "%.4f";;
+- : string = "0.6556"
+# Multiclass_classification_scorer.name
+    (Multiclass_classification_scorer.recall
+       ~average:Multiclass_classification_metrics.Weighted ());;
+- : string = "recall_weighted"
+# Ranking_metrics.ndcg
+    ~relevance:(Matrix.of_arrays [|[|3.; 2.; 0.|]|] |> Result.get_ok)
+    ~scores:(Matrix.of_arrays [|[|0.1; 0.5; 0.9|]|] |> Result.get_ok) ()
+  |> Result.get_ok |> Printf.sprintf "%.4f";;
+- : string = "0.6480"
+# Multiclass_classification_scorer.name
+    (Multiclass_classification_scorer.roc_auc
+       ~strategy:Multiclass_ranking.One_vs_one ());;
+- : string = "roc_auc_ovo"
+]}
+
+{1 Adapter admission}
+
+Data that lives in another library reaches ModelKit through an optional
+adapter package rather than through a core dependency. The portable core
+declares only the adapter-neutral result records in {!Modelkit.Admission}: a
+[conversion] pairs an admitted value with its {!Modelkit.Conversion_report.t},
+[features] carries a matrix, its schema, an optional explicit
+{!Modelkit.Null_mask.t}, and the feature reports, and [dataset] carries a
+complete {!Modelkit.Dataset.t} with the feature null mask and every report
+produced while admitting the target, weights, and groups. The
+[Admission.retained_payload_bytes], [temporary_payload_bytes], and
+[allocated_payload_bytes] helpers total a report list.
+
+The [modelkit-nx] and [modelkit-talon] packages implement this contract for
+Raven tensors and dataframes. Every adapter copies into immutable storage,
+writes explicit source nulls as NaN while preserving their identity in the
+mask, rejects unmasked infinities and non-finite targets or weights, and
+checks that int64 labels and groups fit OCaml [int]. A shared conformance
+suite exercises those semantics against each adapter, and the adapter
+packages document their type requirements, platform support, and measured
+copy and allocation cost.
 
 {1 Executable example}
 
@@ -144,7 +520,11 @@ val positive_probabilities : Vector.t = <abstr>
 ]}
 
 The current pipeline routes targets and sample weights to its terminal
-estimator. Its unsupervised preprocessing stages receive neither. External
+estimator. Its unsupervised preprocessing stages receive no targets and receive
+sample weights only when packaged with [~route_sample_weight:true]; the
+standard scaler then fits weighted moments. {!Modelkit.Pipeline.classifier}
+additionally resolves an optional {!Modelkit.Class_weight.t} on each fit's own
+rows before the terminal classifier sees the weights. External
 estimators can also participate by implementing {!Modelkit.ESTIMATOR}. Because
 arbitrary extension modules may close over behavior that has no reviewed data
 codec, pipelines intended for persistence use the artifact-aware built-in

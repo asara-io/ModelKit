@@ -1,0 +1,18 @@
+{
+  "claim_eligible": false,
+  "dataset": {
+    "features": 12,
+    "samples": 3000,
+    "seed": 2026
+  },
+  "alpha": 0.35,
+  "max_iterations": 200,
+  "measured_runs": 5,
+  "power": 1.5,
+  "scenario": "glm_dense_v1",
+  "solver": "lbfgs",
+  "thread_limit": 1,
+  "tolerance": 1e-8,
+  "warmup_runs": 1,
+  "workload": "glm"
+}

@@ -1,3 +1,50 @@
+# 0.4.0 (2026-09-04)
+
+- Add checked immutable CSR matrices with canonical structure validation,
+  zero-copy indexed row views, explicit materialization, payload-memory
+  accounting, and dense/CSR numerical-kernel dispatch through
+  `Feature_matrix`.
+- Add min-max, max-absolute, and robust scalers, per-sample normalization,
+  one-hot and ordinal encoders with explicit unknown-category policies and
+  direct CSR one-hot output, reversible label encoding, polynomial features,
+  and missing indicators as immutable transforms with feature-name
+  propagation.
+- Add lasso and elastic-net regression with deterministic weighted coordinate
+  descent and warm-started descending regularization paths, binary and
+  multiclass ridge classification, multinomial logistic regression with stable
+  softmax probabilities and matrix-valued decision scores, and Poisson and
+  Tweedie generalized linear models with target-domain validation and damped
+  IRLS, each with solver diagnostics and parity fixtures.
+- Add SGD regression and binary/multiclass SGD classification with hinge and
+  logistic losses under an immutable incremental-training contract: explicit
+  initial class registration, ordered streams, optional shuffling, checkpoints,
+  and continuation equivalence.
+- Finish sample-weight and class-weight propagation with fold-local balanced
+  and explicit class weights for classifier terminals, opt-in sample-weight
+  routing to transformers, and a weighted standard scaler.
+- Add confusion-matrix and multiclass classification metrics with micro,
+  macro, and weighted averaging, average precision, one-versus-rest and
+  one-versus-one ROC AUC, top-k accuracy, DCG and NDCG ranking metrics, and
+  multiclass scorers with multiclass cross-validation and grid search.
+- Add the separately installable `modelkit-nx` and `modelkit-talon` adapter
+  packages for checked admission of explicitly typed Nx tensors and explicitly
+  selected Talon dataframe columns, with shared `Admission` result records,
+  conversion and allocation reports, a source-neutral adapter conformance
+  suite, and macOS arm64 lockfiles; the adapters build on Linux and macOS
+  only at the pinned Raven `1.0.0~alpha3` release.
+- Rewrite the reference numerical kernels to read immutable Bigarray storage
+  directly with unboxed compensated sums, verified bit for bit against an
+  independent Neumaier fold.
+- Add deterministic comparative benchmark reports for regularized linear
+  models, ridge classification, multinomial logistic regression, generalized
+  linear models, SGD, adapter admission, sparse kernel dispatch, and solver
+  convergence and scale across tall, square, wide, and rank-deficient shapes;
+  every report remains development evidence with no performance claim.
+- Defer the optional Lacaml numerical backend to a later release, where
+  LAPACK factorizations first have a consumer.
+- Artifacts written by this release record producer version 0.4.0; the
+  artifact schema is unchanged and 0.3.x artifacts continue to load.
+
 # 0.3.2 (2026-08-17)
 
 - Add immutable dense dataset admission with explicit finiteness policies,

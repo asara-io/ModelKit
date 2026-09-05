@@ -20,6 +20,18 @@ module Data_error : sig
         first_index : int;
         duplicate_index : int;
       }
+    | Csr_row_offset_mismatch of {
+        position : int;
+        expected : int;
+        observed : int;
+      }
+    | Invalid_csr_row_offset of {
+        position : int;
+        previous : int;
+        observed : int;
+        nonzero_count : int;
+      }
+    | Invalid_csr_column_order of { row : int; previous : int; observed : int }
 
   val pp : Format.formatter -> t -> unit
   val to_string : t -> string
@@ -50,6 +62,11 @@ module Vector : sig
 
   val to_array : t -> float array
   val to_bigarray : t -> bigarray
+
+  val storage : t -> bigarray
+  (** Zero-copy access to the immutable backing storage for internal kernels.
+      Callers must never write through the result. Not part of the public
+      [Modelkit] API. *)
 end
 
 (** Immutable two-dimensional float64 data in row-major C layout. *)
@@ -82,6 +99,31 @@ module Matrix : sig
 
   val to_arrays : t -> float array array
   val to_bigarray : t -> bigarray
+
+  val storage : t -> bigarray
+  (** Zero-copy access to the immutable backing storage for internal kernels.
+      Callers must never write through the result. Not part of the public
+      [Modelkit] API. *)
+end
+
+(** Immutable rank-two missing-value identity aligned to a feature matrix.
+
+    [true] identifies a source null. The mask is kept separately from feature
+    values so adapters can preserve the distinction between an explicit null and
+    a genuine IEEE NaN. *)
+module Null_mask : sig
+  type t
+
+  val init :
+    rows:int -> columns:int -> (int -> int -> bool) -> (t, Data_error.t) result
+
+  val of_arrays : bool array array -> (t, Data_error.t) result
+  val rows : t -> int
+  val columns : t -> int
+  val shape : t -> int * int
+  val get : t -> int -> int -> bool
+  val null_count : t -> int
+  val to_arrays : t -> bool array array
 end
 
 (** An immutable ordered selection of rows from an aligned source.
@@ -102,6 +144,105 @@ module Row_view : sig
       Raises [Invalid_argument] if [position] is outside the view. *)
 
   val indices : t -> int array
+end
+
+(** Payload memory used by dense or CSR matrix storage.
+
+    Counts exclude OCaml and Bigarray headers and allocator overhead. The dense
+    equivalent is [None] only when its byte count exceeds [Int64.max_int]. *)
+module Matrix_memory : sig
+  type t = {
+    value_bytes : int64;
+    column_index_bytes : int64;
+    row_offset_bytes : int64;
+    total_bytes : int64;
+    dense_equivalent_bytes : int64 option;
+  }
+end
+
+(** Immutable checked compressed sparse row storage.
+
+    Row offsets must begin at zero, end at the stored-value count, and be
+    nondecreasing. Column indices must be in bounds and strictly increasing
+    within each row. Admission copies index arrays; [of_arrays] also copies
+    values. Explicit stored zeroes are retained. *)
+module Csr_matrix : sig
+  type t
+  type view
+
+  type view_memory = {
+    allocated_bytes : int64;
+    shared_bytes : int64;
+    materialized_bytes : int64;
+  }
+
+  val create :
+    rows:int ->
+    columns:int ->
+    row_offsets:int array ->
+    column_indices:int array ->
+    values:Vector.t ->
+    (t, Data_error.t) result
+
+  val of_arrays :
+    rows:int ->
+    columns:int ->
+    row_offsets:int array ->
+    column_indices:int array ->
+    values:float array ->
+    (t, Data_error.t) result
+
+  val of_dense : Matrix.t -> t
+  val to_dense : t -> Matrix.t
+  val rows : t -> int
+  val columns : t -> int
+  val shape : t -> int * int
+  val nonzero_count : t -> int
+  val row_offsets : t -> int array
+  val column_indices : t -> int array
+  val values : t -> Vector.t
+
+  val storage : t -> int array * int array * Vector.bigarray
+  (** Zero-copy access to the row offsets, column indices, and value storage for
+      internal kernels. Callers must never write through the result. Not part of
+      the public [Modelkit] API. *)
+
+  val get : t -> int -> int -> float
+  (** Raises [Invalid_argument] if either index is outside the matrix. *)
+
+  val iter_row : t -> row:int -> f:(column:int -> value:float -> unit) -> unit
+  (** Iterates stored entries in ascending column order without allocating.
+      Raises [Invalid_argument] if [row] is outside the matrix. *)
+
+  val memory : t -> Matrix_memory.t
+  val all : t -> view
+  val view : t -> Row_view.t -> (view, Data_error.t) result
+  val view_rows : view -> int
+  val view_columns : view -> int
+  val view_nonzero_count : view -> int
+  val row_view : view -> Row_view.t
+  val source_row : view -> int -> int
+  val view_get : view -> row:int -> column:int -> float
+  val materialize : view -> t
+
+  val view_memory : view -> view_memory
+  (** Reports bytes allocated for row indices, bytes shared with the source, and
+      the payload bytes that explicit materialization would require. *)
+end
+
+(** A dense or CSR feature matrix selected explicitly at an API boundary. *)
+module Feature_matrix : sig
+  type format = Dense | Csr
+  type t = Dense_matrix of Matrix.t | Csr_matrix of Csr_matrix.t
+
+  val dense : Matrix.t -> t
+  val csr : Csr_matrix.t -> t
+  val format : t -> format
+  val rows : t -> int
+  val columns : t -> int
+  val shape : t -> int * int
+  val get : t -> int -> int -> float
+  val memory : t -> Matrix_memory.t
 end
 
 (** Regression or classification targets aligned by sample.
@@ -314,6 +455,71 @@ module Error : sig
 
   val pp : Format.formatter -> t -> unit
   val to_string : t -> string
+end
+
+(** Numeric payload allocation performed by one adapter conversion.
+
+    Byte counts exclude OCaml headers, allocator metadata, names, and the
+    adapter result record. [temporary_payload_bytes] counts full-size staging
+    payloads discarded after admission; [retained_payload_bytes] counts the
+    immutable payload retained by ModelKit. *)
+module Conversion_report : sig
+  type t
+
+  val create :
+    source:string ->
+    source_dtype:string ->
+    source_shape:int array ->
+    source_contiguous:bool option ->
+    temporary_payload_bytes:int64 ->
+    retained_payload_bytes:int64 ->
+    (t, Error.t) result
+
+  val source : t -> string
+  val source_dtype : t -> string
+  val source_shape : t -> int array
+  val source_contiguous : t -> bool option
+  val temporary_payload_bytes : t -> int64
+  val retained_payload_bytes : t -> int64
+  val allocated_payload_bytes : t -> int64
+end
+
+(** Adapter-neutral admission results.
+
+    Every ModelKit adapter returns these records so that conformance tests,
+    allocation benchmarks, and application code can treat admitted data
+    uniformly regardless of the source library. Each [conversion] pairs an
+    immutable ModelKit value with the {!Conversion_report.t} describing the
+    payload allocated to produce it. [features] carries the admitted matrix, its
+    schema, an explicit null mask when the source supplied one, and the reports
+    for the matrix and mask. [dataset] carries a complete {!Dataset.t} together
+    with the feature null mask and every report produced while admitting
+    features, target, weights, and groups. *)
+module Admission : sig
+  type 'a conversion = { value : 'a; report : Conversion_report.t }
+
+  type features = {
+    matrix : Matrix.t;
+    schema : Feature_schema.t;
+    null_mask : Null_mask.t option;
+    feature_reports : Conversion_report.t list;
+  }
+
+  type 'kind dataset = {
+    dataset : 'kind Dataset.t;
+    feature_null_mask : Null_mask.t option;
+    dataset_reports : Conversion_report.t list;
+  }
+
+  val retained_payload_bytes : Conversion_report.t list -> int64
+  (** Total retained payload across a list of reports. *)
+
+  val temporary_payload_bytes : Conversion_report.t list -> int64
+  (** Total discarded staging payload across a list of reports. *)
+
+  val allocated_payload_bytes : Conversion_report.t list -> int64
+  (** Total allocated payload (retained plus temporary) across a list of
+      reports. *)
 end
 
 (** Shared convention for immutable configured components.

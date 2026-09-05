@@ -154,6 +154,15 @@ module Binary_classification_metrics : sig
     unit ->
     (float, Error.t) result
 
+  val average_precision :
+    ?positive_label:int ->
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    truth:Target.classification Target.t ->
+    positive_probabilities:Vector.t ->
+    unit ->
+    (float, Error.t) result
+
   val roc_curve :
     ?positive_label:int ->
     ?sample_weight:Sample_weight.t ->
@@ -212,6 +221,7 @@ module Binary_classification_scorer : sig
     | F1
     | Log_loss
     | Roc_auc
+    | Average_precision
 
   type response = Labels | Positive_probabilities
 
@@ -246,12 +256,277 @@ module Binary_classification_scorer : sig
   val roc_auc :
     ?positive_label:int -> ?undefined:Undefined_metric_policy.t -> unit -> t
 
+  val average_precision :
+    ?positive_label:int -> ?undefined:Undefined_metric_policy.t -> unit -> t
+
   include
     SCORER
       with type t := t
        and type params := params
        and type truth = Target.classification Target.t
        and type prediction = Binary_prediction.t
+end
+
+(** Aligned multiclass classifier outputs used by scorer specifications.
+
+    At least one response must be present. Probabilities require their class
+    order, must be finite values in [[0., 1.]], and each row must sum to one
+    within [1e-6]. When both responses are supplied, their lengths must agree.
+*)
+module Multiclass_prediction : sig
+  type t
+
+  val create :
+    ?labels:Target.classification Target.t ->
+    ?classes:int array ->
+    ?probabilities:Matrix.t ->
+    unit ->
+    (t, Error.t) result
+
+  val length : t -> int
+  val labels : t -> Target.classification Target.t option
+  val classes : t -> int array option
+  val probabilities : t -> Matrix.t option
+end
+
+(** Confusion-matrix and averaged classification metrics for any label count.
+
+    The label set defaults to the ascending union of observed truth and
+    prediction labels; an explicit [labels] array fixes the confusion-matrix
+    order and drops rows whose labels fall outside it. [Micro] pools weighted
+    counts before dividing, [Macro] averages per-class ratios equally, and
+    [Weighted] averages them by weighted truth support. A per-class ratio with a
+    zero denominator follows the undefined policy, with a fallback of zero,
+    matching scikit-learn's default zero-division handling. Balanced accuracy
+    averages recall over classes with positive support. Log loss clips
+    probabilities to the machine epsilon and requires every truth label to have
+    a probability column. Label metrics are [O(samples + classes squared)] with
+    [O(classes squared)] scratch. *)
+module Multiclass_classification_metrics : sig
+  type average = Micro | Macro | Weighted
+  type confusion_matrix = { labels : int array; counts : Matrix.t }
+
+  type class_scores = {
+    class_labels : int array;
+    precisions : Vector.t;
+    recalls : Vector.t;
+    f1_scores : Vector.t;
+    supports : Vector.t;
+  }
+
+  val confusion_matrix :
+    ?sample_weight:Sample_weight.t ->
+    ?labels:int array ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (confusion_matrix, Error.t) result
+  (** Rows are truth labels and columns are predicted labels. *)
+
+  val accuracy :
+    ?sample_weight:Sample_weight.t ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (float, Error.t) result
+
+  val balanced_accuracy :
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (float, Error.t) result
+
+  val class_scores :
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    ?labels:int array ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (class_scores, Error.t) result
+
+  val precision :
+    ?average:average ->
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    ?labels:int array ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (float, Error.t) result
+
+  val recall :
+    ?average:average ->
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    ?labels:int array ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (float, Error.t) result
+
+  val f1 :
+    ?average:average ->
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    ?labels:int array ->
+    truth:Target.classification Target.t ->
+    prediction:Target.classification Target.t ->
+    unit ->
+    (float, Error.t) result
+
+  val log_loss :
+    ?sample_weight:Sample_weight.t ->
+    truth:Target.classification Target.t ->
+    classes:int array ->
+    probabilities:Matrix.t ->
+    unit ->
+    (float, Error.t) result
+end
+
+(** Ranking metrics over class-probability matrices.
+
+    One-versus-rest ROC AUC scores every class column against its indicator;
+    [Macro] averages classes equally, [Weighted] by weighted truth support, and
+    [Micro] pools every row-class indicator into one binary curve.
+    One-versus-one ROC AUC averages, over every pair of classes with positive
+    weighted support in ascending order, the mean of the two directional AUCs on
+    the rows belonging to that pair; [Weighted] uses the pair's weighted
+    prevalence, and [Micro] is a typed validation error. A class without
+    weighted support follows the undefined policy with a fallback of [0.5].
+    scikit-learn refuses sample weights for one-versus-one AUC; ModelKit applies
+    them to both the pairwise curves and the prevalences.
+
+    Top-k accuracy counts a row as a hit when fewer than [k] other classes
+    outrank the truth class, with exact ties broken toward the higher column
+    index as scikit-learn does. [k] must lie in [\[1, classes)]. One-versus-rest
+    costs [O(classes * n log n)]; one-versus-one costs
+    [O(classes squared * n log n)]; top-k costs [O(n * classes)]. *)
+module Multiclass_ranking : sig
+  type strategy = One_vs_rest | One_vs_one
+
+  val roc_auc :
+    ?strategy:strategy ->
+    ?average:Multiclass_classification_metrics.average ->
+    ?undefined:Undefined_metric_policy.t ->
+    ?sample_weight:Sample_weight.t ->
+    truth:Target.classification Target.t ->
+    classes:int array ->
+    probabilities:Matrix.t ->
+    unit ->
+    (float, Error.t) result
+
+  val top_k_accuracy :
+    k:int ->
+    ?sample_weight:Sample_weight.t ->
+    truth:Target.classification Target.t ->
+    classes:int array ->
+    probabilities:Matrix.t ->
+    unit ->
+    (float, Error.t) result
+end
+
+(** Discounted cumulative gain over per-row graded relevance.
+
+    Each row of [relevance] holds finite non-negative gains for the row's items
+    and each row of [scores] holds the ranking scores; both matrices share one
+    shape with at least two columns. Rank [r] receives discount
+    [1 / log2 (r + 2)], and [k] zeroes discounts from rank [k] onward. By
+    default tied scores share the mean gain of their group times the group's
+    summed discount, following McSherry and Najork; [ignore_ties] instead ranks
+    tied items by descending column index as scikit-learn's reversed stable sort
+    does. NDCG divides each row by its ideal DCG and scores an all-zero row as
+    zero. Both metrics average rows by sample weight and cost
+    [O(rows * columns log columns)]. *)
+module Ranking_metrics : sig
+  val dcg :
+    ?k:int ->
+    ?ignore_ties:bool ->
+    ?sample_weight:Sample_weight.t ->
+    relevance:Matrix.t ->
+    scores:Matrix.t ->
+    unit ->
+    (float, Error.t) result
+
+  val ndcg :
+    ?k:int ->
+    ?ignore_ties:bool ->
+    ?sample_weight:Sample_weight.t ->
+    relevance:Matrix.t ->
+    scores:Matrix.t ->
+    unit ->
+    (float, Error.t) result
+end
+
+(** Higher-is-better multiclass scorer specifications.
+
+    Label metrics request {!Multiclass_prediction.labels}; log loss requests
+    class probabilities and is negated for selection. Averaged metrics default
+    to [Macro] and carry the averaging mode in their name, for example
+    [f1_weighted]. *)
+module Multiclass_classification_scorer : sig
+  type metric =
+    | Accuracy
+    | Balanced_accuracy
+    | Precision of Multiclass_classification_metrics.average
+    | Recall of Multiclass_classification_metrics.average
+    | F1 of Multiclass_classification_metrics.average
+    | Log_loss
+    | Roc_auc of {
+        strategy : Multiclass_ranking.strategy;
+        average : Multiclass_classification_metrics.average;
+      }
+    | Top_k_accuracy of int
+
+  type response = Labels | Class_probabilities
+  type params = { metric : metric; undefined : Undefined_metric_policy.t }
+  type t
+
+  val create : ?undefined:Undefined_metric_policy.t -> metric -> t
+  val response : t -> response
+  val accuracy : t
+  val balanced_accuracy : ?undefined:Undefined_metric_policy.t -> unit -> t
+
+  val precision :
+    ?undefined:Undefined_metric_policy.t ->
+    ?average:Multiclass_classification_metrics.average ->
+    unit ->
+    t
+
+  val recall :
+    ?undefined:Undefined_metric_policy.t ->
+    ?average:Multiclass_classification_metrics.average ->
+    unit ->
+    t
+
+  val f1 :
+    ?undefined:Undefined_metric_policy.t ->
+    ?average:Multiclass_classification_metrics.average ->
+    unit ->
+    t
+
+  val neg_log_loss : t
+
+  val roc_auc :
+    ?undefined:Undefined_metric_policy.t ->
+    ?strategy:Multiclass_ranking.strategy ->
+    ?average:Multiclass_classification_metrics.average ->
+    unit ->
+    t
+  (** Named [roc_auc_ovr] or [roc_auc_ovo] for macro averaging, with a
+      [_weighted] or [_micro] suffix otherwise. *)
+
+  val top_k_accuracy : k:int -> t
+  (** Named [top_<k>_accuracy] so several cutoffs can share one report. *)
+
+  include
+    SCORER
+      with type t := t
+       and type params := params
+       and type truth = Target.classification Target.t
+       and type prediction = Multiclass_prediction.t
 end
 
 (** Stable [O(scores)] population aggregation with [O(1)] scratch.

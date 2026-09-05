@@ -1,0 +1,463 @@
+{
+  "claim_eligible": false,
+  "environment": {
+    "cpu_count": 8,
+    "machine": "arm64",
+    "operating_system": "macOS-15.5-arm64-arm-64bit-Mach-O",
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "generated_at": "2026-09-04T03:52:45.336961+00:00",
+  "methodology": {
+    "measurement": "interleaved fresh-process wall time and sampled resident set size",
+    "rss_sample_interval_seconds": 0.001,
+    "signature_tolerance": {
+      "absolute": 1e-06,
+      "relative": 1e-06
+    },
+    "thread_limit": 1,
+    "warmup_runs": 1
+  },
+  "runs": {
+    "modelkit": [
+      {
+        "elapsed_ns": 44691541,
+        "peak_rss_bytes": 7897088,
+        "worker": {
+          "allocated_words": 12319469,
+          "checksum": "1.4939419817035273:1.9999205487962046:-2.7746357376601782:-2.9188502489375923:1.4921954619064519:1.9999291294014849:-2.773583088092753:-2.9183266762024012:1.4756682124455713:1.4939419817113506:1.4690186964482614:1.4921954619142919",
+          "features": 12,
+          "ocaml": "5.3.0",
+          "operations": [
+            "weighted_lasso_fit_predict",
+            "weighted_elastic_net_fit_predict",
+            "weighted_lasso_path",
+            "weighted_elastic_net_path"
+          ],
+          "samples": 3000,
+          "signature": [
+            1.4939419817035273,
+            1.9999205487962046,
+            -2.7746357376601782,
+            -2.9188502489375923,
+            1.492195461906452,
+            1.999929129401485,
+            -2.773583088092753,
+            -2.918326676202401,
+            1.4756682124455713,
+            1.4939419817113506,
+            1.4690186964482614,
+            1.4921954619142919
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 45037084,
+        "peak_rss_bytes": 7815168,
+        "worker": {
+          "allocated_words": 12319469,
+          "checksum": "1.4939419817035273:1.9999205487962046:-2.7746357376601782:-2.9188502489375923:1.4921954619064519:1.9999291294014849:-2.773583088092753:-2.9183266762024012:1.4756682124455713:1.4939419817113506:1.4690186964482614:1.4921954619142919",
+          "features": 12,
+          "ocaml": "5.3.0",
+          "operations": [
+            "weighted_lasso_fit_predict",
+            "weighted_elastic_net_fit_predict",
+            "weighted_lasso_path",
+            "weighted_elastic_net_path"
+          ],
+          "samples": 3000,
+          "signature": [
+            1.4939419817035273,
+            1.9999205487962046,
+            -2.7746357376601782,
+            -2.9188502489375923,
+            1.492195461906452,
+            1.999929129401485,
+            -2.773583088092753,
+            -2.918326676202401,
+            1.4756682124455713,
+            1.4939419817113506,
+            1.4690186964482614,
+            1.4921954619142919
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 44586583,
+        "peak_rss_bytes": 7733248,
+        "worker": {
+          "allocated_words": 12319469,
+          "checksum": "1.4939419817035273:1.9999205487962046:-2.7746357376601782:-2.9188502489375923:1.4921954619064519:1.9999291294014849:-2.773583088092753:-2.9183266762024012:1.4756682124455713:1.4939419817113506:1.4690186964482614:1.4921954619142919",
+          "features": 12,
+          "ocaml": "5.3.0",
+          "operations": [
+            "weighted_lasso_fit_predict",
+            "weighted_elastic_net_fit_predict",
+            "weighted_lasso_path",
+            "weighted_elastic_net_path"
+          ],
+          "samples": 3000,
+          "signature": [
+            1.4939419817035273,
+            1.9999205487962046,
+            -2.7746357376601782,
+            -2.9188502489375923,
+            1.492195461906452,
+            1.999929129401485,
+            -2.773583088092753,
+            -2.918326676202401,
+            1.4756682124455713,
+            1.4939419817113506,
+            1.4690186964482614,
+            1.4921954619142919
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 44977916,
+        "peak_rss_bytes": 7979008,
+        "worker": {
+          "allocated_words": 12319469,
+          "checksum": "1.4939419817035273:1.9999205487962046:-2.7746357376601782:-2.9188502489375923:1.4921954619064519:1.9999291294014849:-2.773583088092753:-2.9183266762024012:1.4756682124455713:1.4939419817113506:1.4690186964482614:1.4921954619142919",
+          "features": 12,
+          "ocaml": "5.3.0",
+          "operations": [
+            "weighted_lasso_fit_predict",
+            "weighted_elastic_net_fit_predict",
+            "weighted_lasso_path",
+            "weighted_elastic_net_path"
+          ],
+          "samples": 3000,
+          "signature": [
+            1.4939419817035273,
+            1.9999205487962046,
+            -2.7746357376601782,
+            -2.9188502489375923,
+            1.492195461906452,
+            1.999929129401485,
+            -2.773583088092753,
+            -2.918326676202401,
+            1.4756682124455713,
+            1.4939419817113506,
+            1.4690186964482614,
+            1.4921954619142919
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 41811209,
+        "peak_rss_bytes": 7995392,
+        "worker": {
+          "allocated_words": 12319469,
+          "checksum": "1.4939419817035273:1.9999205487962046:-2.7746357376601782:-2.9188502489375923:1.4921954619064519:1.9999291294014849:-2.773583088092753:-2.9183266762024012:1.4756682124455713:1.4939419817113506:1.4690186964482614:1.4921954619142919",
+          "features": 12,
+          "ocaml": "5.3.0",
+          "operations": [
+            "weighted_lasso_fit_predict",
+            "weighted_elastic_net_fit_predict",
+            "weighted_lasso_path",
+            "weighted_elastic_net_path"
+          ],
+          "samples": 3000,
+          "signature": [
+            1.4939419817035273,
+            1.9999205487962046,
+            -2.7746357376601782,
+            -2.9188502489375923,
+            1.492195461906452,
+            1.999929129401485,
+            -2.773583088092753,
+            -2.918326676202401,
+            1.4756682124455713,
+            1.4939419817113506,
+            1.4690186964482614,
+            1.4921954619142919
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      }
+    ],
+    "sklearn": [
+      {
+        "elapsed_ns": 727874041,
+        "peak_rss_bytes": 125648896,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "06f6a9e5a45bf65091f58d8dbdec0d682fc456cc658fa030b61aee65bad10c3f",
+          "features": 12,
+          "operations": [
+            "weighted_lasso_fit_predict",
+            "weighted_elastic_net_fit_predict",
+            "weighted_lasso_path",
+            "weighted_elastic_net_path"
+          ],
+          "samples": 3000,
+          "signature": [
+            1.4939419817035273,
+            1.9999205487962068,
+            -2.7746357376601747,
+            -2.9188502489375887,
+            1.4921954619064517,
+            1.999929129401487,
+            -2.7735830880927512,
+            -2.9183266762023994,
+            1.4756682124455713,
+            1.4939419817113506,
+            1.4690186964482612,
+            1.4921954619142919
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 724972083,
+        "peak_rss_bytes": 126124032,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "06f6a9e5a45bf65091f58d8dbdec0d682fc456cc658fa030b61aee65bad10c3f",
+          "features": 12,
+          "operations": [
+            "weighted_lasso_fit_predict",
+            "weighted_elastic_net_fit_predict",
+            "weighted_lasso_path",
+            "weighted_elastic_net_path"
+          ],
+          "samples": 3000,
+          "signature": [
+            1.4939419817035273,
+            1.9999205487962068,
+            -2.7746357376601747,
+            -2.9188502489375887,
+            1.4921954619064517,
+            1.999929129401487,
+            -2.7735830880927512,
+            -2.9183266762023994,
+            1.4756682124455713,
+            1.4939419817113506,
+            1.4690186964482612,
+            1.4921954619142919
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 730896041,
+        "peak_rss_bytes": 124960768,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "06f6a9e5a45bf65091f58d8dbdec0d682fc456cc658fa030b61aee65bad10c3f",
+          "features": 12,
+          "operations": [
+            "weighted_lasso_fit_predict",
+            "weighted_elastic_net_fit_predict",
+            "weighted_lasso_path",
+            "weighted_elastic_net_path"
+          ],
+          "samples": 3000,
+          "signature": [
+            1.4939419817035273,
+            1.9999205487962068,
+            -2.7746357376601747,
+            -2.9188502489375887,
+            1.4921954619064517,
+            1.999929129401487,
+            -2.7735830880927512,
+            -2.9183266762023994,
+            1.4756682124455713,
+            1.4939419817113506,
+            1.4690186964482612,
+            1.4921954619142919
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 726066500,
+        "peak_rss_bytes": 126304256,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "06f6a9e5a45bf65091f58d8dbdec0d682fc456cc658fa030b61aee65bad10c3f",
+          "features": 12,
+          "operations": [
+            "weighted_lasso_fit_predict",
+            "weighted_elastic_net_fit_predict",
+            "weighted_lasso_path",
+            "weighted_elastic_net_path"
+          ],
+          "samples": 3000,
+          "signature": [
+            1.4939419817035273,
+            1.9999205487962068,
+            -2.7746357376601747,
+            -2.9188502489375887,
+            1.4921954619064517,
+            1.999929129401487,
+            -2.7735830880927512,
+            -2.9183266762023994,
+            1.4756682124455713,
+            1.4939419817113506,
+            1.4690186964482612,
+            1.4921954619142919
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 731620916,
+        "peak_rss_bytes": 126271488,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "06f6a9e5a45bf65091f58d8dbdec0d682fc456cc658fa030b61aee65bad10c3f",
+          "features": 12,
+          "operations": [
+            "weighted_lasso_fit_predict",
+            "weighted_elastic_net_fit_predict",
+            "weighted_lasso_path",
+            "weighted_elastic_net_path"
+          ],
+          "samples": 3000,
+          "signature": [
+            1.4939419817035273,
+            1.9999205487962068,
+            -2.7746357376601747,
+            -2.9188502489375887,
+            1.4921954619064517,
+            1.999929129401487,
+            -2.7735830880927512,
+            -2.9183266762023994,
+            1.4756682124455713,
+            1.4939419817113506,
+            1.4690186964482612,
+            1.4921954619142919
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "scenario": {
+    "alpha": 0.05,
+    "claim_eligible": false,
+    "dataset": {
+      "features": 12,
+      "samples": 3000,
+      "seed": 2026
+    },
+    "l1_ratio": 0.4,
+    "max_iterations": 1000,
+    "measured_runs": 5,
+    "path_alphas": [
+      0.2,
+      0.1,
+      0.05
+    ],
+    "scenario": "regularized_linear_dense_v1",
+    "thread_limit": 1,
+    "tolerance": 1e-08,
+    "warmup_runs": 1,
+    "workload": "regularized_linear"
+  },
+  "schema_version": 2
+}

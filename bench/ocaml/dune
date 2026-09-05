@@ -7,6 +7,30 @@
  (libraries modelkit))
 
 (executable
+ (name ridge_classifier_worker)
+ (libraries modelkit))
+
+(executable
+ (name multinomial_logistic_worker)
+ (libraries modelkit))
+
+(executable
+ (name glm_worker)
+ (libraries modelkit))
+
+(executable
+ (name regularized_linear_worker)
+ (libraries modelkit))
+
+(executable
+ (name sgd_regressor_worker)
+ (libraries modelkit))
+
+(executable
+ (name sgd_classifier_worker)
+ (libraries modelkit))
+
+(executable
  (name splitters_worker)
  (libraries modelkit))
 
@@ -25,3 +49,22 @@
 (executable
  (name parallel_cross_validation_worker)
  (libraries modelkit modelkit-parallel))
+
+; The adapter admission worker depends on the optional Raven adapters, which
+; are absent on Windows and on any switch without nx and talon. Dune cannot
+; make an executable conditional on library availability, so this worker is
+; opted in explicitly by the benchmark runner through MODELKIT_ADAPTER_BENCH.
+
+(executable
+ (name adapter_admission_worker)
+ (enabled_if
+  (= %{env:MODELKIT_ADAPTER_BENCH=0} 1))
+ (libraries modelkit modelkit-nx modelkit-talon nx talon unix))
+
+(executable
+ (name sparse_kernels_worker)
+ (libraries modelkit unix))
+
+(executable
+ (name solver_shapes_worker)
+ (libraries modelkit unix))

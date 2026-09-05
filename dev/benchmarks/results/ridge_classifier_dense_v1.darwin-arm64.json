@@ -1,0 +1,281 @@
+{
+  "claim_eligible": false,
+  "environment": {
+    "cpu_count": 8,
+    "machine": "arm64",
+    "operating_system": "macOS-15.5-arm64-arm-64bit-Mach-O",
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "generated_at": "2026-09-03T23:13:53.900972+00:00",
+  "methodology": {
+    "measurement": "interleaved fresh-process wall time and sampled resident set size",
+    "rss_sample_interval_seconds": 0.001,
+    "signature_tolerance": {
+      "absolute": 1e-07,
+      "relative": 1e-07
+    },
+    "thread_limit": 1,
+    "warmup_runs": 1
+  },
+  "runs": {
+    "modelkit": [
+      {
+        "elapsed_ns": 124729041,
+        "peak_rss_bytes": 16449536,
+        "worker": {
+          "allocated_words": 27395780,
+          "checksum": "0.78689550156209498:0.68610862260416527:7:7:-1.2275466624614848:-0.32443424517650654:0.55198090763798513:-1.2028443134857376:-0.29349257279446284:0.49633688628019351:9:9",
+          "features": 12,
+          "ocaml": "5.3.0",
+          "operations": [
+            "binary_ridge_classification",
+            "multiclass_ridge_classification"
+          ],
+          "samples": 10000,
+          "signature": [
+            0.786895501562095,
+            0.6861086226041653,
+            7,
+            7,
+            -1.2275466624614848,
+            -0.32443424517650654,
+            0.5519809076379851,
+            -1.2028443134857376,
+            -0.29349257279446284,
+            0.4963368862801935,
+            9,
+            9
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 126116250,
+        "peak_rss_bytes": 14778368,
+        "worker": {
+          "allocated_words": 27395780,
+          "checksum": "0.78689550156209498:0.68610862260416527:7:7:-1.2275466624614848:-0.32443424517650654:0.55198090763798513:-1.2028443134857376:-0.29349257279446284:0.49633688628019351:9:9",
+          "features": 12,
+          "ocaml": "5.3.0",
+          "operations": [
+            "binary_ridge_classification",
+            "multiclass_ridge_classification"
+          ],
+          "samples": 10000,
+          "signature": [
+            0.786895501562095,
+            0.6861086226041653,
+            7,
+            7,
+            -1.2275466624614848,
+            -0.32443424517650654,
+            0.5519809076379851,
+            -1.2028443134857376,
+            -0.29349257279446284,
+            0.4963368862801935,
+            9,
+            9
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 125287875,
+        "peak_rss_bytes": 16187392,
+        "worker": {
+          "allocated_words": 27395780,
+          "checksum": "0.78689550156209498:0.68610862260416527:7:7:-1.2275466624614848:-0.32443424517650654:0.55198090763798513:-1.2028443134857376:-0.29349257279446284:0.49633688628019351:9:9",
+          "features": 12,
+          "ocaml": "5.3.0",
+          "operations": [
+            "binary_ridge_classification",
+            "multiclass_ridge_classification"
+          ],
+          "samples": 10000,
+          "signature": [
+            0.786895501562095,
+            0.6861086226041653,
+            7,
+            7,
+            -1.2275466624614848,
+            -0.32443424517650654,
+            0.5519809076379851,
+            -1.2028443134857376,
+            -0.29349257279446284,
+            0.4963368862801935,
+            9,
+            9
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      }
+    ],
+    "sklearn": [
+      {
+        "elapsed_ns": 730852791,
+        "peak_rss_bytes": 132202496,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "c993b9905b183d9f413f812fe1291f4e528a0f7659272eb7e78fce208e960d74",
+          "features": 12,
+          "operations": [
+            "binary_ridge_classification",
+            "multiclass_ridge_classification"
+          ],
+          "samples": 10000,
+          "signature": [
+            0.7868955015620961,
+            0.6861086226041656,
+            7.0,
+            7.0,
+            -1.2275466624614777,
+            -0.32443424517650093,
+            0.5519809076379913,
+            -1.2028443134857336,
+            -0.29349257279445623,
+            0.4963368862801966,
+            9.0,
+            9.0
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 728040125,
+        "peak_rss_bytes": 130973696,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "c993b9905b183d9f413f812fe1291f4e528a0f7659272eb7e78fce208e960d74",
+          "features": 12,
+          "operations": [
+            "binary_ridge_classification",
+            "multiclass_ridge_classification"
+          ],
+          "samples": 10000,
+          "signature": [
+            0.7868955015620961,
+            0.6861086226041656,
+            7.0,
+            7.0,
+            -1.2275466624614777,
+            -0.32443424517650093,
+            0.5519809076379913,
+            -1.2028443134857336,
+            -0.29349257279445623,
+            0.4963368862801966,
+            9.0,
+            9.0
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 732596917,
+        "peak_rss_bytes": 133775360,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "c993b9905b183d9f413f812fe1291f4e528a0f7659272eb7e78fce208e960d74",
+          "features": 12,
+          "operations": [
+            "binary_ridge_classification",
+            "multiclass_ridge_classification"
+          ],
+          "samples": 10000,
+          "signature": [
+            0.7868955015620961,
+            0.6861086226041656,
+            7.0,
+            7.0,
+            -1.2275466624614777,
+            -0.32443424517650093,
+            0.5519809076379913,
+            -1.2028443134857336,
+            -0.29349257279445623,
+            0.4963368862801966,
+            9.0,
+            9.0
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "scenario": {
+    "alpha": 2.5,
+    "claim_eligible": false,
+    "dataset": {
+      "features": 12,
+      "samples": 10000,
+      "seed": 1729
+    },
+    "measured_runs": 3,
+    "scenario": "ridge_classifier_dense_v1",
+    "thread_limit": 1,
+    "warmup_runs": 1,
+    "workload": "ridge_classifier"
+  },
+  "schema_version": 2
+}

@@ -1,0 +1,33 @@
+{
+  "configuration": {
+    "average": false,
+    "epochs": 6,
+    "eta0": 0.01,
+    "features": 3,
+    "fit_intercept": true,
+    "learning_rate": "constant",
+    "loss": "squared_error",
+    "penalty": null,
+    "prediction_samples": 4,
+    "samples": 8,
+    "shuffle": false,
+    "weighted": true
+  },
+  "environment": {
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "fixture": "sgd_regressor_v1",
+  "generator": "dev/fixtures/generate.py",
+  "license": "Apache-2.0",
+  "reference": "sklearn.linear_model.SGDRegressor",
+  "schema_version": 1
+}

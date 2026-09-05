@@ -1,0 +1,347 @@
+{
+  "claim_eligible": false,
+  "environment": {
+    "cpu_count": 8,
+    "machine": "arm64",
+    "operating_system": "macOS-15.5-arm64-arm-64bit-Mach-O",
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "generated_at": "2026-09-04T19:33:58.639142+00:00",
+  "methodology": {
+    "measurement": "interleaved fresh-process wall time and sampled resident set size",
+    "rss_sample_interval_seconds": 0.001,
+    "signature_tolerance": {
+      "absolute": 1e-07,
+      "relative": 1e-07
+    },
+    "thread_limit": 1,
+    "warmup_runs": 1
+  },
+  "runs": {
+    "modelkit": [
+      {
+        "elapsed_ns": 1165709167,
+        "peak_rss_bytes": 287375360,
+        "worker": {
+          "adapters": {
+            "nx": {
+              "allocated_bytes_per_retained_payload_byte": 5.72552,
+              "allocated_words": 47521815,
+              "elapsed_ns": 247458934,
+              "report_count": 5,
+              "retained_payload_bytes": 66400000,
+              "temporary_payload_bytes": 1600000
+            },
+            "talon": {
+              "allocated_bytes_per_retained_payload_byte": 4.762171,
+              "allocated_words": 39526023,
+              "elapsed_ns": 226541042,
+              "report_count": 5,
+              "retained_payload_bytes": 66400000,
+              "temporary_payload_bytes": 1600000
+            }
+          },
+          "allocated_words": 87047838,
+          "checksum": "fc93a6dd1b5e8db895e7dea236ef38fd",
+          "features": 40,
+          "ocaml": "5.3.0",
+          "operations": [
+            "nx_classification_dataset_admission",
+            "talon_classification_dataset_admission"
+          ],
+          "samples": 100000,
+          "signature": [
+            100000,
+            40,
+            19003299.99998604,
+            195000,
+            99999,
+            150000,
+            499950000,
+            100000,
+            40,
+            19003299.99998604,
+            195000,
+            99999,
+            150000,
+            499950000
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 1167903625,
+        "peak_rss_bytes": 283869184,
+        "worker": {
+          "adapters": {
+            "nx": {
+              "allocated_bytes_per_retained_payload_byte": 5.72552,
+              "allocated_words": 47521815,
+              "elapsed_ns": 246919870,
+              "report_count": 5,
+              "retained_payload_bytes": 66400000,
+              "temporary_payload_bytes": 1600000
+            },
+            "talon": {
+              "allocated_bytes_per_retained_payload_byte": 4.762171,
+              "allocated_words": 39526023,
+              "elapsed_ns": 228211164,
+              "report_count": 5,
+              "retained_payload_bytes": 66400000,
+              "temporary_payload_bytes": 1600000
+            }
+          },
+          "allocated_words": 87047838,
+          "checksum": "fc93a6dd1b5e8db895e7dea236ef38fd",
+          "features": 40,
+          "ocaml": "5.3.0",
+          "operations": [
+            "nx_classification_dataset_admission",
+            "talon_classification_dataset_admission"
+          ],
+          "samples": 100000,
+          "signature": [
+            100000,
+            40,
+            19003299.99998604,
+            195000,
+            99999,
+            150000,
+            499950000,
+            100000,
+            40,
+            19003299.99998604,
+            195000,
+            99999,
+            150000,
+            499950000
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 1186405834,
+        "peak_rss_bytes": 279085056,
+        "worker": {
+          "adapters": {
+            "nx": {
+              "allocated_bytes_per_retained_payload_byte": 5.72552,
+              "allocated_words": 47521815,
+              "elapsed_ns": 246582984,
+              "report_count": 5,
+              "retained_payload_bytes": 66400000,
+              "temporary_payload_bytes": 1600000
+            },
+            "talon": {
+              "allocated_bytes_per_retained_payload_byte": 4.762171,
+              "allocated_words": 39526023,
+              "elapsed_ns": 228487014,
+              "report_count": 5,
+              "retained_payload_bytes": 66400000,
+              "temporary_payload_bytes": 1600000
+            }
+          },
+          "allocated_words": 87047838,
+          "checksum": "fc93a6dd1b5e8db895e7dea236ef38fd",
+          "features": 40,
+          "ocaml": "5.3.0",
+          "operations": [
+            "nx_classification_dataset_admission",
+            "talon_classification_dataset_admission"
+          ],
+          "samples": 100000,
+          "signature": [
+            100000,
+            40,
+            19003299.99998604,
+            195000,
+            99999,
+            150000,
+            499950000,
+            100000,
+            40,
+            19003299.99998604,
+            195000,
+            99999,
+            150000,
+            499950000
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      }
+    ],
+    "sklearn": [
+      {
+        "elapsed_ns": 747131250,
+        "peak_rss_bytes": 255983616,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "02f5292e1f00802651dd220db63c4437129103791d3cb490ace7a6f73d8cccce",
+          "features": 40,
+          "operations": [
+            "numpy_tensor_check_array_admission",
+            "numpy_column_stack_check_array_admission"
+          ],
+          "samples": 100000,
+          "signature": [
+            100000.0,
+            40.0,
+            19003300.0,
+            195000.0,
+            99999.0,
+            150000.0,
+            499950000.0,
+            100000.0,
+            40.0,
+            19003300.0,
+            195000.0,
+            99999.0,
+            150000.0,
+            499950000.0
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 758205167,
+        "peak_rss_bytes": 255672320,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "02f5292e1f00802651dd220db63c4437129103791d3cb490ace7a6f73d8cccce",
+          "features": 40,
+          "operations": [
+            "numpy_tensor_check_array_admission",
+            "numpy_column_stack_check_array_admission"
+          ],
+          "samples": 100000,
+          "signature": [
+            100000.0,
+            40.0,
+            19003300.0,
+            195000.0,
+            99999.0,
+            150000.0,
+            499950000.0,
+            100000.0,
+            40.0,
+            19003300.0,
+            195000.0,
+            99999.0,
+            150000.0,
+            499950000.0
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 747807250,
+        "peak_rss_bytes": 255246336,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "02f5292e1f00802651dd220db63c4437129103791d3cb490ace7a6f73d8cccce",
+          "features": 40,
+          "operations": [
+            "numpy_tensor_check_array_admission",
+            "numpy_column_stack_check_array_admission"
+          ],
+          "samples": 100000,
+          "signature": [
+            100000.0,
+            40.0,
+            19003300.0,
+            195000.0,
+            99999.0,
+            150000.0,
+            499950000.0,
+            100000.0,
+            40.0,
+            19003300.0,
+            195000.0,
+            99999.0,
+            150000.0,
+            499950000.0
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "scenario": {
+    "claim_eligible": false,
+    "dataset": {
+      "features": 40,
+      "missing_modulus": 20,
+      "samples": 100000,
+      "seed": 1729
+    },
+    "measured_runs": 3,
+    "scenario": "adapter_admission_dense_v1",
+    "thread_limit": 1,
+    "warmup_runs": 1,
+    "workload": "adapter_admission"
+  },
+  "schema_version": 2
+}

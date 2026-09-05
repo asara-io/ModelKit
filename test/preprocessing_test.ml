@@ -16,6 +16,13 @@ let expect_error predicate = function
   | Error error -> fail ("unexpected error: " ^ Error.to_string error)
   | Ok _ -> fail "expected an error"
 
+let is_data = function
+  | Error.Data _ -> true
+  | Error.Validation _ | Error.Shape_mismatch _
+  | Error.Feature_schema_mismatch _ | Error.Numerical _ | Error.Convergence _
+  | Error.Compatibility _ | Error.Artifact _ | Error.Cancelled ->
+      false
+
 let is_validation = function
   | Error.Validation _ -> true
   | Error.Data _ | Error.Shape_mismatch _ | Error.Feature_schema_mismatch _
@@ -36,7 +43,10 @@ let is_data_non_finite = function
       ( Data_error.Negative_dimension _ | Data_error.Ragged_matrix _
       | Data_error.Length_mismatch _ | Data_error.Index_out_of_bounds _
       | Data_error.Negative_weight _ | Data_error.All_zero_weights
-      | Data_error.Empty_feature_name _ | Data_error.Duplicate_feature_name _ )
+      | Data_error.Empty_feature_name _ | Data_error.Duplicate_feature_name _
+      | Data_error.Csr_row_offset_mismatch _
+      | Data_error.Invalid_csr_row_offset _
+      | Data_error.Invalid_csr_column_order _ )
   | Error.Shape_mismatch _ | Error.Feature_schema_mismatch _
   | Error.Validation _ | Error.Numerical _ | Error.Convergence _
   | Error.Compatibility _ | Error.Artifact _ | Error.Cancelled ->
@@ -192,6 +202,42 @@ let test_standard_scaler () =
     (Feature_schema.equal (Standard_scaler.output_schema fitted) schema)
     "standard scaler changed feature names"
 
+let test_weighted_standard_scaler () =
+  let schema = named_schema [| "a"; "b"; "constant" |] in
+  let training =
+    Matrix.of_arrays
+      [| [| 1.0; 2.0; 7.0 |]; [| 3.0; 4.0; 7.0 |]; [| 5.0; 6.0; 7.0 |] |]
+    |> get_data
+  in
+  let weighted =
+    Sample_weight.of_array ~expected_length:3 [| 2.0; 0.0; 1.0 |] |> get_data
+  in
+  let fitted =
+    Standard_scaler.fit
+      (Standard_scaler.create ())
+      ~sample_weight:weighted ~rng:(rng ()) ~feature_schema:schema ~x:training
+      ~y:None ()
+    |> get
+  in
+  let mean = Vector.get (Standard_scaler.mean fitted) 0 in
+  let variance = Vector.get (Standard_scaler.variance fitted) 0 in
+  check
+    (close (7.0 /. 3.0) mean && close (32.0 /. 9.0) variance)
+    "weighted scaler moments are wrong";
+  check
+    (Vector.get (Standard_scaler.scale fitted) 2 = 1.0)
+    "weighted constant feature scale is not one";
+  let duplicated =
+    Matrix.of_arrays
+      [| [| 1.0; 2.0; 7.0 |]; [| 1.0; 2.0; 7.0 |]; [| 5.0; 6.0; 7.0 |] |]
+    |> get_data
+  in
+  let replicated = fit_scaler (Standard_scaler.create ()) schema duplicated in
+  check
+    (close mean (Vector.get (Standard_scaler.mean replicated) 0)
+    && close variance (Vector.get (Standard_scaler.variance replicated) 0))
+    "integer weights do not match row replication"
+
 let test_standard_scaler_options_and_errors () =
   let schema = named_schema [| "value" |] in
   let training = Matrix.of_arrays [| [| 1.0 |]; [| 3.0 |] |] |> get_data in
@@ -223,9 +269,9 @@ let test_standard_scaler_options_and_errors () =
        (Standard_scaler.create ())
        ~rng:(rng ()) ~feature_schema:schema ~x:extreme ~y:None ());
   let weights =
-    Sample_weight.of_array ~expected_length:2 [| 1.0; 1.0 |] |> get_data
+    Sample_weight.of_array ~expected_length:1 [| 1.0 |] |> get_data
   in
-  expect_error is_validation
+  expect_error is_data
     (Standard_scaler.fit
        (Standard_scaler.create ())
        ~sample_weight:weights ~rng:(rng ()) ~feature_schema:schema ~x:training
@@ -295,6 +341,8 @@ let () =
       ( "standard scaler",
         [
           Alcotest.test_case "scale" `Quick test_standard_scaler;
+          Alcotest.test_case "weighted moments" `Quick
+            test_weighted_standard_scaler;
           Alcotest.test_case "options and errors" `Quick
             test_standard_scaler_options_and_errors;
         ] );

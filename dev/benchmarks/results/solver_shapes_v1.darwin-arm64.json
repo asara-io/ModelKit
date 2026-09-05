@@ -1,0 +1,1351 @@
+{
+  "claim_eligible": false,
+  "environment": {
+    "cpu_count": 8,
+    "machine": "arm64",
+    "operating_system": "macOS-15.5-arm64-arm-64bit-Mach-O",
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "generated_at": "2026-09-05T00:23:58.121457+00:00",
+  "methodology": {
+    "measurement": "interleaved fresh-process wall time and sampled resident set size",
+    "rss_sample_interval_seconds": 0.001,
+    "signature_tolerance": {
+      "absolute": 1e-07,
+      "relative": 1e-07
+    },
+    "thread_limit": 1,
+    "warmup_runs": 1
+  },
+  "runs": {
+    "modelkit": [
+      {
+        "elapsed_ns": 58945043708,
+        "peak_rss_bytes": 79511552,
+        "worker": {
+          "allocated_words": 7210618855,
+          "checksum": "745c36cd687a6f7c09ab497d392b968c",
+          "ocaml": "5.3.0",
+          "operations": [
+            "weighted_ols_fit_predict",
+            "weighted_ridge_fit_predict",
+            "weighted_binary_logistic_fit_proba",
+            "weighted_multinomial_logistic_fit_proba"
+          ],
+          "shapes": [
+            {
+              "duplicates": 0,
+              "features": 8,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": 79932641,
+                  "converged": true,
+                  "elapsed_ns": 505640029,
+                  "iterations": 11,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": 461065804,
+                  "converged": true,
+                  "elapsed_ns": 2277993917,
+                  "iterations": 12,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": 6320261,
+                  "converged": true,
+                  "elapsed_ns": 36409854,
+                  "iterations": 1,
+                  "rank": 8
+                },
+                "ridge_regression": {
+                  "allocated_words": 6320834,
+                  "converged": true,
+                  "elapsed_ns": 35685062,
+                  "iterations": 1,
+                  "rank": 8
+                }
+              },
+              "samples": 40000,
+              "shape": "tall"
+            },
+            {
+              "duplicates": 0,
+              "features": 200,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": 777716785,
+                  "converged": true,
+                  "elapsed_ns": 4798532962,
+                  "iterations": 9,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": 3338053496,
+                  "converged": true,
+                  "elapsed_ns": 24385833978,
+                  "iterations": 9,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": 6750661,
+                  "converged": true,
+                  "elapsed_ns": 255146980,
+                  "iterations": 1,
+                  "rank": 200
+                },
+                "ridge_regression": {
+                  "allocated_words": 7072066,
+                  "converged": true,
+                  "elapsed_ns": 279486894,
+                  "iterations": 1,
+                  "rank": 200
+                }
+              },
+              "samples": 2000,
+              "shape": "square"
+            },
+            {
+              "duplicates": 0,
+              "features": 400,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": 452381352,
+                  "converged": true,
+                  "elapsed_ns": 3593070983,
+                  "iterations": 8,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": 1796373776,
+                  "converged": true,
+                  "elapsed_ns": 20708292007,
+                  "iterations": 8,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": 1682082,
+                  "converged": true,
+                  "elapsed_ns": 71051120,
+                  "iterations": 1,
+                  "rank": 299
+                },
+                "ridge_regression": {
+                  "allocated_words": 2942710,
+                  "converged": true,
+                  "elapsed_ns": 274487018,
+                  "iterations": 1,
+                  "rank": 400
+                }
+              },
+              "samples": 300,
+              "shape": "wide"
+            },
+            {
+              "duplicates": 8,
+              "features": 24,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": 46886146,
+                  "converged": true,
+                  "elapsed_ns": 314678192,
+                  "iterations": 10,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": 179662126,
+                  "converged": true,
+                  "elapsed_ns": 1177356958,
+                  "iterations": 10,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": 1870361,
+                  "converged": true,
+                  "elapsed_ns": 16954898,
+                  "iterations": 1,
+                  "rank": 16
+                },
+                "ridge_regression": {
+                  "allocated_words": 2154282,
+                  "converged": true,
+                  "elapsed_ns": 18945932,
+                  "iterations": 1,
+                  "rank": 24
+                }
+              },
+              "samples": 5000,
+              "shape": "rank_deficient"
+            }
+          ],
+          "signature": [
+            -0.4959647916351736,
+            -0.24997111416711107,
+            8,
+            -0.4959560140589947,
+            -0.24996356814068924,
+            0.9999999977841019,
+            0.9999999901240996,
+            2.1079497182787528e-12,
+            0.9999999971527458,
+            1.9017488975310165e-08,
+            0.04585162065031678,
+            -1.5427930039864193,
+            200,
+            0.04631524177201363,
+            -1.5423862816150273,
+            0.9837843143707408,
+            0.9935492411252159,
+            1.3747139523780307e-07,
+            0.9999752530441073,
+            0.02082262813286461,
+            -1.1800000000001407,
+            5.659999999999954,
+            299,
+            -1.1714136870183478,
+            5.6471842358191084,
+            0.9972706913341377,
+            0.9996399698071371,
+            0.002066868828480296,
+            0.9910734203792199,
+            0.00042379228824044484,
+            0.4582921111669739,
+            0.47745380374258617,
+            16,
+            0.45830431735603455,
+            0.4774475294636574,
+            0.9999968940096204,
+            0.9999890345890763,
+            5.040949300304576e-09,
+            0.999997367227725,
+            8.190479810224095e-06
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 58915569167,
+        "peak_rss_bytes": 76103680,
+        "worker": {
+          "allocated_words": 7210618855,
+          "checksum": "745c36cd687a6f7c09ab497d392b968c",
+          "ocaml": "5.3.0",
+          "operations": [
+            "weighted_ols_fit_predict",
+            "weighted_ridge_fit_predict",
+            "weighted_binary_logistic_fit_proba",
+            "weighted_multinomial_logistic_fit_proba"
+          ],
+          "shapes": [
+            {
+              "duplicates": 0,
+              "features": 8,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": 79932641,
+                  "converged": true,
+                  "elapsed_ns": 512130022,
+                  "iterations": 11,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": 461065804,
+                  "converged": true,
+                  "elapsed_ns": 2247272014,
+                  "iterations": 12,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": 6320261,
+                  "converged": true,
+                  "elapsed_ns": 36144018,
+                  "iterations": 1,
+                  "rank": 8
+                },
+                "ridge_regression": {
+                  "allocated_words": 6320834,
+                  "converged": true,
+                  "elapsed_ns": 35470008,
+                  "iterations": 1,
+                  "rank": 8
+                }
+              },
+              "samples": 40000,
+              "shape": "tall"
+            },
+            {
+              "duplicates": 0,
+              "features": 200,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": 777716785,
+                  "converged": true,
+                  "elapsed_ns": 4808313131,
+                  "iterations": 9,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": 3338053496,
+                  "converged": true,
+                  "elapsed_ns": 24317848920,
+                  "iterations": 9,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": 6750661,
+                  "converged": true,
+                  "elapsed_ns": 254456996,
+                  "iterations": 1,
+                  "rank": 200
+                },
+                "ridge_regression": {
+                  "allocated_words": 7072066,
+                  "converged": true,
+                  "elapsed_ns": 278637886,
+                  "iterations": 1,
+                  "rank": 200
+                }
+              },
+              "samples": 2000,
+              "shape": "square"
+            },
+            {
+              "duplicates": 0,
+              "features": 400,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": 452381352,
+                  "converged": true,
+                  "elapsed_ns": 3595946788,
+                  "iterations": 8,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": 1796373776,
+                  "converged": true,
+                  "elapsed_ns": 20780851840,
+                  "iterations": 8,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": 1682082,
+                  "converged": true,
+                  "elapsed_ns": 71804046,
+                  "iterations": 1,
+                  "rank": 299
+                },
+                "ridge_regression": {
+                  "allocated_words": 2942710,
+                  "converged": true,
+                  "elapsed_ns": 272206068,
+                  "iterations": 1,
+                  "rank": 400
+                }
+              },
+              "samples": 300,
+              "shape": "wide"
+            },
+            {
+              "duplicates": 8,
+              "features": 24,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": 46886146,
+                  "converged": true,
+                  "elapsed_ns": 286214828,
+                  "iterations": 10,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": 179662126,
+                  "converged": true,
+                  "elapsed_ns": 1187988996,
+                  "iterations": 10,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": 1870361,
+                  "converged": true,
+                  "elapsed_ns": 17243862,
+                  "iterations": 1,
+                  "rank": 16
+                },
+                "ridge_regression": {
+                  "allocated_words": 2154282,
+                  "converged": true,
+                  "elapsed_ns": 19313097,
+                  "iterations": 1,
+                  "rank": 24
+                }
+              },
+              "samples": 5000,
+              "shape": "rank_deficient"
+            }
+          ],
+          "signature": [
+            -0.4959647916351736,
+            -0.24997111416711107,
+            8,
+            -0.4959560140589947,
+            -0.24996356814068924,
+            0.9999999977841019,
+            0.9999999901240996,
+            2.1079497182787528e-12,
+            0.9999999971527458,
+            1.9017488975310165e-08,
+            0.04585162065031678,
+            -1.5427930039864193,
+            200,
+            0.04631524177201363,
+            -1.5423862816150273,
+            0.9837843143707408,
+            0.9935492411252159,
+            1.3747139523780307e-07,
+            0.9999752530441073,
+            0.02082262813286461,
+            -1.1800000000001407,
+            5.659999999999954,
+            299,
+            -1.1714136870183478,
+            5.6471842358191084,
+            0.9972706913341377,
+            0.9996399698071371,
+            0.002066868828480296,
+            0.9910734203792199,
+            0.00042379228824044484,
+            0.4582921111669739,
+            0.47745380374258617,
+            16,
+            0.45830431735603455,
+            0.4774475294636574,
+            0.9999968940096204,
+            0.9999890345890763,
+            5.040949300304576e-09,
+            0.999997367227725,
+            8.190479810224095e-06
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 59010607917,
+        "peak_rss_bytes": 73285632,
+        "worker": {
+          "allocated_words": 7210618855,
+          "checksum": "745c36cd687a6f7c09ab497d392b968c",
+          "ocaml": "5.3.0",
+          "operations": [
+            "weighted_ols_fit_predict",
+            "weighted_ridge_fit_predict",
+            "weighted_binary_logistic_fit_proba",
+            "weighted_multinomial_logistic_fit_proba"
+          ],
+          "shapes": [
+            {
+              "duplicates": 0,
+              "features": 8,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": 79932641,
+                  "converged": true,
+                  "elapsed_ns": 511185884,
+                  "iterations": 11,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": 461065804,
+                  "converged": true,
+                  "elapsed_ns": 2261489152,
+                  "iterations": 12,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": 6320261,
+                  "converged": true,
+                  "elapsed_ns": 36952018,
+                  "iterations": 1,
+                  "rank": 8
+                },
+                "ridge_regression": {
+                  "allocated_words": 6320834,
+                  "converged": true,
+                  "elapsed_ns": 36276817,
+                  "iterations": 1,
+                  "rank": 8
+                }
+              },
+              "samples": 40000,
+              "shape": "tall"
+            },
+            {
+              "duplicates": 0,
+              "features": 200,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": 777716785,
+                  "converged": true,
+                  "elapsed_ns": 4814157962,
+                  "iterations": 9,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": 3338053496,
+                  "converged": true,
+                  "elapsed_ns": 24368597030,
+                  "iterations": 9,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": 6750661,
+                  "converged": true,
+                  "elapsed_ns": 255900859,
+                  "iterations": 1,
+                  "rank": 200
+                },
+                "ridge_regression": {
+                  "allocated_words": 7072066,
+                  "converged": true,
+                  "elapsed_ns": 280457019,
+                  "iterations": 1,
+                  "rank": 200
+                }
+              },
+              "samples": 2000,
+              "shape": "square"
+            },
+            {
+              "duplicates": 0,
+              "features": 400,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": 452381352,
+                  "converged": true,
+                  "elapsed_ns": 3598228931,
+                  "iterations": 8,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": 1796373776,
+                  "converged": true,
+                  "elapsed_ns": 20798076152,
+                  "iterations": 8,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": 1682082,
+                  "converged": true,
+                  "elapsed_ns": 71312904,
+                  "iterations": 1,
+                  "rank": 299
+                },
+                "ridge_regression": {
+                  "allocated_words": 2942710,
+                  "converged": true,
+                  "elapsed_ns": 272770166,
+                  "iterations": 1,
+                  "rank": 400
+                }
+              },
+              "samples": 300,
+              "shape": "wide"
+            },
+            {
+              "duplicates": 8,
+              "features": 24,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": 46886146,
+                  "converged": true,
+                  "elapsed_ns": 287760019,
+                  "iterations": 10,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": 179662126,
+                  "converged": true,
+                  "elapsed_ns": 1181708097,
+                  "iterations": 10,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": 1870361,
+                  "converged": true,
+                  "elapsed_ns": 17140865,
+                  "iterations": 1,
+                  "rank": 16
+                },
+                "ridge_regression": {
+                  "allocated_words": 2154282,
+                  "converged": true,
+                  "elapsed_ns": 19100904,
+                  "iterations": 1,
+                  "rank": 24
+                }
+              },
+              "samples": 5000,
+              "shape": "rank_deficient"
+            }
+          ],
+          "signature": [
+            -0.4959647916351736,
+            -0.24997111416711107,
+            8,
+            -0.4959560140589947,
+            -0.24996356814068924,
+            0.9999999977841019,
+            0.9999999901240996,
+            2.1079497182787528e-12,
+            0.9999999971527458,
+            1.9017488975310165e-08,
+            0.04585162065031678,
+            -1.5427930039864193,
+            200,
+            0.04631524177201363,
+            -1.5423862816150273,
+            0.9837843143707408,
+            0.9935492411252159,
+            1.3747139523780307e-07,
+            0.9999752530441073,
+            0.02082262813286461,
+            -1.1800000000001407,
+            5.659999999999954,
+            299,
+            -1.1714136870183478,
+            5.6471842358191084,
+            0.9972706913341377,
+            0.9996399698071371,
+            0.002066868828480296,
+            0.9910734203792199,
+            0.00042379228824044484,
+            0.4582921111669739,
+            0.47745380374258617,
+            16,
+            0.45830431735603455,
+            0.4774475294636574,
+            0.9999968940096204,
+            0.9999890345890763,
+            5.040949300304576e-09,
+            0.999997367227725,
+            8.190479810224095e-06
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      }
+    ],
+    "sklearn": [
+      {
+        "elapsed_ns": 1287681792,
+        "peak_rss_bytes": 191447040,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "429de6ab1b84df38eb50d64b0fa92fb74459b1f653e222fa842ba7120d2f08d0",
+          "operations": [
+            "weighted_ols_fit_predict",
+            "weighted_ridge_fit_predict",
+            "weighted_binary_logistic_fit_proba",
+            "weighted_multinomial_logistic_fit_proba"
+          ],
+          "shapes": [
+            {
+              "duplicates": 0,
+              "features": 8,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 19762291,
+                  "iterations": 11,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 70383333,
+                  "iterations": 11,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 5360375,
+                  "iterations": 0,
+                  "rank": 8
+                },
+                "ridge_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 2326083,
+                  "iterations": 0,
+                  "rank": null
+                }
+              },
+              "samples": 40000,
+              "shape": "tall"
+            },
+            {
+              "duplicates": 0,
+              "features": 200,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 15524834,
+                  "iterations": 8,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 104896625,
+                  "iterations": 9,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 14364000,
+                  "iterations": 0,
+                  "rank": 200
+                },
+                "ridge_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 2597375,
+                  "iterations": 0,
+                  "rank": null
+                }
+              },
+              "samples": 2000,
+              "shape": "square"
+            },
+            {
+              "duplicates": 0,
+              "features": 400,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 23121875,
+                  "iterations": 8,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 235345083,
+                  "iterations": 8,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 10823916,
+                  "iterations": 0,
+                  "rank": 299
+                },
+                "ridge_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 1691875,
+                  "iterations": 0,
+                  "rank": null
+                }
+              },
+              "samples": 300,
+              "shape": "wide"
+            },
+            {
+              "duplicates": 8,
+              "features": 24,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 4341792,
+                  "iterations": 10,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 14989250,
+                  "iterations": 10,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 2235834,
+                  "iterations": 0,
+                  "rank": 16
+                },
+                "ridge_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 823625,
+                  "iterations": 0,
+                  "rank": null
+                }
+              },
+              "samples": 5000,
+              "shape": "rank_deficient"
+            }
+          ],
+          "signature": [
+            -0.4959647916352832,
+            -0.24997111416720874,
+            8.0,
+            -0.49595601405904866,
+            -0.2499635681407335,
+            0.9999999977841019,
+            0.9999999901240996,
+            2.107949718279307e-12,
+            0.9999999971527458,
+            1.9017488975314017e-08,
+            0.045851620650440905,
+            -1.5427930039864437,
+            200.0,
+            0.0463152417719952,
+            -1.542386281615007,
+            0.9837843143708005,
+            0.9935492411249129,
+            1.374713952378043e-07,
+            0.9999752530441073,
+            0.020822628132864566,
+            -1.1799999999999482,
+            5.659999999999998,
+            299.0,
+            -1.1714136870184184,
+            5.647184235819134,
+            0.9972706913341377,
+            0.9996399698071371,
+            0.002066868828480296,
+            0.9910734203792199,
+            0.0004237922882404441,
+            0.4582921111670416,
+            0.4774538037426056,
+            16.0,
+            0.4583043173560244,
+            0.4774475294637741,
+            0.9999968940096204,
+            0.9999890345890763,
+            5.04094930030463e-09,
+            0.999997367227725,
+            8.190479810224153e-06
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 1281727291,
+        "peak_rss_bytes": 183304192,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "429de6ab1b84df38eb50d64b0fa92fb74459b1f653e222fa842ba7120d2f08d0",
+          "operations": [
+            "weighted_ols_fit_predict",
+            "weighted_ridge_fit_predict",
+            "weighted_binary_logistic_fit_proba",
+            "weighted_multinomial_logistic_fit_proba"
+          ],
+          "shapes": [
+            {
+              "duplicates": 0,
+              "features": 8,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 19532416,
+                  "iterations": 11,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 66772125,
+                  "iterations": 11,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 5266958,
+                  "iterations": 0,
+                  "rank": 8
+                },
+                "ridge_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 2294625,
+                  "iterations": 0,
+                  "rank": null
+                }
+              },
+              "samples": 40000,
+              "shape": "tall"
+            },
+            {
+              "duplicates": 0,
+              "features": 200,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 14323709,
+                  "iterations": 8,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 104530500,
+                  "iterations": 9,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 14033667,
+                  "iterations": 0,
+                  "rank": 200
+                },
+                "ridge_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 2344666,
+                  "iterations": 0,
+                  "rank": null
+                }
+              },
+              "samples": 2000,
+              "shape": "square"
+            },
+            {
+              "duplicates": 0,
+              "features": 400,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 22349333,
+                  "iterations": 8,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 231031875,
+                  "iterations": 8,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 10810291,
+                  "iterations": 0,
+                  "rank": 299
+                },
+                "ridge_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 1690625,
+                  "iterations": 0,
+                  "rank": null
+                }
+              },
+              "samples": 300,
+              "shape": "wide"
+            },
+            {
+              "duplicates": 8,
+              "features": 24,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 3892125,
+                  "iterations": 10,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 12572083,
+                  "iterations": 10,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 2225084,
+                  "iterations": 0,
+                  "rank": 16
+                },
+                "ridge_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 776417,
+                  "iterations": 0,
+                  "rank": null
+                }
+              },
+              "samples": 5000,
+              "shape": "rank_deficient"
+            }
+          ],
+          "signature": [
+            -0.4959647916352832,
+            -0.24997111416720874,
+            8.0,
+            -0.49595601405904866,
+            -0.2499635681407335,
+            0.9999999977841019,
+            0.9999999901240996,
+            2.107949718279307e-12,
+            0.9999999971527458,
+            1.9017488975314017e-08,
+            0.045851620650440905,
+            -1.5427930039864437,
+            200.0,
+            0.0463152417719952,
+            -1.542386281615007,
+            0.9837843143708005,
+            0.9935492411249129,
+            1.374713952378043e-07,
+            0.9999752530441073,
+            0.020822628132864566,
+            -1.1799999999999482,
+            5.659999999999998,
+            299.0,
+            -1.1714136870184184,
+            5.647184235819134,
+            0.9972706913341377,
+            0.9996399698071371,
+            0.002066868828480296,
+            0.9910734203792199,
+            0.0004237922882404441,
+            0.4582921111670416,
+            0.4774538037426056,
+            16.0,
+            0.4583043173560244,
+            0.4774475294637741,
+            0.9999968940096204,
+            0.9999890345890763,
+            5.04094930030463e-09,
+            0.999997367227725,
+            8.190479810224153e-06
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 1320600917,
+        "peak_rss_bytes": 217006080,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "429de6ab1b84df38eb50d64b0fa92fb74459b1f653e222fa842ba7120d2f08d0",
+          "operations": [
+            "weighted_ols_fit_predict",
+            "weighted_ridge_fit_predict",
+            "weighted_binary_logistic_fit_proba",
+            "weighted_multinomial_logistic_fit_proba"
+          ],
+          "shapes": [
+            {
+              "duplicates": 0,
+              "features": 8,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 20082042,
+                  "iterations": 11,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 68076208,
+                  "iterations": 11,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 5618125,
+                  "iterations": 0,
+                  "rank": 8
+                },
+                "ridge_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 2284917,
+                  "iterations": 0,
+                  "rank": null
+                }
+              },
+              "samples": 40000,
+              "shape": "tall"
+            },
+            {
+              "duplicates": 0,
+              "features": 200,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 15413625,
+                  "iterations": 8,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 109850833,
+                  "iterations": 9,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 14700084,
+                  "iterations": 0,
+                  "rank": 200
+                },
+                "ridge_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 2818000,
+                  "iterations": 0,
+                  "rank": null
+                }
+              },
+              "samples": 2000,
+              "shape": "square"
+            },
+            {
+              "duplicates": 0,
+              "features": 400,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 22637000,
+                  "iterations": 8,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 239111375,
+                  "iterations": 8,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 10825375,
+                  "iterations": 0,
+                  "rank": 299
+                },
+                "ridge_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 1671125,
+                  "iterations": 0,
+                  "rank": null
+                }
+              },
+              "samples": 300,
+              "shape": "wide"
+            },
+            {
+              "duplicates": 8,
+              "features": 24,
+              "fits": {
+                "binary_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 4436958,
+                  "iterations": 10,
+                  "rank": null
+                },
+                "multinomial_logistic_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 17886875,
+                  "iterations": 10,
+                  "rank": null
+                },
+                "ordinary_least_squares": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 2437250,
+                  "iterations": 0,
+                  "rank": 16
+                },
+                "ridge_regression": {
+                  "allocated_words": null,
+                  "converged": true,
+                  "elapsed_ns": 920500,
+                  "iterations": 0,
+                  "rank": null
+                }
+              },
+              "samples": 5000,
+              "shape": "rank_deficient"
+            }
+          ],
+          "signature": [
+            -0.4959647916352832,
+            -0.24997111416720874,
+            8.0,
+            -0.49595601405904866,
+            -0.2499635681407335,
+            0.9999999977841019,
+            0.9999999901240996,
+            2.107949718279307e-12,
+            0.9999999971527458,
+            1.9017488975314017e-08,
+            0.045851620650440905,
+            -1.5427930039864437,
+            200.0,
+            0.0463152417719952,
+            -1.542386281615007,
+            0.9837843143708005,
+            0.9935492411249129,
+            1.374713952378043e-07,
+            0.9999752530441073,
+            0.020822628132864566,
+            -1.1799999999999482,
+            5.659999999999998,
+            299.0,
+            -1.1714136870184184,
+            5.647184235819134,
+            0.9972706913341377,
+            0.9996399698071371,
+            0.002066868828480296,
+            0.9910734203792199,
+            0.0004237922882404441,
+            0.4582921111670416,
+            0.4774538037426056,
+            16.0,
+            0.4583043173560244,
+            0.4774475294637741,
+            0.9999968940096204,
+            0.9999890345890763,
+            5.04094930030463e-09,
+            0.999997367227725,
+            8.190479810224153e-06
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "scenario": {
+    "c": 0.05,
+    "claim_eligible": false,
+    "logistic_solver": "newton-cholesky",
+    "max_iterations": 200,
+    "measured_runs": 3,
+    "ridge_alpha": 2.5,
+    "scenario": "solver_shapes_v1",
+    "seed": 1729,
+    "shapes": [
+      {
+        "duplicates": 0,
+        "features": 8,
+        "name": "tall",
+        "samples": 40000
+      },
+      {
+        "duplicates": 0,
+        "features": 200,
+        "name": "square",
+        "samples": 2000
+      },
+      {
+        "duplicates": 0,
+        "features": 400,
+        "name": "wide",
+        "samples": 300
+      },
+      {
+        "duplicates": 8,
+        "features": 24,
+        "name": "rank_deficient",
+        "samples": 5000
+      }
+    ],
+    "thread_limit": 1,
+    "tolerance": 1e-10,
+    "warmup_runs": 1,
+    "workload": "solver_shapes"
+  },
+  "schema_version": 2
+}
