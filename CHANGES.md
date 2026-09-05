@@ -40,8 +40,8 @@
   linear models, SGD, adapter admission, sparse kernel dispatch, and solver
   convergence and scale across tall, square, wide, and rank-deficient shapes;
   every report remains development evidence with no performance claim.
-- Defer the optional Lacaml numerical backend to the unsupervised milestone,
-  where LAPACK factorizations first have a consumer.
+- Defer the optional Lacaml numerical backend to a later release, where
+  LAPACK factorizations first have a consumer.
 - Artifacts written by this release record producer version 0.4.0; the
   artifact schema is unchanged and 0.3.x artifacts continue to load.
 

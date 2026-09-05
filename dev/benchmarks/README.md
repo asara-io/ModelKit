@@ -771,7 +771,7 @@ assembly and the QR solve work on boxed `float array array` rows read through
 `Matrix.get`. This is the same defect class that the adapter-admission and
 sparse-kernel scenarios exposed and that the reference kernels have since been
 rewritten to avoid. It is recorded here as the standing performance debt of
-the 0.4.0 linear workbench: correctness and convergence parity are proven
+the 0.4.0 linear estimators: correctness and convergence parity are proven
 across shapes, throughput on wider designs is not competitive, and both the
 unboxed rewrite of the Newton solvers and the deferred Lacaml backend are
 the candidate remedies.
@@ -812,6 +812,6 @@ full scenario.
 | `solver_shapes_v1` | direct and Newton solvers across tall, wide, square, and rank-deficient shapes | 1e-7 | convergence parity, five to three hundred times slower on wider designs |
 
 Every scenario is `claim_eligible: false`. None has run on independent CI
-targets, none isolates a workload that the product plan names as a release
+targets, none isolates a workload that has been designated for a release
 claim, and the wider-shape solver gap above rules out any comparative
 throughput statement for 0.4.0.
