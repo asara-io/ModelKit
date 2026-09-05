@@ -266,6 +266,28 @@ def worker_commands(scenario: dict[str, object], scenario_path: Path) -> dict[st
             str(dataset["seed"]),
             str(dataset["missing_modulus"]),
         ]
+    elif workload == "sparse_kernels":
+        modelkit_worker = (
+            ROOT / "_build" / "default" / "bench" / "ocaml" / "sparse_kernels_worker.exe"
+        )
+        if not modelkit_worker.exists():
+            raise RuntimeError(
+                "ModelKit sparse-kernels benchmark worker is missing; run "
+                "`opam exec -- dune build bench/ocaml/sparse_kernels_worker.exe`"
+            )
+        dataset = scenario["dataset"]
+        one_hot = scenario["one_hot"]
+        commands["modelkit"] = [
+            str(modelkit_worker),
+            str(dataset["samples"]),
+            str(dataset["features"]),
+            str(dataset["seed"]),
+            ",".join(str(value) for value in dataset["densities"]),
+            str(scenario["repeats"]),
+            str(one_hot["samples"]),
+            str(one_hot["features"]),
+            str(one_hot["cardinality"]),
+        ]
     elif workload == "splitters":
         modelkit_worker = (
             ROOT / "_build" / "default" / "bench" / "ocaml" / "splitters_worker.exe"
@@ -483,6 +505,7 @@ def main() -> None:
         "parallel_cross_validation": 1e-7,
         "grid_search": 1e-7,
         "adapter_admission": 1e-7,
+        "sparse_kernels": 1e-7,
     }.get(scenario.get("workload"))
     if signature_tolerance is not None:
         signatures = {

@@ -55,3 +55,7 @@
  (enabled_if
   (<> %{os_type} Win32))
  (libraries modelkit modelkit-nx modelkit-talon nx talon unix))
+
+(executable
+ (name sparse_kernels_worker)
+ (libraries modelkit unix))

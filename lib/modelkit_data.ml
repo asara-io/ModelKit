@@ -126,6 +126,7 @@ module Vector = struct
 
   let to_array values = Array.init (length values) (get values)
   let to_bigarray values = of_bigarray values
+  let storage values = values
 end
 
 module Matrix = struct
@@ -188,6 +189,7 @@ module Matrix = struct
 
   let rows = Bigarray.Array2.dim1
   let columns = Bigarray.Array2.dim2
+  let storage values = values
   let shape values = (rows values, columns values)
 
   let get values row column =
@@ -476,6 +478,10 @@ module Csr_matrix = struct
   let shape matrix = (matrix.row_count, matrix.column_count)
   let nonzero_count (matrix : t) = Vector.length matrix.values
   let row_offsets (matrix : t) = Array.copy matrix.row_offsets
+
+  let storage (matrix : t) =
+    (matrix.row_offsets, matrix.column_indices, Vector.storage matrix.values)
+
   let column_indices (matrix : t) = Array.copy matrix.column_indices
   let values (matrix : t) = matrix.values
 

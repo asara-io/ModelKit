@@ -62,6 +62,11 @@ module Vector : sig
 
   val to_array : t -> float array
   val to_bigarray : t -> bigarray
+
+  val storage : t -> bigarray
+  (** Zero-copy access to the immutable backing storage for internal kernels.
+      Callers must never write through the result. Not part of the public
+      [Modelkit] API. *)
 end
 
 (** Immutable two-dimensional float64 data in row-major C layout. *)
@@ -94,6 +99,11 @@ module Matrix : sig
 
   val to_arrays : t -> float array array
   val to_bigarray : t -> bigarray
+
+  val storage : t -> bigarray
+  (** Zero-copy access to the immutable backing storage for internal kernels.
+      Callers must never write through the result. Not part of the public
+      [Modelkit] API. *)
 end
 
 (** Immutable rank-two missing-value identity aligned to a feature matrix.
@@ -191,6 +201,11 @@ module Csr_matrix : sig
   val row_offsets : t -> int array
   val column_indices : t -> int array
   val values : t -> Vector.t
+
+  val storage : t -> int array * int array * Vector.bigarray
+  (** Zero-copy access to the row offsets, column indices, and value storage for
+      internal kernels. Callers must never write through the result. Not part of
+      the public [Modelkit] API. *)
 
   val get : t -> int -> int -> float
   (** Raises [Invalid_argument] if either index is outside the matrix. *)

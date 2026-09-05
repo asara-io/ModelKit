@@ -1,0 +1,963 @@
+{
+  "claim_eligible": false,
+  "environment": {
+    "cpu_count": 8,
+    "machine": "arm64",
+    "operating_system": "macOS-15.5-arm64-arm-64bit-Mach-O",
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "generated_at": "2026-09-04T21:18:48.656132+00:00",
+  "methodology": {
+    "measurement": "interleaved fresh-process wall time and sampled resident set size",
+    "rss_sample_interval_seconds": 0.001,
+    "signature_tolerance": {
+      "absolute": 1e-07,
+      "relative": 1e-07
+    },
+    "thread_limit": 1,
+    "warmup_runs": 1
+  },
+  "runs": {
+    "modelkit": [
+      {
+        "elapsed_ns": 8734422667,
+        "peak_rss_bytes": 297418752,
+        "worker": {
+          "allocated_words": 155271903,
+          "checksum": "f7b5d75f8bfa621ec6b33a508f30afd4",
+          "densities": [
+            {
+              "csr_memory": {
+                "dense_equivalent_bytes": 80000000,
+                "total_bytes": 2000008
+              },
+              "csr_product": {
+                "allocated_words": 6000492,
+                "elapsed_ns": 15506982
+              },
+              "csr_transposed_product": {
+                "allocated_words": 36532,
+                "elapsed_ns": 13404130
+              },
+              "dense_product": {
+                "allocated_words": 6000392,
+                "elapsed_ns": 1057255029
+              },
+              "dense_transposed_product": {
+                "allocated_words": 24392,
+                "elapsed_ns": 1346417903
+              },
+              "density": 0.01,
+              "nonzeros": 100000
+            },
+            {
+              "csr_memory": {
+                "dense_equivalent_bytes": 80000000,
+                "total_bytes": 8400008
+              },
+              "csr_product": {
+                "allocated_words": 6000492,
+                "elapsed_ns": 70847988
+              },
+              "csr_transposed_product": {
+                "allocated_words": 36532,
+                "elapsed_ns": 45990943
+              },
+              "dense_product": {
+                "allocated_words": 6000392,
+                "elapsed_ns": 1078540086
+              },
+              "dense_transposed_product": {
+                "allocated_words": 24392,
+                "elapsed_ns": 1356045007
+              },
+              "density": 0.05,
+              "nonzeros": 500000
+            },
+            {
+              "csr_memory": {
+                "dense_equivalent_bytes": 80000000,
+                "total_bytes": 40400008
+              },
+              "csr_product": {
+                "allocated_words": 6000492,
+                "elapsed_ns": 329280853
+              },
+              "csr_transposed_product": {
+                "allocated_words": 36532,
+                "elapsed_ns": 185379981
+              },
+              "dense_product": {
+                "allocated_words": 6000392,
+                "elapsed_ns": 1133345127
+              },
+              "dense_transposed_product": {
+                "allocated_words": 24392,
+                "elapsed_ns": 1366887092
+              },
+              "density": 0.25,
+              "nonzeros": 2500000
+            }
+          ],
+          "features": 200,
+          "materialization": {
+            "allocated_bytes": 200000,
+            "materialize": {
+              "allocated_words": 1525036,
+              "elapsed_ns": 4943132
+            },
+            "materialized_bytes": 4200008,
+            "shared_bytes": 8400008,
+            "view_rows": 25000
+          },
+          "ocaml": "5.3.0",
+          "one_hot": {
+            "csr_memory": {
+              "dense_equivalent_bytes": 80000000,
+              "total_bytes": 3360008
+            },
+            "csr_transform": {
+              "allocated_words": 13872100,
+              "elapsed_ns": 70334911
+            },
+            "dense_bytes": 80000000,
+            "dense_transform": {
+              "allocated_words": 24344075,
+              "elapsed_ns": 172590970
+            },
+            "output_columns": 500
+          },
+          "operations": [
+            "csr_and_dense_feature_matrix_vector_products",
+            "one_hot_dense_and_csr_transform",
+            "csr_row_view_materialization"
+          ],
+          "repeats": 20,
+          "samples": 50000,
+          "signature": [
+            100000,
+            -157.69230769231248,
+            -157.69230769231248,
+            -18.789545454545454,
+            -18.789545454545454,
+            500000,
+            165.3846153846143,
+            165.3846153846143,
+            -78.01818181818182,
+            -78.01818181818182,
+            2500000,
+            165.38461538461522,
+            165.38461538461522,
+            -59.191363636363675,
+            -59.191363636363675,
+            500,
+            200000,
+            49900000,
+            49900000,
+            25000,
+            250000,
+            2.6183499812759692e-11
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 8714212250,
+        "peak_rss_bytes": 293060608,
+        "worker": {
+          "allocated_words": 155271903,
+          "checksum": "f7b5d75f8bfa621ec6b33a508f30afd4",
+          "densities": [
+            {
+              "csr_memory": {
+                "dense_equivalent_bytes": 80000000,
+                "total_bytes": 2000008
+              },
+              "csr_product": {
+                "allocated_words": 6000492,
+                "elapsed_ns": 15576124
+              },
+              "csr_transposed_product": {
+                "allocated_words": 36532,
+                "elapsed_ns": 13314008
+              },
+              "dense_product": {
+                "allocated_words": 6000392,
+                "elapsed_ns": 1057775974
+              },
+              "dense_transposed_product": {
+                "allocated_words": 24392,
+                "elapsed_ns": 1337491989
+              },
+              "density": 0.01,
+              "nonzeros": 100000
+            },
+            {
+              "csr_memory": {
+                "dense_equivalent_bytes": 80000000,
+                "total_bytes": 8400008
+              },
+              "csr_product": {
+                "allocated_words": 6000492,
+                "elapsed_ns": 70336103
+              },
+              "csr_transposed_product": {
+                "allocated_words": 36532,
+                "elapsed_ns": 46013832
+              },
+              "dense_product": {
+                "allocated_words": 6000392,
+                "elapsed_ns": 1077939987
+              },
+              "dense_transposed_product": {
+                "allocated_words": 24392,
+                "elapsed_ns": 1347491025
+              },
+              "density": 0.05,
+              "nonzeros": 500000
+            },
+            {
+              "csr_memory": {
+                "dense_equivalent_bytes": 80000000,
+                "total_bytes": 40400008
+              },
+              "csr_product": {
+                "allocated_words": 6000492,
+                "elapsed_ns": 329971075
+              },
+              "csr_transposed_product": {
+                "allocated_words": 36532,
+                "elapsed_ns": 185222864
+              },
+              "dense_product": {
+                "allocated_words": 6000392,
+                "elapsed_ns": 1133022069
+              },
+              "dense_transposed_product": {
+                "allocated_words": 24392,
+                "elapsed_ns": 1365969181
+              },
+              "density": 0.25,
+              "nonzeros": 2500000
+            }
+          ],
+          "features": 200,
+          "materialization": {
+            "allocated_bytes": 200000,
+            "materialize": {
+              "allocated_words": 1525036,
+              "elapsed_ns": 5038022
+            },
+            "materialized_bytes": 4200008,
+            "shared_bytes": 8400008,
+            "view_rows": 25000
+          },
+          "ocaml": "5.3.0",
+          "one_hot": {
+            "csr_memory": {
+              "dense_equivalent_bytes": 80000000,
+              "total_bytes": 3360008
+            },
+            "csr_transform": {
+              "allocated_words": 13872100,
+              "elapsed_ns": 70696115
+            },
+            "dense_bytes": 80000000,
+            "dense_transform": {
+              "allocated_words": 24344075,
+              "elapsed_ns": 172035932
+            },
+            "output_columns": 500
+          },
+          "operations": [
+            "csr_and_dense_feature_matrix_vector_products",
+            "one_hot_dense_and_csr_transform",
+            "csr_row_view_materialization"
+          ],
+          "repeats": 20,
+          "samples": 50000,
+          "signature": [
+            100000,
+            -157.69230769231248,
+            -157.69230769231248,
+            -18.789545454545454,
+            -18.789545454545454,
+            500000,
+            165.3846153846143,
+            165.3846153846143,
+            -78.01818181818182,
+            -78.01818181818182,
+            2500000,
+            165.38461538461522,
+            165.38461538461522,
+            -59.191363636363675,
+            -59.191363636363675,
+            500,
+            200000,
+            49900000,
+            49900000,
+            25000,
+            250000,
+            2.6183499812759692e-11
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 8740267709,
+        "peak_rss_bytes": 293568512,
+        "worker": {
+          "allocated_words": 155271903,
+          "checksum": "f7b5d75f8bfa621ec6b33a508f30afd4",
+          "densities": [
+            {
+              "csr_memory": {
+                "dense_equivalent_bytes": 80000000,
+                "total_bytes": 2000008
+              },
+              "csr_product": {
+                "allocated_words": 6000492,
+                "elapsed_ns": 20936965
+              },
+              "csr_transposed_product": {
+                "allocated_words": 36532,
+                "elapsed_ns": 13378858
+              },
+              "dense_product": {
+                "allocated_words": 6000392,
+                "elapsed_ns": 1057147026
+              },
+              "dense_transposed_product": {
+                "allocated_words": 24392,
+                "elapsed_ns": 1345474958
+              },
+              "density": 0.01,
+              "nonzeros": 100000
+            },
+            {
+              "csr_memory": {
+                "dense_equivalent_bytes": 80000000,
+                "total_bytes": 8400008
+              },
+              "csr_product": {
+                "allocated_words": 6000492,
+                "elapsed_ns": 73658943
+              },
+              "csr_transposed_product": {
+                "allocated_words": 36532,
+                "elapsed_ns": 46000957
+              },
+              "dense_product": {
+                "allocated_words": 6000392,
+                "elapsed_ns": 1077651977
+              },
+              "dense_transposed_product": {
+                "allocated_words": 24392,
+                "elapsed_ns": 1348858833
+              },
+              "density": 0.05,
+              "nonzeros": 500000
+            },
+            {
+              "csr_memory": {
+                "dense_equivalent_bytes": 80000000,
+                "total_bytes": 40400008
+              },
+              "csr_product": {
+                "allocated_words": 6000492,
+                "elapsed_ns": 328767061
+              },
+              "csr_transposed_product": {
+                "allocated_words": 36532,
+                "elapsed_ns": 185302019
+              },
+              "dense_product": {
+                "allocated_words": 6000392,
+                "elapsed_ns": 1133158922
+              },
+              "dense_transposed_product": {
+                "allocated_words": 24392,
+                "elapsed_ns": 1372142076
+              },
+              "density": 0.25,
+              "nonzeros": 2500000
+            }
+          ],
+          "features": 200,
+          "materialization": {
+            "allocated_bytes": 200000,
+            "materialize": {
+              "allocated_words": 1525036,
+              "elapsed_ns": 4925966
+            },
+            "materialized_bytes": 4200008,
+            "shared_bytes": 8400008,
+            "view_rows": 25000
+          },
+          "ocaml": "5.3.0",
+          "one_hot": {
+            "csr_memory": {
+              "dense_equivalent_bytes": 80000000,
+              "total_bytes": 3360008
+            },
+            "csr_transform": {
+              "allocated_words": 13872100,
+              "elapsed_ns": 70213794
+            },
+            "dense_bytes": 80000000,
+            "dense_transform": {
+              "allocated_words": 24344075,
+              "elapsed_ns": 172425031
+            },
+            "output_columns": 500
+          },
+          "operations": [
+            "csr_and_dense_feature_matrix_vector_products",
+            "one_hot_dense_and_csr_transform",
+            "csr_row_view_materialization"
+          ],
+          "repeats": 20,
+          "samples": 50000,
+          "signature": [
+            100000,
+            -157.69230769231248,
+            -157.69230769231248,
+            -18.789545454545454,
+            -18.789545454545454,
+            500000,
+            165.3846153846143,
+            165.3846153846143,
+            -78.01818181818182,
+            -78.01818181818182,
+            2500000,
+            165.38461538461522,
+            165.38461538461522,
+            -59.191363636363675,
+            -59.191363636363675,
+            500,
+            200000,
+            49900000,
+            49900000,
+            25000,
+            250000,
+            2.6183499812759692e-11
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ]
+        }
+      }
+    ],
+    "sklearn": [
+      {
+        "elapsed_ns": 1574028125,
+        "peak_rss_bytes": 623738880,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "ac284ad116f20d685180ca6d98608e237c98e37b769497830973abba9b64ae51",
+          "densities": [
+            {
+              "csr_memory": {
+                "dense_equivalent_bytes": 80000000,
+                "total_bytes": 1400004
+              },
+              "csr_product": {
+                "allocated_words": null,
+                "elapsed_ns": 1658500
+              },
+              "csr_transposed_product": {
+                "allocated_words": null,
+                "elapsed_ns": 2062041
+              },
+              "dense_product": {
+                "allocated_words": null,
+                "elapsed_ns": 55770000
+              },
+              "dense_transposed_product": {
+                "allocated_words": null,
+                "elapsed_ns": 115674458
+              },
+              "density": 0.01,
+              "nonzeros": 100000
+            },
+            {
+              "csr_memory": {
+                "dense_equivalent_bytes": 80000000,
+                "total_bytes": 6200004
+              },
+              "csr_product": {
+                "allocated_words": null,
+                "elapsed_ns": 5093917
+              },
+              "csr_transposed_product": {
+                "allocated_words": null,
+                "elapsed_ns": 6115583
+              },
+              "dense_product": {
+                "allocated_words": null,
+                "elapsed_ns": 52988625
+              },
+              "dense_transposed_product": {
+                "allocated_words": null,
+                "elapsed_ns": 115822166
+              },
+              "density": 0.05,
+              "nonzeros": 500000
+            },
+            {
+              "csr_memory": {
+                "dense_equivalent_bytes": 80000000,
+                "total_bytes": 30200004
+              },
+              "csr_product": {
+                "allocated_words": null,
+                "elapsed_ns": 29403958
+              },
+              "csr_transposed_product": {
+                "allocated_words": null,
+                "elapsed_ns": 29153500
+              },
+              "dense_product": {
+                "allocated_words": null,
+                "elapsed_ns": 54396125
+              },
+              "dense_transposed_product": {
+                "allocated_words": null,
+                "elapsed_ns": 118568917
+              },
+              "density": 0.25,
+              "nonzeros": 2500000
+            }
+          ],
+          "features": 200,
+          "materialization": {
+            "allocated_bytes": null,
+            "materialize": {
+              "allocated_words": null,
+              "elapsed_ns": 712208
+            },
+            "materialized_bytes": 3100004,
+            "shared_bytes": null,
+            "view_rows": 25000
+          },
+          "one_hot": {
+            "csr_memory": {
+              "dense_equivalent_bytes": 80000000,
+              "total_bytes": 2480004
+            },
+            "csr_transform": {
+              "allocated_words": null,
+              "elapsed_ns": 5861542
+            },
+            "dense_bytes": 80000000,
+            "dense_transform": {
+              "allocated_words": null,
+              "elapsed_ns": 11709125
+            },
+            "output_columns": 500
+          },
+          "operations": [
+            "csr_and_dense_feature_matrix_vector_products",
+            "one_hot_dense_and_csr_transform",
+            "csr_row_view_materialization"
+          ],
+          "repeats": 20,
+          "samples": 50000,
+          "signature": [
+            100000.0,
+            -157.6923076923078,
+            -157.69230769230776,
+            -18.789545454545454,
+            -18.789545454545443,
+            500000.0,
+            165.38461538461547,
+            165.38461538461542,
+            -78.01818181818172,
+            -78.0181818181817,
+            2500000.0,
+            165.38461538461513,
+            165.3846153846146,
+            -59.19136363636065,
+            -59.19136363636275,
+            500.0,
+            200000.0,
+            49900000.0,
+            49900000.0,
+            25000.0,
+            250000.0,
+            -2.3518964553659316e-12
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 1578230709,
+        "peak_rss_bytes": 624148480,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "ac284ad116f20d685180ca6d98608e237c98e37b769497830973abba9b64ae51",
+          "densities": [
+            {
+              "csr_memory": {
+                "dense_equivalent_bytes": 80000000,
+                "total_bytes": 1400004
+              },
+              "csr_product": {
+                "allocated_words": null,
+                "elapsed_ns": 1645292
+              },
+              "csr_transposed_product": {
+                "allocated_words": null,
+                "elapsed_ns": 1909708
+              },
+              "dense_product": {
+                "allocated_words": null,
+                "elapsed_ns": 53138500
+              },
+              "dense_transposed_product": {
+                "allocated_words": null,
+                "elapsed_ns": 117783125
+              },
+              "density": 0.01,
+              "nonzeros": 100000
+            },
+            {
+              "csr_memory": {
+                "dense_equivalent_bytes": 80000000,
+                "total_bytes": 6200004
+              },
+              "csr_product": {
+                "allocated_words": null,
+                "elapsed_ns": 5159667
+              },
+              "csr_transposed_product": {
+                "allocated_words": null,
+                "elapsed_ns": 6146541
+              },
+              "dense_product": {
+                "allocated_words": null,
+                "elapsed_ns": 54123458
+              },
+              "dense_transposed_product": {
+                "allocated_words": null,
+                "elapsed_ns": 117647792
+              },
+              "density": 0.05,
+              "nonzeros": 500000
+            },
+            {
+              "csr_memory": {
+                "dense_equivalent_bytes": 80000000,
+                "total_bytes": 30200004
+              },
+              "csr_product": {
+                "allocated_words": null,
+                "elapsed_ns": 30228416
+              },
+              "csr_transposed_product": {
+                "allocated_words": null,
+                "elapsed_ns": 29158708
+              },
+              "dense_product": {
+                "allocated_words": null,
+                "elapsed_ns": 53079333
+              },
+              "dense_transposed_product": {
+                "allocated_words": null,
+                "elapsed_ns": 116022208
+              },
+              "density": 0.25,
+              "nonzeros": 2500000
+            }
+          ],
+          "features": 200,
+          "materialization": {
+            "allocated_bytes": null,
+            "materialize": {
+              "allocated_words": null,
+              "elapsed_ns": 688458
+            },
+            "materialized_bytes": 3100004,
+            "shared_bytes": null,
+            "view_rows": 25000
+          },
+          "one_hot": {
+            "csr_memory": {
+              "dense_equivalent_bytes": 80000000,
+              "total_bytes": 2480004
+            },
+            "csr_transform": {
+              "allocated_words": null,
+              "elapsed_ns": 5866334
+            },
+            "dense_bytes": 80000000,
+            "dense_transform": {
+              "allocated_words": null,
+              "elapsed_ns": 11901666
+            },
+            "output_columns": 500
+          },
+          "operations": [
+            "csr_and_dense_feature_matrix_vector_products",
+            "one_hot_dense_and_csr_transform",
+            "csr_row_view_materialization"
+          ],
+          "repeats": 20,
+          "samples": 50000,
+          "signature": [
+            100000.0,
+            -157.6923076923078,
+            -157.69230769230776,
+            -18.789545454545454,
+            -18.789545454545443,
+            500000.0,
+            165.38461538461547,
+            165.38461538461542,
+            -78.01818181818172,
+            -78.0181818181817,
+            2500000.0,
+            165.38461538461513,
+            165.3846153846146,
+            -59.19136363636065,
+            -59.19136363636275,
+            500.0,
+            200000.0,
+            49900000.0,
+            49900000.0,
+            25000.0,
+            250000.0,
+            -2.3518964553659316e-12
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      },
+      {
+        "elapsed_ns": 1592298208,
+        "peak_rss_bytes": 623493120,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "ac284ad116f20d685180ca6d98608e237c98e37b769497830973abba9b64ae51",
+          "densities": [
+            {
+              "csr_memory": {
+                "dense_equivalent_bytes": 80000000,
+                "total_bytes": 1400004
+              },
+              "csr_product": {
+                "allocated_words": null,
+                "elapsed_ns": 1800042
+              },
+              "csr_transposed_product": {
+                "allocated_words": null,
+                "elapsed_ns": 1890541
+              },
+              "dense_product": {
+                "allocated_words": null,
+                "elapsed_ns": 57216208
+              },
+              "dense_transposed_product": {
+                "allocated_words": null,
+                "elapsed_ns": 114708917
+              },
+              "density": 0.01,
+              "nonzeros": 100000
+            },
+            {
+              "csr_memory": {
+                "dense_equivalent_bytes": 80000000,
+                "total_bytes": 6200004
+              },
+              "csr_product": {
+                "allocated_words": null,
+                "elapsed_ns": 5073500
+              },
+              "csr_transposed_product": {
+                "allocated_words": null,
+                "elapsed_ns": 6168291
+              },
+              "dense_product": {
+                "allocated_words": null,
+                "elapsed_ns": 55648584
+              },
+              "dense_transposed_product": {
+                "allocated_words": null,
+                "elapsed_ns": 116265708
+              },
+              "density": 0.05,
+              "nonzeros": 500000
+            },
+            {
+              "csr_memory": {
+                "dense_equivalent_bytes": 80000000,
+                "total_bytes": 30200004
+              },
+              "csr_product": {
+                "allocated_words": null,
+                "elapsed_ns": 29366292
+              },
+              "csr_transposed_product": {
+                "allocated_words": null,
+                "elapsed_ns": 28892334
+              },
+              "dense_product": {
+                "allocated_words": null,
+                "elapsed_ns": 56188875
+              },
+              "dense_transposed_product": {
+                "allocated_words": null,
+                "elapsed_ns": 115795750
+              },
+              "density": 0.25,
+              "nonzeros": 2500000
+            }
+          ],
+          "features": 200,
+          "materialization": {
+            "allocated_bytes": null,
+            "materialize": {
+              "allocated_words": null,
+              "elapsed_ns": 861042
+            },
+            "materialized_bytes": 3100004,
+            "shared_bytes": null,
+            "view_rows": 25000
+          },
+          "one_hot": {
+            "csr_memory": {
+              "dense_equivalent_bytes": 80000000,
+              "total_bytes": 2480004
+            },
+            "csr_transform": {
+              "allocated_words": null,
+              "elapsed_ns": 5717709
+            },
+            "dense_bytes": 80000000,
+            "dense_transform": {
+              "allocated_words": null,
+              "elapsed_ns": 11791541
+            },
+            "output_columns": 500
+          },
+          "operations": [
+            "csr_and_dense_feature_matrix_vector_products",
+            "one_hot_dense_and_csr_transform",
+            "csr_row_view_materialization"
+          ],
+          "repeats": 20,
+          "samples": 50000,
+          "signature": [
+            100000.0,
+            -157.6923076923078,
+            -157.69230769230776,
+            -18.789545454545454,
+            -18.789545454545443,
+            500000.0,
+            165.38461538461547,
+            165.38461538461542,
+            -78.01818181818172,
+            -78.0181818181817,
+            2500000.0,
+            165.38461538461513,
+            165.3846153846146,
+            -59.19136363636065,
+            -59.19136363636275,
+            500.0,
+            200000.0,
+            49900000.0,
+            49900000.0,
+            25000.0,
+            250000.0,
+            -2.3518964553659316e-12
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "scenario": {
+    "claim_eligible": false,
+    "dataset": {
+      "densities": [
+        0.01,
+        0.05,
+        0.25
+      ],
+      "features": 200,
+      "samples": 50000,
+      "seed": 4242
+    },
+    "measured_runs": 3,
+    "one_hot": {
+      "cardinality": 50,
+      "features": 10,
+      "samples": 20000
+    },
+    "repeats": 20,
+    "scenario": "sparse_kernels_v1",
+    "thread_limit": 1,
+    "warmup_runs": 1,
+    "workload": "sparse_kernels"
+  },
+  "schema_version": 2
+}

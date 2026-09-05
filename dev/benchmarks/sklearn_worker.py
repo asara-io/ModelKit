@@ -623,6 +623,133 @@ def adapter_admission(scenario: dict[str, object]) -> dict[str, object]:
     }
 
 
+def sparse_kernels(scenario: dict[str, object]) -> dict[str, object]:
+    import time
+
+    import numpy as np
+    import scipy.sparse as sparse
+    from sklearn.preprocessing import OneHotEncoder
+
+    def timed(function, repeats):
+        started = time.perf_counter_ns()
+        result = function()
+        for _ in range(repeats - 1):
+            result = function()
+        return result, {"allocated_words": None, "elapsed_ns": time.perf_counter_ns() - started}
+
+    dataset = scenario["dataset"]
+    seed = dataset["seed"]
+    repeats = scenario["repeats"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    values = (((rows * 17 + columns * 31 + seed) % 1000).astype(np.float64) + 0.5) / 100.0 - 5.0
+    hashes = (rows * 101 + columns * 53 + seed) % 10000
+    operand = ((columns[0] * 7) % 13).astype(np.float64) / 13.0 - 0.5
+    transposed_operand = ((rows[:, 0] * 3) % 11).astype(np.float64) / 11.0 - 0.5
+    signature = []
+    cases = []
+    matrices = []
+    for density in dataset["densities"]:
+        threshold = int(round(density * 10000))
+        dense = np.where(hashes < threshold, values, 0.0)
+        csr = sparse.csr_matrix(dense)
+        matrices.append(csr)
+        csr_product, csr_timing = timed(lambda: csr @ operand, repeats)
+        dense_product, dense_timing = timed(lambda: dense @ operand, repeats)
+        csr_transposed, csr_transposed_timing = timed(
+            lambda: csr.T @ transposed_operand, repeats
+        )
+        dense_transposed, dense_transposed_timing = timed(
+            lambda: dense.T @ transposed_operand, repeats
+        )
+        signature.extend(
+            [
+                float(csr.nnz),
+                float(csr_product.sum()),
+                float(dense_product.sum()),
+                float(csr_transposed.sum()),
+                float(dense_transposed.sum()),
+            ]
+        )
+        cases.append(
+            {
+                "csr_memory": {
+                    "dense_equivalent_bytes": int(dense.nbytes),
+                    "total_bytes": int(csr.data.nbytes + csr.indices.nbytes + csr.indptr.nbytes),
+                },
+                "csr_product": csr_timing,
+                "csr_transposed_product": csr_transposed_timing,
+                "dense_product": dense_timing,
+                "dense_transposed_product": dense_transposed_timing,
+                "density": density,
+                "nonzeros": int(csr.nnz),
+            }
+        )
+    one_hot = scenario["one_hot"]
+    one_hot_rows = np.arange(one_hot["samples"], dtype=np.int64)[:, np.newaxis]
+    one_hot_features = np.arange(one_hot["features"], dtype=np.int64)[np.newaxis, :]
+    one_hot_input = ((one_hot_rows * 13 + one_hot_features * 7) % one_hot["cardinality"]).astype(
+        np.float64
+    )
+    dense_encoder = OneHotEncoder(handle_unknown="error", sparse_output=False).fit(one_hot_input)
+    sparse_encoder = OneHotEncoder(handle_unknown="error", sparse_output=True).fit(one_hot_input)
+    one_hot_dense, one_hot_dense_timing = timed(lambda: dense_encoder.transform(one_hot_input), 1)
+    one_hot_csr, one_hot_csr_timing = timed(
+        lambda: sparse_encoder.transform(one_hot_input).tocsr(), 1
+    )
+    source = matrices[len(matrices) // 2]
+    even_rows = np.arange(0, dataset["samples"], 2)
+    materialized, materialize_timing = timed(lambda: source[even_rows], 1)
+    signature.extend(
+        [
+            float(one_hot_dense.shape[1]),
+            float(one_hot_csr.nnz),
+            float((one_hot_dense * np.arange(one_hot_dense.shape[1])).sum()),
+            float((one_hot_csr.indices * one_hot_csr.data).sum()),
+            float(materialized.shape[0]),
+            float(materialized.nnz),
+            float(materialized.data.sum()),
+        ]
+    )
+    signature = np.asarray(signature, dtype="<f8")
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "densities": cases,
+        "features": dataset["features"],
+        "materialization": {
+            "allocated_bytes": None,
+            "materialize": materialize_timing,
+            "materialized_bytes": int(
+                materialized.data.nbytes + materialized.indices.nbytes + materialized.indptr.nbytes
+            ),
+            "shared_bytes": None,
+            "view_rows": int(materialized.shape[0]),
+        },
+        "one_hot": {
+            "csr_memory": {
+                "dense_equivalent_bytes": int(one_hot_dense.nbytes),
+                "total_bytes": int(
+                    one_hot_csr.data.nbytes + one_hot_csr.indices.nbytes + one_hot_csr.indptr.nbytes
+                ),
+            },
+            "csr_transform": one_hot_csr_timing,
+            "dense_bytes": int(one_hot_dense.nbytes),
+            "dense_transform": one_hot_dense_timing,
+            "output_columns": int(one_hot_dense.shape[1]),
+        },
+        "operations": [
+            "csr_and_dense_feature_matrix_vector_products",
+            "one_hot_dense_and_csr_transform",
+            "csr_row_view_materialization",
+        ],
+        "repeats": repeats,
+        "samples": dataset["samples"],
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
 def splitters(scenario: dict[str, object]) -> dict[str, object]:
     import numpy as np
     from sklearn.model_selection import (
@@ -998,6 +1125,8 @@ def main() -> None:
         result = sgd_classification(scenario)
     elif workload == "adapter_admission":
         result = adapter_admission(scenario)
+    elif workload == "sparse_kernels":
+        result = sparse_kernels(scenario)
     elif workload == "splitters":
         result = splitters(scenario)
     elif workload == "metrics":

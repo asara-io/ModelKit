@@ -627,3 +627,91 @@ env/bin/python dev/benchmarks/run.py \
 The raw report is `results/adapter_admission_dense_v1.darwin-arm64.json`; it
 records every raw run, per-adapter timings and allocations, payload accounting,
 toolchain versions, thread limits, output signatures, and the full scenario.
+
+## Sparse kernels v1
+
+`sparse_kernels_v1` measures ModelKit's dense-versus-CSR kernel dispatch,
+one-hot output formats, and row-view materialization against SciPy sparse and
+NumPy. A deterministic 50,000 by 200 float64 matrix is generated at one, five,
+and twenty-five percent density. For each density both workers time twenty
+repetitions of the matrix-vector product and the transposed product through
+CSR storage and through the dense equivalent. The same workers then encode a
+20,000 by 10 categorical matrix with fifty categories per feature into dense
+and CSR one-hot output, and materialize every other row of the five-percent
+matrix through a row view. Stored-entry counts, product sums, one-hot output
+shapes and column-weighted sums, and the materialized row count, stored-entry
+count, and value sum must agree within `1e-7` absolute and relative tolerance
+before a report is written. ModelKit's Neumaier-compensated reductions and
+NumPy's pairwise summation differ in the last bits, which the tolerance
+absorbs.
+
+The harness performs one warmup and three interleaved measured runs in fresh
+processes. Process wall time includes runtime startup and generating the three
+matrices, which dominates for ModelKit because every density is built through
+checked CSR admission and then densified. The per-kernel timings inside the
+report isolate the operations of interest; the ModelKit worker also reports
+OCaml heap allocation words per operation.
+
+The committed macOS arm64 report recorded these medians:
+
+| Implementation | Wall time | Peak RSS |
+| --- | ---: | ---: |
+| ModelKit 0.4.0-dev / OCaml 5.3.0 | 8.734 s | 293,568,512 bytes |
+| SciPy 1.18.0 / NumPy 2.5.2 / Python 3.14.3 | 1.578 s | 623,738,880 bytes |
+
+Twenty repetitions of each kernel:
+
+| Density | Stored entries | ModelKit CSR product | ModelKit dense product | SciPy CSR product | NumPy dense product | ModelKit CSR transposed | ModelKit dense transposed | SciPy CSR transposed | NumPy dense transposed |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 % | 100,000 | 15.6 ms | 1,057 ms | 1.7 ms | 56 ms | 13.4 ms | 1,346 ms | 1.9 ms | 116 ms |
+| 5 % | 500,000 | 70.8 ms | 1,078 ms | 5.1 ms | 54 ms | 46.0 ms | 1,349 ms | 6.1 ms | 116 ms |
+| 25 % | 2,500,000 | 329.3 ms | 1,133 ms | 29.4 ms | 54 ms | 185.3 ms | 1,367 ms | 29.2 ms | 116 ms |
+
+CSR storage held 2,000,008, 8,400,008, and 40,400,008 bytes against an
+80,000,000-byte dense equivalent, so CSR dispatch pays off in both time and
+memory below roughly half density, and the crossover for the transposed
+product is later still because the dense transposed kernel walks columns
+against row-major storage. One-hot CSR output held 3,360,008 bytes and took
+70 ms against 80,000,000 bytes and 172 ms for the dense output, allocating
+13,872,100 words against 24,344,075. Materializing 25,000 selected rows of the
+five-percent matrix took 4.9 ms, allocated 200,000 bytes of row indices in the
+view, and copied 4,200,008 payload bytes out of 8,400,008 shared bytes;
+SciPy's fancy row indexing took 0.7 ms.
+
+ModelKit's kernels are roughly ten to twenty times slower than SciPy and NumPy
+at every density. The remaining gap is the cost of the compensated,
+non-finite-tracking reduction that ModelKit performs on every product, run as
+portable OCaml without SIMD or a BLAS call, against SciPy's C loops and
+NumPy's BLAS-backed dense product. The relative ordering, which is the
+solver-selection evidence this scenario exists for, is the same in both
+runtimes: CSR wins by the density ratio, and the dense product never wins
+below full density.
+
+This scenario replaced an earlier implementation of the reference kernels
+that folded through a heap-allocated accumulator record and boxed every
+float crossing the `Vector.get`, `Matrix.get`, and `Csr_matrix.iter_row`
+closures. On the same machine that version needed 48.1 s of wall time and
+13,325,295,082 allocated words for this worker; the dense product took over
+five seconds and the CSR product 71 ms at one-percent density. The kernels
+now read the immutable Bigarray storage directly and keep the compensated
+sum in unboxed locals, which brought the worker to 155,271,903 words. A
+property test checks that every kernel still matches an independently written
+Neumaier fold bit for bit, including NaN, infinity, and overflow inputs.
+
+This scenario is `claim_eligible: false`: it includes process startup and
+data generation, measures kernels rather than an end-to-end workflow, and has
+not run on the independent CI targets required for a comparative performance
+claim.
+
+Build and run it from the repository root:
+
+```sh
+opam exec -- dune build bench/ocaml/sparse_kernels_worker.exe
+env/bin/python dev/benchmarks/run.py \
+  --scenario dev/benchmarks/scenarios/sparse_kernels.json
+```
+
+The raw report is `results/sparse_kernels_v1.darwin-arm64.json`; it records
+every raw run, per-kernel timings and allocations, CSR and dense memory
+accounting, toolchain versions, thread limits, output signatures, and the full
+scenario.

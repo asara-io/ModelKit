@@ -1509,6 +1509,144 @@ let ranking_curves_are_monotone =
           && nonincreasing recalls
       | Error _, _ | _, Error _ -> false)
 
+let special_float_gen =
+  QCheck.Gen.oneof_weighted
+    [
+      ( 20,
+        QCheck.Gen.map
+          (fun value -> Float.of_int value /. 7.0)
+          QCheck.Gen.int_small );
+      ( 5,
+        QCheck.Gen.map
+          (fun value -> Float.of_int value *. 1e300)
+          QCheck.Gen.int_small );
+      (1, QCheck.Gen.return Float.infinity);
+      (1, QCheck.Gen.return Float.neg_infinity);
+      (1, QCheck.Gen.return Float.nan);
+    ]
+
+let kernel_operands =
+  QCheck.make
+    ~print:(fun (operand, cells) ->
+      Printf.sprintf "operand=[%s] cells=[%s]"
+        (String.concat ";" (List.map Float.to_string operand))
+        (String.concat ";" (List.map Float.to_string cells)))
+    (QCheck.Gen.pair
+       (QCheck.Gen.list_size (QCheck.Gen.int_range 1 6) special_float_gen)
+       (QCheck.Gen.list_size (QCheck.Gen.int_range 0 24) special_float_gen))
+
+let same_bits expected observed =
+  Int64.equal (Int64.bits_of_float expected) (Int64.bits_of_float observed)
+
+(* Neumaier compensated summation with non-finite tracking, written out
+   independently of the kernels so the property checks the documented
+   reduction order rather than the implementation against itself. *)
+let fold_accumulator values =
+  let total = ref 0.0 and correction = ref 0.0 in
+  let positive = ref false and negative = ref false and nan = ref false in
+  let record value =
+    if Float.is_nan value then nan := true
+    else if value > 0.0 then positive := true
+    else negative := true
+  in
+  Array.iter
+    (fun value ->
+      if not (Float.is_finite value) then record value
+      else if not (!nan || !positive || !negative) then begin
+        let next = !total +. value in
+        if not (Float.is_finite next) then record next
+        else begin
+          let step =
+            if Float.abs !total >= Float.abs value then !total -. next +. value
+            else value -. next +. !total
+          in
+          let corrected = !correction +. step in
+          if Float.is_finite corrected then correction := corrected
+          else record corrected;
+          total := next
+        end
+      end)
+    values;
+  if !nan || (!positive && !negative) then Float.nan
+  else if !positive then Float.infinity
+  else if !negative then Float.neg_infinity
+  else !total +. !correction
+
+let reference_kernels_match_accumulator_folds =
+  QCheck.Test.make ~count:500
+    ~name:"reference kernels match accumulator folds bit for bit"
+    kernel_operands (fun (operand, cells) ->
+      let columns = List.length operand in
+      let rows = List.length cells / columns in
+      let cells = Array.of_list cells in
+      let matrix =
+        Matrix.init ~rows ~columns (fun row column ->
+            cells.((row * columns) + column))
+        |> Result.get_ok
+      in
+      let operand = Vector.of_array (Array.of_list operand) in
+      let row_operand =
+        Vector.init ~length:rows (fun row -> Float.of_int (row - 1) /. 3.0)
+        |> Result.get_ok
+      in
+      let csr = Csr_matrix.of_dense matrix in
+      let expected_product =
+        Array.init rows (fun row ->
+            fold_accumulator
+              (Array.init columns (fun column ->
+                   Matrix.get matrix row column *. Vector.get operand column)))
+      in
+      let expected_transposed =
+        Array.init columns (fun column ->
+            fold_accumulator
+              (Array.init rows (fun row ->
+                   Matrix.get matrix row column *. Vector.get row_operand row)))
+      in
+      let expected_csr_product =
+        Array.init rows (fun row ->
+            let products = ref [] in
+            Csr_matrix.iter_row csr ~row ~f:(fun ~column ~value ->
+                products := (value *. Vector.get operand column) :: !products);
+            fold_accumulator (Array.of_list (List.rev !products)))
+      in
+      let expected_csr_transposed =
+        Array.init columns (fun column ->
+            let products = ref [] in
+            for row = 0 to rows - 1 do
+              Csr_matrix.iter_row csr ~row ~f:(fun ~column:entry ~value ->
+                  if entry = column then
+                    products :=
+                      (value *. Vector.get row_operand row) :: !products)
+            done;
+            fold_accumulator (Array.of_list (List.rev !products)))
+      in
+      let observed kernel = Result.get_ok kernel |> Vector.to_array in
+      let all_same expected observed =
+        Array.length expected = Array.length observed
+        && Array.for_all2 same_bits expected observed
+      in
+      same_bits (fold_accumulator cells)
+        (Reference_backend.sum (Vector.of_array cells))
+      && same_bits
+           (fold_accumulator
+              (Array.init columns (fun column ->
+                   Vector.get operand column *. Vector.get operand column)))
+           (Result.get_ok (Reference_backend.dot operand operand))
+      && all_same expected_product
+           (observed (Reference_backend.matrix_vector_product matrix operand))
+      && all_same expected_transposed
+           (observed
+              (Reference_backend.transposed_matrix_vector_product matrix
+                 row_operand))
+      && all_same expected_csr_product
+           (observed
+              (Reference_backend.feature_matrix_vector_product
+                 (Feature_matrix.csr csr) operand))
+      && all_same expected_csr_transposed
+           (observed
+              (Reference_backend.transposed_feature_matrix_vector_product
+                 (Feature_matrix.csr csr) row_operand)))
+
 let () =
   let random = Random.State.make [| 0x4d4f4445; 0x4c4b4954 |] in
   let failures =
@@ -1520,6 +1658,7 @@ let () =
         rng_purity;
         dataset_view_order;
         csr_dense_round_trip;
+        reference_kernels_match_accumulator_folds;
         imputer_removes_missing_values;
         scaler_normalizes_nonconstant_columns;
         one_hot_dense_and_csr_agree;
