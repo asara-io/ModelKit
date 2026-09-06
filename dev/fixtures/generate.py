@@ -1782,6 +1782,104 @@ def generate_ranking_metrics_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_column_transformer_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.compose import ColumnTransformer
+    from sklearn.impute import SimpleImputer
+    from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+    train = np.array(
+        [
+            [-4.0, 1.0, 10.0, np.nan, 90.0],
+            [-2.0, 2.0, 20.0, 2.0, 91.0],
+            [0.0, 1.0, 40.0, 4.0, 92.0],
+            [8.0, 3.0, 100.0, np.nan, 93.0],
+        ],
+        dtype=np.float64,
+    )
+    test = np.array(
+        [[100.0, 9.0, 1000.0, np.nan, -1.0], [-8.0, 1.0, 0.0, 9.0, -2.0]],
+        dtype=np.float64,
+    )
+    cases = {
+        "mixed": ColumnTransformer(
+            [
+                ("scale", StandardScaler(), [2, 0]),
+                ("impute", SimpleImputer(strategy="mean"), [3]),
+                ("category", "passthrough", [1]),
+                ("discard", "drop", [4]),
+            ],
+            remainder="passthrough",
+        ),
+        "overlap": ColumnTransformer(
+            [
+                ("scale", StandardScaler(), [0]),
+                ("raw", "passthrough", [0, 2]),
+                ("discard", "drop", [3]),
+            ],
+            remainder="passthrough",
+        ),
+        "encoding": ColumnTransformer(
+            [
+                ("scale", StandardScaler(), [0]),
+                (
+                    "encode",
+                    OneHotEncoder(sparse_output=False, handle_unknown="ignore"),
+                    [1],
+                ),
+                ("unused", StandardScaler(), []),
+            ]
+        ),
+    }
+    rows = ["# ModelKit sklearn column transformer reference fixture v1"]
+
+    def add_matrix(name: str, values) -> None:
+        for index, values in enumerate(values):
+            rows.append(f"{name}\t{index}\t{float_values(values)}")
+
+    add_matrix("train", train)
+    add_matrix("test", test)
+    for name, transformer in cases.items():
+        add_matrix(f"{name}_train", transformer.fit_transform(train))
+        add_matrix(f"{name}_test", transformer.transform(test))
+        if name != "encoding":
+            rows.append(f"{name}_names\t" + ",".join(transformer.get_feature_names_out()))
+
+    (fixture_dir / "column_transformer_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {
+            "cases": list(cases),
+            "dense_output": True,
+            "fit_rows": 4,
+            "inference_rows": 2,
+            "absolute_tolerance": 1e-12,
+            "relative_tolerance": 1e-12,
+            "naming": (
+                "Exact names for scale, impute, passthrough, and remainder; "
+                "encoders retain ModelKit's existing generated feature-name convention."
+            ),
+        },
+        "environment": environment.metadata(),
+        "fixture": "column_transformer_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.compose.ColumnTransformer",
+            "sklearn.preprocessing.StandardScaler",
+            "sklearn.preprocessing.OneHotEncoder",
+            "sklearn.impute.SimpleImputer",
+        ],
+        "schema_version": 1,
+    }
+    (fixture_dir / "column_transformer_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
@@ -1791,6 +1889,7 @@ def main() -> None:
     generate_metrics_fixture(fixture_dir)
     generate_preprocessing_fixture(fixture_dir)
     generate_transform_fixture(fixture_dir)
+    generate_column_transformer_fixture(fixture_dir)
     generate_linear_model_fixture(fixture_dir)
     generate_regularized_linear_fixture(fixture_dir)
     generate_ridge_classifier_fixture(fixture_dir)

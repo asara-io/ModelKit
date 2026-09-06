@@ -3,6 +3,7 @@
  (public_name modelkit)
  (private_modules
   modelkit_artifact
+  modelkit_composition
   modelkit_class_weight
   modelkit_data
   modelkit_glm

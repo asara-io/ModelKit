@@ -335,6 +335,65 @@ let test_supervised_domain_count_invariance () =
         (Cross_validation.folds observed))
     [ 1; 2; 4 ]
 
+let test_column_domain_count_invariance () =
+  let columns = Column_selector.indices [| 0 |] |> get in
+  let scaler =
+    Pipeline.transformer ~name:"scale"
+      (module Standard_scaler)
+      (Standard_scaler.create ())
+    |> get
+  in
+  let composition =
+    Column_transformer.create
+      [|
+        Column_transformer.transformer ~columns scaler;
+        Column_transformer.passthrough ~name:"raw" ~columns |> get;
+      |]
+    |> get
+  in
+  let specification =
+    Pipeline.add_transformer Pipeline.empty
+      (Column_transformer.stage ~name:"columns" composition |> get)
+    |> get
+    |> fun builder ->
+    Pipeline.set_estimator builder
+      (Pipeline.estimator ~name:"random" (module Random_regressor) () |> get)
+    |> get
+  in
+  let source = dataset () in
+  let run execution =
+    Cross_validation.Regression.cross_validate ~return_train_score:true
+      ~return_models:true ~return_indices:true ~execution
+      ~splitter:(splitter ())
+      ~scorers:[| Regression_scorer.neg_mean_squared_error |]
+      ~seed:(Seed.of_int 2026) specification source
+    |> get
+  in
+  let expected = run Execution.sequential in
+  let transformed fold =
+    Pipeline.transform
+      (Option.get fold.Cross_validation.model)
+      ~feature_schema:(Dataset.feature_schema source)
+      ~x:(Dataset.features source)
+    |> get |> Matrix.to_arrays
+  in
+  List.iter
+    (fun domains ->
+      let execution =
+        Modelkit_parallel.create ~inner_threads:1 ~domains ()
+        |> get |> Modelkit_parallel.execution
+      in
+      let observed = run execution in
+      check_report expected observed;
+      Array.iter2
+        (fun expected observed ->
+          Alcotest.(check bool)
+            "column outputs are schedule independent" true
+            (transformed expected = transformed observed))
+        (Cross_validation.folds expected)
+        (Cross_validation.folds observed))
+    [ 1; 2; 4 ]
+
 let () =
   Alcotest.run "parallel execution"
     [
@@ -344,6 +403,8 @@ let () =
             test_domain_count_invariance;
           Alcotest.test_case "supervised domain-count invariance" `Quick
             test_supervised_domain_count_invariance;
+          Alcotest.test_case "column domain-count invariance" `Quick
+            test_column_domain_count_invariance;
           Alcotest.test_case "bounded ordered map" `Quick
             test_bounded_ordered_map;
           Alcotest.test_case "lowest failure" `Quick test_lowest_failure;

@@ -1,0 +1,489 @@
+open Modelkit_data
+open Modelkit_protocols
+open Modelkit_pipeline
+
+module Internal = struct
+  let ( let* ) = Result.bind
+
+  let invalid name reason =
+    Error
+      (Error.make
+         ~remediation:
+           "use valid, unique names and selectors within the input schema"
+         (Error.Validation { name; reason }))
+
+  let data result =
+    Result.map_error
+      (fun error ->
+        Error.of_data_error
+          ~remediation:"provide valid composition dimensions and feature names"
+          error)
+      result
+
+  let with_stage name = Result.map_error (Error.with_context (Error.Stage name))
+
+  let validate_name name =
+    if String.trim name = "" || name = "remainder" then
+      invalid "column branch name"
+        "must be non-blank and different from remainder"
+    else Ok ()
+
+  let unique ~name values =
+    let seen = Hashtbl.create (Array.length values) in
+    let rec loop index =
+      if index = Array.length values then Ok ()
+      else if Hashtbl.mem seen values.(index) then
+        invalid name "duplicate selection"
+      else (
+        Hashtbl.add seen values.(index) ();
+        loop (index + 1))
+    in
+    loop 0
+
+  let schema names =
+    let* names =
+      Feature_names.create ~expected_count:(Array.length names) names |> data
+    in
+    Ok (Feature_schema.named names)
+
+  let input_names schema =
+    match Feature_schema.names schema with
+    | Some names -> Feature_names.to_array names
+    | None ->
+        Array.init (Feature_schema.feature_count schema) (fun column ->
+            "x" ^ string_of_int column)
+
+  let payload_bytes ~rows ~columns =
+    let rows = Int64.of_int rows and columns = Int64.of_int columns in
+    if columns <> 0L && rows > Int64.div (Int64.div Int64.max_int 8L) columns
+    then
+      invalid "column allocation"
+        "dense payload size exceeds the reporting limit"
+    else Ok (Int64.mul 8L (Int64.mul rows columns))
+
+  let add_bytes left right =
+    if left > Int64.sub Int64.max_int right then
+      invalid "column allocation"
+        "cumulative selection copies exceed the reporting limit"
+    else Ok (Int64.add left right)
+end
+
+module Column_selector = struct
+  open Internal
+
+  type t = All | Indices of int array | Names of string array
+
+  let all = All
+
+  let indices values =
+    let values = Array.copy values in
+    let* () = unique ~name:"column indices" values in
+    if Array.exists (fun index -> index < 0) values then
+      invalid "column indices" "negative indices are not supported"
+    else Ok (Indices values)
+
+  let names values =
+    let values = Array.copy values in
+    let* _ = schema values in
+    Ok (Names values)
+
+  let resolve selector feature_schema =
+    let width = Feature_schema.feature_count feature_schema in
+    match selector with
+    | All ->
+        if width > Sys.max_array_length then
+          invalid "column selection" "schema width exceeds the array size limit"
+        else Ok (Array.init width Fun.id)
+    | Indices indices ->
+        if Array.exists (fun index -> index >= width) indices then
+          invalid "column indices" "an index is outside the input schema"
+        else Ok (Array.copy indices)
+    | Names selected -> (
+        if Array.length selected = 0 then Ok [||]
+        else
+          match Feature_schema.names feature_schema with
+          | None ->
+              invalid "column names"
+                "name selection requires a named input schema"
+          | Some names ->
+              let positions = Hashtbl.create width in
+              Array.iteri
+                (fun index name -> Hashtbl.add positions name index)
+                (Feature_names.to_array names);
+              let result = Array.make (Array.length selected) 0 in
+              let rec loop index =
+                if index = Array.length selected then Ok result
+                else
+                  match Hashtbl.find_opt positions selected.(index) with
+                  | None ->
+                      invalid "column names"
+                        (Format.sprintf "feature %S is absent" selected.(index))
+                  | Some position ->
+                      result.(index) <- position;
+                      loop (index + 1)
+              in
+              loop 0)
+end
+
+module Column_transformer = struct
+  open Internal
+
+  type remainder = Drop | Passthrough
+  type action = Transform of Pipeline.transformer | Pass | Omit
+
+  type branch = {
+    branch_name : string;
+    columns : Column_selector.t;
+    action : action;
+  }
+
+  type t = {
+    branches : branch array;
+    remainder : remainder;
+    max_output_features : int;
+  }
+
+  type params = t
+  type target = unit
+  type rng = Rng.t
+
+  type branch_info = {
+    name : string;
+    input_indices : int array;
+    output_start : int;
+    output_count : int;
+  }
+
+  type allocation = { selected_input_bytes : int64; output_bytes : int64 }
+
+  type fitted_branch = {
+    info : branch_info;
+    selected_schema : Feature_schema.t;
+    transformer : Pipeline.fitted_transformer option;
+  }
+
+  type fitted = {
+    specification : t;
+    input_schema : Feature_schema.t;
+    output_schema : Feature_schema.t;
+    fitted_branches : fitted_branch array;
+  }
+
+  type block = Selected of int array | Transformed of Matrix.t
+
+  let transformer ~columns transformer =
+    {
+      branch_name = transformer.Pipeline.transformer_name;
+      columns;
+      action = Transform transformer;
+    }
+
+  let passthrough ~name ~columns =
+    let* () = validate_name name in
+    Ok { branch_name = name; columns; action = Pass }
+
+  let drop ~name ~columns =
+    let* () = validate_name name in
+    Ok { branch_name = name; columns; action = Omit }
+
+  let create ?(remainder = Drop) ?(max_output_features = 100_000) branches =
+    let branches = Array.copy branches in
+    let* () =
+      unique ~name:"column branch names"
+        (Array.map (fun (branch : branch) -> branch.branch_name) branches)
+    in
+    let* () =
+      Array.fold_left
+        (fun result (branch : branch) ->
+          let* () = result in
+          validate_name branch.branch_name)
+        (Ok ()) branches
+    in
+    if max_output_features < 0 || max_output_features > Sys.max_array_length
+    then
+      invalid "column output limit"
+        "must be between zero and Sys.max_array_length"
+    else Ok { branches; remainder; max_output_features }
+
+  let clone specification = specification
+  let params specification = specification
+  let fitted_params fitted = fitted.specification
+  let input_schema fitted = fitted.input_schema
+  let output_schema fitted = fitted.output_schema
+
+  let branches fitted =
+    Array.map
+      (fun branch ->
+        {
+          branch.info with
+          input_indices = Array.copy branch.info.input_indices;
+        })
+      fitted.fitted_branches
+
+  let resolve specification feature_schema =
+    let width = Feature_schema.feature_count feature_schema in
+    let* () =
+      if width > Sys.max_array_length then
+        invalid "column input schema" "width exceeds the array size limit"
+      else Ok ()
+    in
+    let consumed = Array.make width false in
+    let rec loop index reversed =
+      if index = Array.length specification.branches then (
+        let result = List.rev reversed in
+        match specification.remainder with
+        | Drop -> Ok (Array.of_list result)
+        | Passthrough ->
+            let remaining = ref [] in
+            for column = width - 1 downto 0 do
+              if not consumed.(column) then remaining := column :: !remaining
+            done;
+            let* remainder =
+              Column_selector.indices (Array.of_list !remaining)
+            in
+            let* indices = Column_selector.resolve remainder feature_schema in
+            Ok
+              (Array.of_list
+                 (result
+                 @ [
+                     ( {
+                         branch_name = "remainder";
+                         columns = remainder;
+                         action = Pass;
+                       },
+                       indices );
+                   ])))
+      else
+        let branch = specification.branches.(index) in
+        let* indices =
+          with_stage branch.branch_name
+            (Column_selector.resolve branch.columns feature_schema)
+        in
+        Array.iter (fun column -> consumed.(column) <- true) indices;
+        loop (index + 1) ((branch, indices) :: reversed)
+    in
+    loop 0 []
+
+  let select x indices =
+    let* _ =
+      payload_bytes ~rows:(Matrix.rows x) ~columns:(Array.length indices)
+    in
+    Matrix.init ~rows:(Matrix.rows x) ~columns:(Array.length indices)
+      (fun row column -> Matrix.get x row indices.(column))
+    |> data
+
+  let validate_output ~rows ~schema x =
+    if Matrix.rows x <> rows then
+      Error
+        (Error.make ~remediation:"preserve the input row count and order"
+           (Error.Shape_mismatch
+              {
+                name = "column transformer output rows";
+                expected = [ rows ];
+                observed = [ Matrix.rows x ];
+              }))
+    else Feature_schema.validate_matrix schema x |> data
+
+  let fit_branches specification ~sample_weight ~rng ~feature_schema ~x =
+    let* () = Feature_schema.validate_matrix feature_schema x |> data in
+    let* () =
+      Modelkit_preprocessing.Preprocessing_internal.validate_sample_weight
+        "column transformer" x sample_weight
+    in
+    let* resolved = resolve specification feature_schema in
+    let source_names = input_names feature_schema in
+    let rec loop index width copies reversed_branches reversed_blocks
+        reversed_names =
+      if index = Array.length resolved then
+        let* output_schema = schema (Array.concat (List.rev reversed_names)) in
+        Ok
+          ( {
+              specification;
+              input_schema = feature_schema;
+              output_schema;
+              fitted_branches = Array.of_list (List.rev reversed_branches);
+            },
+            Array.of_list (List.rev reversed_blocks),
+            copies )
+      else
+        let branch, indices = resolved.(index) in
+        let check_width count =
+          if count > specification.max_output_features - width then
+            invalid "column output limit"
+              "combined branch width exceeds max_output_features"
+          else Ok ()
+        in
+        let* selected_schema =
+          schema (Array.map (Array.get source_names) indices)
+        in
+        let* fitted_transformer, block, names, copied =
+          with_stage branch.branch_name
+            (if Array.length indices = 0 then Ok (None, Selected [||], [||], 0L)
+             else
+               match branch.action with
+               | Omit -> Ok (None, Selected [||], [||], 0L)
+               | Pass ->
+                   let* () = check_width (Array.length indices) in
+                   Ok (None, Selected indices, input_names selected_schema, 0L)
+               | Transform transformer ->
+                   let* selected = select x indices in
+                   let child_rng =
+                     Rng.create
+                       (Seed.derive (Rng.to_seed rng)
+                          ~operation:("column-transformer:" ^ branch.branch_name)
+                          ~index)
+                   in
+                   let* fitted, output, output_schema =
+                     transformer.Pipeline.fit_transform ~sample_weight
+                       ~rng:child_rng ~feature_schema:selected_schema
+                       ~x:selected
+                   in
+                   let* () =
+                     validate_output ~rows:(Matrix.rows x) ~schema:output_schema
+                       output
+                   in
+                   let* () =
+                     check_width (Feature_schema.feature_count output_schema)
+                   in
+                   let* copied =
+                     payload_bytes ~rows:(Matrix.rows x)
+                       ~columns:(Array.length indices)
+                   in
+                   Ok
+                     ( Some fitted,
+                       Transformed output,
+                       input_names output_schema,
+                       copied ))
+        in
+        let count = Array.length names in
+        let* copies = add_bytes copies copied in
+        let info =
+          {
+            name = branch.branch_name;
+            input_indices = indices;
+            output_start = width;
+            output_count = count;
+          }
+        in
+        let fitted_branch =
+          { info; selected_schema; transformer = fitted_transformer }
+        in
+        let names =
+          Array.map (fun name -> branch.branch_name ^ "__" ^ name) names
+        in
+        loop (index + 1) (width + count) copies
+          (fitted_branch :: reversed_branches)
+          (block :: reversed_blocks) (names :: reversed_names)
+    in
+    loop 0 0 0L [] [] []
+
+  let concatenate fitted ~x blocks selected_input_bytes =
+    let rows = Matrix.rows x in
+    let columns = Feature_schema.feature_count fitted.output_schema in
+    let* output_bytes = payload_bytes ~rows ~columns in
+    let sources = Array.make columns (0, 0) in
+    Array.iteri
+      (fun index branch ->
+        for column = 0 to branch.info.output_count - 1 do
+          sources.(branch.info.output_start + column) <- (index, column)
+        done)
+      fitted.fitted_branches;
+    let* output =
+      Matrix.init ~rows ~columns (fun row column ->
+          let index, column = sources.(column) in
+          match blocks.(index) with
+          | Selected indices -> Matrix.get x row indices.(column)
+          | Transformed output -> Matrix.get output row column)
+      |> data
+    in
+    Ok (output, { selected_input_bytes; output_bytes })
+
+  let fit specification ?sample_weight ~rng ~feature_schema ~x ~y:_ () =
+    let* fitted, _, _ =
+      fit_branches specification ~sample_weight ~rng ~feature_schema ~x
+    in
+    Ok fitted
+
+  let fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y:_ ()
+      =
+    let* fitted, blocks, copies =
+      fit_branches specification ~sample_weight ~rng ~feature_schema ~x
+    in
+    let* output, allocation = concatenate fitted ~x blocks copies in
+    Ok (fitted, output, allocation)
+
+  let transform_with_report fitted ~feature_schema ~x =
+    let* () =
+      if Feature_schema.equal fitted.input_schema feature_schema then
+        Feature_schema.validate_matrix feature_schema x |> data
+      else
+        Error
+          (Error.make
+             ~remediation:
+               "provide the same ordered input feature schema as during fitting"
+             (Error.Feature_schema_mismatch
+                { expected = fitted.input_schema; observed = feature_schema }))
+    in
+    let rec loop index copies reversed =
+      if index = Array.length fitted.fitted_branches then
+        concatenate fitted ~x (Array.of_list (List.rev reversed)) copies
+      else
+        let branch = fitted.fitted_branches.(index) in
+        let* block, copied =
+          with_stage branch.info.name
+            (match branch.transformer with
+            | None ->
+                Ok
+                  ( Selected
+                      (if branch.info.output_count = 0 then [||]
+                       else branch.info.input_indices),
+                    0L )
+            | Some transformer ->
+                let* selected = select x branch.info.input_indices in
+                let* output =
+                  transformer.Pipeline.apply_transform
+                    ~feature_schema:branch.selected_schema ~x:selected
+                in
+                let* () =
+                  validate_output ~rows:(Matrix.rows x)
+                    ~schema:transformer.Pipeline.transform_output_schema output
+                in
+                let* copied =
+                  payload_bytes ~rows:(Matrix.rows x)
+                    ~columns:(Array.length branch.info.input_indices)
+                in
+                Ok (Transformed output, copied))
+        in
+        let* copies = add_bytes copies copied in
+        loop (index + 1) copies (block :: reversed)
+    in
+    loop 0 0L []
+
+  let transform fitted ~feature_schema ~x =
+    let* output, _ = transform_with_report fitted ~feature_schema ~x in
+    Ok output
+
+  let stage ~name specification =
+    if String.trim name = "" then
+      invalid "pipeline stage name" "must not be blank"
+    else
+      let fit_transform ~sample_weight ~rng ~feature_schema ~x =
+        let* fitted, output, _ =
+          fit_transform specification ?sample_weight ~rng ~feature_schema ~x
+            ~y:None ()
+        in
+        let apply_transform = transform fitted in
+        let packaged =
+          Pipeline.
+            {
+              stage_name = name;
+              transform_input_schema = feature_schema;
+              transform_output_schema = fitted.output_schema;
+              apply_transform;
+              encode_transformer = None;
+            }
+        in
+        Ok (packaged, output, fitted.output_schema)
+      in
+      Ok Pipeline.{ transformer_name = name; fit_transform }
+end
