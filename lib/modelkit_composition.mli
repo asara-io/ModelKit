@@ -110,6 +110,40 @@ module Column_transformer : sig
       transform pass during fitting. Use [Pipeline.Supervised.unsupervised] to
       include it in a target-aware pipeline. *)
 
+  (** Target-aware composition for {!Pipeline.Supervised} pipelines. All active
+      children receive the same training targets in row order; sample weights
+      retain each child's opt-in policy. Adapt ordinary stages with
+      {!Pipeline.Supervised.unsupervised}. The unsupervised composition's
+      naming, allocation, empty-input, and deterministic seed rules apply.
+      Target and weight length errors fail before any pipeline stage fits.
+      Inference uses fitted values without targets. *)
+  module Supervised : sig
+    type 'kind t
+    type 'kind branch
+
+    val transformer :
+      columns:Column_selector.t ->
+      'kind Pipeline.Supervised.stage ->
+      'kind branch
+
+    val passthrough :
+      name:string -> columns:Column_selector.t -> ('kind branch, Error.t) result
+
+    val drop :
+      name:string -> columns:Column_selector.t -> ('kind branch, Error.t) result
+
+    val create :
+      ?remainder:remainder ->
+      ?max_output_features:int ->
+      'kind branch array ->
+      ('kind t, Error.t) result
+
+    val stage :
+      name:string ->
+      'kind t ->
+      ('kind Pipeline.Supervised.stage, Error.t) result
+  end
+
   include
     TRANSFORMER
       with type t := t
@@ -155,6 +189,25 @@ module Transformer_pipeline : sig
       children that request them. Composite artifact codecs are not yet
       supported. *)
 
+  (** Target-aware composition for {!Pipeline.Supervised} pipelines. All active
+      children receive the same training targets in row order; sample weights
+      retain each child's opt-in policy. Adapt ordinary stages with
+      {!Pipeline.Supervised.unsupervised}. The unsupervised composition's
+      naming, allocation, empty-input, and deterministic seed rules apply.
+      Target and weight length errors fail before any pipeline stage fits.
+      Inference uses fitted values without targets. *)
+  module Supervised : sig
+    type 'kind t
+
+    val create :
+      'kind Pipeline.Supervised.stage array -> ('kind t, Error.t) result
+
+    val stage :
+      name:string ->
+      'kind t ->
+      ('kind Pipeline.Supervised.stage, Error.t) result
+  end
+
   include
     TRANSFORMER
       with type t := t
@@ -175,8 +228,8 @@ end
     leaving their admissibility to each transformer. Empty or all-dropped unions
     produce a zero-column matrix retaining the input row count. Branches run
     sequentially; surrounding CV may own bounded parallelism. This API does not
-    add sparse output, branch-output weighting, supervised branch routing, or
-    composite artifact codecs. *)
+    add sparse output, branch-output weighting, or composite artifact codecs.
+    Target-aware branches are available through [Supervised]. *)
 module Feature_union : sig
   type branch
   type t
@@ -226,6 +279,32 @@ module Feature_union : sig
   (** Packages the union as an ordinary transformer stage, retaining child
       weight routing and reusing branch outputs during fitting. It can nest
       inside a column transformer or transformer pipeline. *)
+
+  (** Target-aware composition for {!Pipeline.Supervised} pipelines. All active
+      children receive the same training targets in row order; sample weights
+      retain each child's opt-in policy. Adapt ordinary stages with
+      {!Pipeline.Supervised.unsupervised}. The unsupervised composition's
+      naming, allocation, empty-input, and deterministic seed rules apply.
+      Target and weight length errors fail before any pipeline stage fits.
+      Inference uses fitted values without targets. *)
+  module Supervised : sig
+    type 'kind t
+    type 'kind branch
+
+    val transformer : 'kind Pipeline.Supervised.stage -> 'kind branch
+    val passthrough : name:string -> ('kind branch, Error.t) result
+    val drop : name:string -> ('kind branch, Error.t) result
+
+    val create :
+      ?max_output_features:int ->
+      'kind branch array ->
+      ('kind t, Error.t) result
+
+    val stage :
+      name:string ->
+      'kind t ->
+      ('kind Pipeline.Supervised.stage, Error.t) result
+  end
 
   include
     TRANSFORMER

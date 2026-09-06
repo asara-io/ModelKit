@@ -197,6 +197,57 @@ let pipeline ?route_sample_weight ?(observe = fun () -> ()) () =
   let builder = add_transformer builder suffix |> get in
   set_estimator builder (terminal ()) |> get
 
+let nest ?(raw = true) ?(observe = fun () -> ()) stage =
+  let identity name =
+    Pipeline.transformer ~name (module Identity) (observe, false)
+    |> get |> Pipeline.Supervised.unsupervised
+  in
+  let prepared =
+    Transformer_pipeline.Supervised.create [| identity "before"; stage |]
+    |> get
+    |> Transformer_pipeline.Supervised.stage ~name:"prepared"
+    |> get
+  in
+  let empty = Column_selector.indices [||] |> get in
+  let columns =
+    Column_transformer.Supervised.create
+      [|
+        Column_transformer.Supervised.transformer ~columns:Column_selector.all
+          prepared;
+        Column_transformer.Supervised.transformer ~columns:empty
+          (identity "empty");
+        Column_transformer.Supervised.drop ~name:"unused" ~columns:empty |> get;
+      |]
+    |> get
+    |> Column_transformer.Supervised.stage ~name:"columns"
+    |> get
+  in
+  let union =
+    Feature_union.Supervised.create
+      [|
+        Feature_union.Supervised.transformer columns;
+        (if raw then Feature_union.Supervised.passthrough ~name:"raw"
+         else Feature_union.Supervised.drop ~name:"raw")
+        |> get;
+        Feature_union.Supervised.drop ~name:"unused" |> get;
+      |]
+    |> get
+    |> Feature_union.Supervised.stage ~name:"views"
+    |> get
+  in
+  Transformer_pipeline.Supervised.create [| union; identity "after" |]
+  |> get
+  |> Transformer_pipeline.Supervised.stage ~name:"nested"
+  |> get
+
+let nested_pipeline ?route_sample_weight ?observe () =
+  let builder =
+    Pipeline.Supervised.add_transformer Pipeline.Supervised.empty
+      (nest ?observe (stage ?route_sample_weight ()))
+    |> get
+  in
+  Pipeline.Supervised.set_estimator builder (terminal ()) |> get
+
 let fit specification =
   Pipeline.fit specification ~sample_weight:weights ~rng:(rng ())
     ~feature_schema:schema ~x ~y ()
@@ -217,10 +268,10 @@ let mean indices weighted =
   in
   numerator /. denominator
 
-let test_routing () =
+let test_routing ?(build = pipeline) () =
   List.iter
     (fun weighted ->
-      let specification = pipeline ~route_sample_weight:weighted () in
+      let specification = build ~route_sample_weight:weighted () in
       let fitted = fit specification in
       Alcotest.(check (array (Alcotest.float 1e-12)))
         "training-only weighted target mean"
@@ -243,7 +294,7 @@ let test_routing () =
         (mean (Array.init 12 Fun.id) weighted)
         (Vector.get prediction 0))
     [ false; true ];
-  let default = fit (pipeline ()) in
+  let default = fit (build ()) in
   Alcotest.(check (array (Alcotest.float 1e-12)))
     "weights are opt-in by default"
     (Array.make 12 (mean (Array.init 12 Fun.id) false))
@@ -285,8 +336,8 @@ let splitter () =
   |> get
   |> Cross_validation.target_independent_splitter (module K_fold)
 
-let test_cross_validation () =
-  let specification = pipeline ~route_sample_weight:true () in
+let test_cross_validation
+    ?(specification = pipeline ~route_sample_weight:true ()) () =
   let run dataset =
     Cross_validation.Regression.cross_validate ~return_models:true
       ~return_indices:true ~failure_policy:Cross_validation.Record
@@ -324,12 +375,10 @@ let test_cross_validation () =
     (predict (Option.get first.Cross_validation.model))
     (predict (Option.get changed_first.Cross_validation.model))
 
-let test_grid_search () =
+let test_grid_search ?(build = fun () -> pipeline ~route_sample_weight:true ())
+    () =
   let grid =
-    Grid_search.create ~base:()
-      ~build:(fun () -> Ok (pipeline ~route_sample_weight:true ()))
-      [||]
-    |> get
+    Grid_search.create ~base:() ~build:(fun () -> Ok (build ())) [||] |> get
   in
   let report =
     Grid_search.Regression.search ~grid ~splitter:(splitter ())
@@ -343,7 +392,7 @@ let test_grid_search () =
     (Array.make 12 (mean (Array.init 12 Fun.id) true))
     (predict selected.Grid_search.selected_model)
 
-let test_classification () =
+let test_classification ?(wrap = Fun.id) () =
   let class_y =
     Target.classification (Array.init 12 (fun row -> if row < 9 then 0 else 1))
   in
@@ -354,7 +403,8 @@ let test_classification () =
     |> get
   in
   let builder =
-    Pipeline.Supervised.add_transformer Pipeline.Supervised.empty stage |> get
+    Pipeline.Supervised.add_transformer Pipeline.Supervised.empty (wrap stage)
+    |> get
   in
   let terminal =
     Pipeline.classifier ~class_weight:Class_weight.balanced ~name:"logistic"
@@ -524,20 +574,160 @@ let test_unsupervised_compatibility () =
     (Array.make 12 (mean (Array.init 12 Fun.id) false))
     (predict fitted)
 
+let[@warning "-4"] test_nested_boundaries () =
+  let calls = ref 0 in
+  let specification = nested_pipeline ~observe:(fun () -> incr calls) () in
+  let check_error = function
+    | Ok _ -> Alcotest.fail "expected length error"
+    | Error error ->
+        Alcotest.(check bool)
+          "typed error" true
+          (match Error.kind error with
+          | Error.Data (Data_error.Length_mismatch _) -> true
+          | _ -> false);
+        Alcotest.(check int) "no fitting before validation" 0 !calls
+  in
+  Pipeline.fit specification ~rng:(rng ()) ~feature_schema:schema ~x
+    ~y:(regression [| 1. |]) ()
+  |> check_error;
+  let short = Sample_weight.of_array ~expected_length:1 [| 1. |] |> get_data in
+  Pipeline.fit specification ~sample_weight:short ~rng:(rng ())
+    ~feature_schema:schema ~x ~y ()
+  |> check_error;
+  let fitted = fit specification in
+  Alcotest.(check int)
+    "one training transform per active identity; empty selection skipped" 2
+    !calls;
+  let transformed =
+    Pipeline.transform fitted ~feature_schema:schema ~x |> get
+  in
+  Alcotest.(check int) "nested union width" 4 (Matrix.columns transformed);
+  Alcotest.(check (array string))
+    "nested output names"
+    [| "columns__prepared__x0"; "columns__prepared__x1"; "raw__x0"; "raw__x1" |]
+    (Pipeline.output_schema fitted
+    |> Feature_schema.names |> Option.get |> Feature_names.to_array);
+  let bad =
+    Pipeline.Supervised.transformer ~name:"drop-row"
+      (module Dropping_summary)
+      false
+    |> get
+  in
+  let builder =
+    Pipeline.Supervised.add_transformer Pipeline.Supervised.empty (nest bad)
+    |> get
+  in
+  let bad_pipeline =
+    Pipeline.Supervised.set_estimator builder (terminal ()) |> get
+  in
+  (match
+     Pipeline.fit bad_pipeline ~rng:(rng ()) ~feature_schema:schema ~x ~y ()
+   with
+  | Ok _ -> Alcotest.fail "row-changing nested transformer accepted"
+  | Error error ->
+      Alcotest.(check bool)
+        "full nested failure path" true
+        (Error.context error
+        = List.map
+            (fun name -> Error.Stage name)
+            [ "nested"; "views"; "columns"; "prepared"; "drop-row" ]));
+  let empty =
+    Transformer_pipeline.Supervised.create [||]
+    |> get
+    |> Transformer_pipeline.Supervised.stage ~name:"empty"
+    |> get
+  in
+  let builder =
+    Pipeline.Supervised.add_transformer Pipeline.Supervised.empty empty |> get
+  in
+  let empty_pipeline =
+    Pipeline.Supervised.set_estimator builder (terminal ()) |> get
+  in
+  calls := 0;
+  Pipeline.fit empty_pipeline ~rng:(rng ()) ~feature_schema:schema ~x
+    ~y:(regression [| 1. |]) ()
+  |> check_error
+
+let test_selected_union () =
+  let union =
+    Feature_union.Supervised.create
+      [|
+        Feature_union.Supervised.transformer
+          (stage ~name:"weighted" ~alignment:false ~route_sample_weight:true ());
+        Feature_union.Supervised.transformer
+          (stage ~name:"plain" ~alignment:false ());
+        Feature_union.Supervised.passthrough ~name:"raw" |> get;
+      |]
+    |> get
+    |> Feature_union.Supervised.stage ~name:"views"
+    |> get
+  in
+  let columns = Column_selector.indices [| 1; 0 |] |> get in
+  let composition =
+    Column_transformer.Supervised.create
+      [| Column_transformer.Supervised.transformer ~columns union |]
+    |> get
+    |> Column_transformer.Supervised.stage ~name:"columns"
+    |> get
+  in
+  let builder =
+    Pipeline.Supervised.add_transformer Pipeline.Supervised.empty composition
+    |> get
+  in
+  let specification =
+    Pipeline.Supervised.set_estimator builder (terminal ()) |> get
+  in
+  let fitted = fit specification in
+  let output = Pipeline.transform fitted ~feature_schema:schema ~x |> get in
+  Alcotest.check (Alcotest.float 1e-12) "weighted sibling"
+    (mean (Array.init 12 Fun.id) true)
+    (Matrix.get output 0 0);
+  Alcotest.check (Alcotest.float 1e-12) "unweighted sibling"
+    (mean (Array.init 12 Fun.id) false)
+    (Matrix.get output 0 2);
+  for row = 0 to 11 do
+    Alcotest.check (Alcotest.float 0.) "selected first column" 0.
+      (Matrix.get output row 4);
+    Alcotest.check (Alcotest.float 0.) "selected second column"
+      (Float.of_int row) (Matrix.get output row 5)
+  done
+
 let () =
   Alcotest.run "supervised pipelines"
     [
       ( "routing",
         [
+          Alcotest.test_case
+            "union within reordered columns and sibling weight policies" `Quick
+            test_selected_union;
+          Alcotest.test_case "nested routing and inference" `Quick (fun () ->
+              test_routing
+                ~build:(fun ?route_sample_weight ?observe () ->
+                  nested_pipeline ?route_sample_weight ?observe ())
+                ());
+          Alcotest.test_case "nested fold alignment and leakage" `Quick
+            (fun () ->
+              test_cross_validation
+                ~specification:(nested_pipeline ~route_sample_weight:true ())
+                ());
+          Alcotest.test_case "nested search refit" `Quick (fun () ->
+              test_grid_search
+                ~build:(fun () -> nested_pipeline ~route_sample_weight:true ())
+                ());
+          Alcotest.test_case "nested classification" `Quick (fun () ->
+              test_classification ~wrap:(fun stage -> nest ~raw:false stage) ());
+          Alcotest.test_case "nested validation, names, empty branches, errors"
+            `Quick test_nested_boundaries;
           Alcotest.test_case "mixed stages, weights, clone, inference" `Quick
-            test_routing;
+            (fun () -> test_routing ());
           Alcotest.test_case "pre-fit alignment validation" `Quick
             test_alignment_validation;
           Alcotest.test_case "fold alignment and held-out target leakage" `Quick
-            test_cross_validation;
-          Alcotest.test_case "grid-search refit" `Quick test_grid_search;
+            (fun () -> test_cross_validation ());
+          Alcotest.test_case "grid-search refit" `Quick (fun () ->
+              test_grid_search ());
           Alcotest.test_case "classification and terminal class weights" `Quick
-            test_classification;
+            (fun () -> test_classification ());
           Alcotest.test_case "row preservation and contextual failures" `Quick
             test_output_failure;
           Alcotest.test_case "names and unsupported artifacts" `Quick

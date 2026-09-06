@@ -227,7 +227,7 @@ module Pipeline : sig
     (('target, 'prediction) t, Error.t) result
 
   module Supervised : sig
-    type 'kind stage
+    type nonrec 'kind stage = 'kind Target.t stage
     type 'kind builder
 
     val transformer :

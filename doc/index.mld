@@ -596,7 +596,8 @@ transform branches and the final output matrix. Passthrough copies directly
 into that output. Child allocations, scratch, and OCaml metadata are excluded.
 The combined output-width limit is checked before final concatenation; each
 child remains responsible for its own allocation bounds. Composite artifact
-codecs and supervised column branches are not yet supported.
+codecs are not yet supported. Target-aware branches use
+{!Modelkit.Column_transformer.Supervised}.
 
 {2 Feature unions and nested preprocessing}
 
@@ -653,9 +654,9 @@ Every level forwards sample weights to child packages, which deliver them
 only to stages explicitly requesting weights. CV fits the entire composition
 inside each training fold. Child random streams derive from logical names
 and positions, and errors retain the full nested stage path. Branches execute
-sequentially so outer CV remains the parallelism owner. Supervised branch
-routing, sparse union output, branch-output weighting, and composite artifact
-codecs remain outside the current API.
+sequentially so outer CV remains the parallelism owner. Sparse union output,
+branch-output weighting, and composite artifact codecs remain outside the
+current API.
 
 {2 Supervised preprocessing}
 
@@ -703,6 +704,42 @@ stages into this builder. It preserves their opt-in weight routing and
 artifact codecs, and their fit still receives [y:None]. Stage names, child
 RNG derivation, feature-schema validation, and contextual errors follow the
 ordinary pipeline contract.
+
+The [Supervised] modules in {!Modelkit.Column_transformer},
+{!Modelkit.Feature_union}, and {!Modelkit.Transformer_pipeline} accept these
+same typed stages. Their [create] and [stage] functions let you nest them in
+any order, mixing supervised children with adapted unsupervised stages.
+Column selection changes features only: every child receives the same
+training targets and retains its own sample-weight routing policy.
+
+For example, this helper combines a target-aware selector's output with the
+original features and returns a stage for the supervised pipeline builder:
+
+{@ocaml[
+# let selection_and_original selector specification =
+    let ( let* ) = Result.bind in
+    let* selected =
+      Pipeline.Supervised.transformer ~name:"selected" selector specification
+    in
+    let* raw = Feature_union.Supervised.passthrough ~name:"raw" in
+    let* union =
+      Feature_union.Supervised.create
+        [| Feature_union.Supervised.transformer selected; raw |]
+    in
+    Feature_union.Supervised.stage ~name:"features" union;;
+val selection_and_original :
+...
+  'b -> ('c Pipeline.Supervised.stage, Error.t) result = <fun>
+]}
+
+Nested compositions share the ordinary naming, empty-selection, width-limit,
+and deterministic seed rules. All target and weight lengths are checked before
+any pipeline stage fits, even for empty target-aware compositions. Children
+must preserve row order as well as row count; row-count checks cannot detect a
+permutation performed incorrectly by a custom transformer. Fitting reuses each
+child's training output, while prediction requires only the fitted state and
+new features. Compositions do not capture the fit's targets or weights for
+later inference.
 
 Supervised stages currently have no artifact codec. This contract fits a
 stage and transforms the same training rows; it does not supply the internal

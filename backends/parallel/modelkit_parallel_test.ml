@@ -287,7 +287,7 @@ module Target_summary = struct
   let output_schema (schema, _, _) = schema
 end
 
-let test_supervised_domain_count_invariance () =
+let test_supervised_domain_count_invariance ?(wrap = Fun.id) () =
   let stage =
     Pipeline.Supervised.transformer ~name:"target-summary"
       (module Target_summary)
@@ -295,7 +295,8 @@ let test_supervised_domain_count_invariance () =
     |> get
   in
   let specification =
-    Pipeline.Supervised.add_transformer Pipeline.Supervised.empty stage |> get
+    Pipeline.Supervised.add_transformer Pipeline.Supervised.empty (wrap stage)
+    |> get
     |> fun builder ->
     Pipeline.Supervised.set_estimator builder
       (Pipeline.estimator ~name:"random" (module Random_regressor) () |> get)
@@ -432,6 +433,35 @@ let test_nested_domain_count_invariance () =
   in
   check_transformer_domains nested
 
+let test_supervised_nested_domains () =
+  let wrap stage =
+    let columns =
+      Column_transformer.Supervised.create
+        [|
+          Column_transformer.Supervised.transformer ~columns:Column_selector.all
+            stage;
+        |]
+      |> get
+      |> Column_transformer.Supervised.stage ~name:"columns"
+      |> get
+    in
+    let union =
+      Feature_union.Supervised.create
+        [|
+          Feature_union.Supervised.transformer columns;
+          Feature_union.Supervised.passthrough ~name:"raw" |> get;
+        |]
+      |> get
+      |> Feature_union.Supervised.stage ~name:"views"
+      |> get
+    in
+    Transformer_pipeline.Supervised.create [| union |]
+    |> get
+    |> Transformer_pipeline.Supervised.stage ~name:"nested"
+    |> get
+  in
+  test_supervised_domain_count_invariance ~wrap ()
+
 let () =
   Alcotest.run "parallel execution"
     [
@@ -440,9 +470,11 @@ let () =
           Alcotest.test_case "domain-count invariance" `Quick
             test_domain_count_invariance;
           Alcotest.test_case "supervised domain-count invariance" `Quick
-            test_supervised_domain_count_invariance;
+            (fun () -> test_supervised_domain_count_invariance ());
           Alcotest.test_case "column domain-count invariance" `Quick
             test_column_domain_count_invariance;
+          Alcotest.test_case "supervised nested domain-count invariance" `Quick
+            test_supervised_nested_domains;
           Alcotest.test_case "nested domain-count invariance" `Quick
             test_nested_domain_count_invariance;
           Alcotest.test_case "bounded ordered map" `Quick
