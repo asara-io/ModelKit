@@ -1,4 +1,5 @@
 open Modelkit_data
+open Modelkit_metadata
 
 module type SPECIFICATION = sig
   type t
@@ -86,6 +87,77 @@ module type TRANSFORMER = sig
   val fitted_params : fitted -> params
   val input_schema : fitted -> Feature_schema.t
   val output_schema : fitted -> Feature_schema.t
+end
+
+(** Transformer with explicit per-method metadata requests. Requests are read
+    from the specification when packaged and remain fixed for its fitted
+    lifetime. Both fit and transform requests are validated before training
+    begins, since fitting also transforms the training rows. The implementation
+    must preserve row count and order and must not retain metadata solely to
+    substitute it for future inference inputs. *)
+module type METADATA_TRANSFORMER = sig
+  include SPECIFICATION
+
+  type target
+  type fitted
+  type rng
+
+  val fit_request : t -> Metadata.Request.t
+  val transform_request : t -> Metadata.Request.t
+
+  val fit :
+    t ->
+    metadata:Metadata.t ->
+    rng:rng ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:target option ->
+    unit ->
+    (fitted, Error.t) result
+
+  val transform :
+    fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val fitted_params : fitted -> params
+  val input_schema : fitted -> Feature_schema.t
+  val output_schema : fitted -> Feature_schema.t
+end
+
+(** Estimator with a declared fit-metadata request. Prediction uses fitted state
+    and features; pipeline preprocessing may separately request inference
+    metadata. *)
+module type METADATA_ESTIMATOR = sig
+  include SPECIFICATION
+
+  type target
+  type prediction
+  type fitted
+  type rng
+
+  val fit_request : t -> Metadata.Request.t
+
+  val fit :
+    t ->
+    metadata:Metadata.t ->
+    rng:rng ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:target ->
+    unit ->
+    (fitted, Error.t) result
+
+  val predict :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (prediction, Error.t) result
+
+  val fitted_params : fitted -> params
+  val feature_schema : fitted -> Feature_schema.t
 end
 
 (** A named scoring rule over observed and predicted values. *)

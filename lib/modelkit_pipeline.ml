@@ -1,4 +1,5 @@
 open Modelkit_data
+open Modelkit_metadata
 open Modelkit_protocols
 
 module Pipeline = struct
@@ -14,7 +15,9 @@ module Pipeline = struct
     stage_name : string;
     transform_input_schema : Feature_schema.t;
     transform_output_schema : Feature_schema.t;
+    fitted_transform_metadata_check : Metadata.t -> (unit, Error.t) result;
     apply_transform :
+      metadata:Metadata.t ->
       feature_schema:Feature_schema.t ->
       x:Matrix.t ->
       (Matrix.t, Error.t) result;
@@ -23,8 +26,10 @@ module Pipeline = struct
 
   type transformer = {
     transformer_name : string;
+    transformer_fit_metadata_check : Metadata.t -> (unit, Error.t) result;
+    transformer_transform_metadata_check : Metadata.t -> (unit, Error.t) result;
     fit_transform :
-      sample_weight:Sample_weight.t option ->
+      metadata:Metadata.t ->
       rng:Rng.t ->
       feature_schema:Feature_schema.t ->
       x:Matrix.t ->
@@ -38,9 +43,11 @@ module Pipeline = struct
 
   type 'target stage = {
     name : string;
+    stage_fit_metadata_check : Metadata.t -> (unit, Error.t) result;
+    stage_transform_metadata_check : Metadata.t -> (unit, Error.t) result;
     validate_target : x:Matrix.t -> y:'target -> (unit, Error.t) result;
     fit_stage :
-      sample_weight:Sample_weight.t option ->
+      metadata:Metadata.t ->
       rng:Rng.t ->
       feature_schema:Feature_schema.t ->
       x:Matrix.t ->
@@ -70,9 +77,10 @@ module Pipeline = struct
 
   type ('target, 'prediction) estimator = {
     estimator_name : string;
+    estimator_fit_metadata_check : Metadata.t -> (unit, Error.t) result;
     estimator_capabilities : capabilities;
     fit_estimator :
-      ?sample_weight:Sample_weight.t ->
+      metadata:Metadata.t ->
       rng:Rng.t ->
       feature_schema:Feature_schema.t ->
       x:Matrix.t ->
@@ -142,19 +150,6 @@ module Pipeline = struct
               }))
     else validate_matrix output_schema output
 
-  let validate_sample_weight x = function
-    | None -> Ok ()
-    | Some weights ->
-        let expected = Matrix.rows x in
-        let observed = Sample_weight.length weights in
-        if expected = observed then Ok ()
-        else
-          Error
-            (Error.of_data_error
-               ~remediation:"provide one sample weight per training row"
-               (Data_error.Length_mismatch
-                  { name = "pipeline sample weights"; expected; observed }))
-
   let validate_fitted_schema ~stage ~expected observed =
     if Feature_schema.equal expected observed then Ok ()
     else
@@ -195,7 +190,8 @@ module Pipeline = struct
         stage_name = name;
         transform_input_schema = feature_schema;
         transform_output_schema = output_schema;
-        apply_transform = Transformer.transform fitted;
+        fitted_transform_metadata_check = (fun _ -> Ok ());
+        apply_transform = (fun ~metadata:_ -> Transformer.transform fitted);
         encode_transformer = Option.map (fun encode () -> encode fitted) encode;
       }
     in
@@ -204,14 +200,102 @@ module Pipeline = struct
   let transformer_internal ?encode ?(route_sample_weight = false) ~name
       transformer specification =
     let* () = validate_name name in
-    let fit_transform ~sample_weight ~rng ~feature_schema ~x =
+    let fit_transform ~metadata ~rng ~feature_schema ~x =
       fit_transformer ?encode ~route_sample_weight ~name transformer
-        specification ~sample_weight ~rng ~feature_schema ~x ~y:None
+        specification
+        ~sample_weight:(Metadata.sample_weight metadata)
+        ~rng ~feature_schema ~x ~y:None
     in
-    Ok { transformer_name = name; fit_transform }
+    Ok
+      {
+        transformer_name = name;
+        fit_transform;
+        transformer_fit_metadata_check = (fun _ -> Ok ());
+        transformer_transform_metadata_check = (fun _ -> Ok ());
+      }
 
   let transformer ?route_sample_weight ~name transformer specification =
     transformer_internal ?route_sample_weight ~name transformer specification
+
+  let package_metadata_transformer (type specification target fitted) ~name
+      (module Transformer : METADATA_TRANSFORMER
+        with type t = specification
+         and type target = target
+         and type fitted = fitted
+         and type rng = Rng.t) (specification : specification) =
+    let fit_request = Transformer.fit_request specification in
+    let transform_request = Transformer.transform_request specification in
+    let validate_transform_metadata =
+      Metadata.validate_request transform_request
+    in
+    let validate_fit_metadata metadata =
+      let* () = Metadata.validate_request fit_request metadata in
+      validate_transform_metadata metadata
+    in
+    let fit_transform ~metadata ~rng ~feature_schema ~x ~y =
+      let* fit_metadata = Metadata.route fit_request metadata in
+      let* fitted =
+        Transformer.fit specification ~metadata:fit_metadata ~rng
+          ~feature_schema ~x ~y ()
+      in
+      let* () =
+        validate_fitted_schema ~stage:name ~expected:feature_schema
+          (Transformer.input_schema fitted)
+      in
+      let output_schema = Transformer.output_schema fitted in
+      let apply_transform ~metadata ~feature_schema ~x =
+        let* metadata = Metadata.route transform_request metadata in
+        Transformer.transform fitted ~metadata ~feature_schema ~x
+      in
+      let* output = apply_transform ~metadata ~feature_schema ~x in
+      let* () = validate_transform_output ~input:x ~output_schema output in
+      let packaged =
+        {
+          stage_name = name;
+          transform_input_schema = feature_schema;
+          transform_output_schema = output_schema;
+          apply_transform;
+          fitted_transform_metadata_check = validate_transform_metadata;
+          encode_transformer = None;
+        }
+      in
+      Ok (packaged, output, output_schema)
+    in
+    (validate_fit_metadata, validate_transform_metadata, fit_transform)
+
+  let metadata_transformer ~name transformer specification =
+    let* () = validate_name name in
+    let validate_fit_metadata, validate_transform_metadata, fit =
+      package_metadata_transformer ~name transformer specification
+    in
+    let fit_transform ~metadata ~rng ~feature_schema ~x =
+      fit ~metadata ~rng ~feature_schema ~x ~y:None
+    in
+    Ok
+      {
+        transformer_name = name;
+        transformer_fit_metadata_check = validate_fit_metadata;
+        transformer_transform_metadata_check = validate_transform_metadata;
+        fit_transform;
+      }
+
+  let package_fitted_estimator ?encode ~name ~expected_schema ~fitted_schema
+      ~predict ?decision_function ?predict_proba ?classes fitted =
+    let* () =
+      validate_fitted_schema ~stage:name ~expected:expected_schema fitted_schema
+    in
+    Ok
+      {
+        terminal_name = name;
+        terminal_predict = predict fitted;
+        terminal_decision_function =
+          Option.map (fun dispatch -> dispatch fitted) decision_function;
+        terminal_predict_proba =
+          Option.map (fun dispatch -> dispatch fitted) predict_proba;
+        terminal_classes =
+          Option.map (fun dispatch () -> dispatch fitted) classes;
+        encode_estimator = Option.map (fun encode () -> encode fitted) encode;
+      }
 
   let estimator_internal (type specification target prediction fitted) ?encode
       ?resolve_weights ~name
@@ -229,7 +313,8 @@ module Pipeline = struct
         predict_proba = Option.is_some predict_proba;
       }
     in
-    let fit ?sample_weight ~rng ~feature_schema ~x ~y () =
+    let fit ~metadata ~rng ~feature_schema ~x ~y () =
+      let sample_weight = Metadata.sample_weight metadata in
       let* sample_weight =
         match resolve_weights with
         | None -> Ok sample_weight
@@ -238,31 +323,51 @@ module Pipeline = struct
       let* fitted =
         Estimator.fit specification ?sample_weight ~rng ~feature_schema ~x ~y ()
       in
-      let fitted_schema = Estimator.feature_schema fitted in
-      let* () =
-        validate_fitted_schema ~stage:name ~expected:feature_schema
-          fitted_schema
-      in
-      let fitted_estimator : prediction fitted_estimator =
-        {
-          terminal_name = name;
-          terminal_predict = Estimator.predict fitted;
-          terminal_decision_function =
-            Option.map (fun dispatch -> dispatch fitted) decision_function;
-          terminal_predict_proba =
-            Option.map (fun dispatch -> dispatch fitted) predict_proba;
-          terminal_classes =
-            Option.map (fun dispatch () -> dispatch fitted) classes;
-          encode_estimator = Option.map (fun encode () -> encode fitted) encode;
-        }
-      in
-      Ok fitted_estimator
+      package_fitted_estimator ?encode ~name ~expected_schema:feature_schema
+        ~fitted_schema:(Estimator.feature_schema fitted)
+        ~predict:Estimator.predict ?decision_function ?predict_proba ?classes
+        fitted
     in
     Ok
       {
         estimator_name = name;
         estimator_capabilities = capabilities;
         fit_estimator = fit;
+        estimator_fit_metadata_check = (fun _ -> Ok ());
+      }
+
+  let metadata_estimator (type specification target prediction fitted) ~name
+      (module Estimator : METADATA_ESTIMATOR
+        with type t = specification
+         and type target = target
+         and type prediction = prediction
+         and type fitted = fitted
+         and type rng = Rng.t) ?decision_function ?predict_proba ?classes
+      (specification : specification) =
+    let* () = validate_name name in
+    let fit_request = Estimator.fit_request specification in
+    let capabilities : capabilities =
+      {
+        decision_function = Option.is_some decision_function;
+        predict_proba = Option.is_some predict_proba;
+      }
+    in
+    let fit ~metadata ~rng ~feature_schema ~x ~y () =
+      let* metadata = Metadata.route fit_request metadata in
+      let* fitted =
+        Estimator.fit specification ~metadata ~rng ~feature_schema ~x ~y ()
+      in
+      package_fitted_estimator ~name ~expected_schema:feature_schema
+        ~fitted_schema:(Estimator.feature_schema fitted)
+        ~predict:Estimator.predict ?decision_function ?predict_proba ?classes
+        fitted
+    in
+    Ok
+      {
+        estimator_name = name;
+        estimator_capabilities = capabilities;
+        fit_estimator = fit;
+        estimator_fit_metadata_check = Metadata.validate_request fit_request;
       }
 
   let estimator ~name estimator ?decision_function ?predict_proba ?classes
@@ -290,10 +395,13 @@ module Pipeline = struct
   let unsupervised (transformer : transformer) =
     {
       name = transformer.transformer_name;
+      stage_fit_metadata_check = transformer.transformer_fit_metadata_check;
+      stage_transform_metadata_check =
+        transformer.transformer_transform_metadata_check;
       validate_target = (fun ~x:_ ~y:_ -> Ok ());
       fit_stage =
-        (fun ~sample_weight ~rng ~feature_schema ~x ~y:_ ->
-          transformer.fit_transform ~sample_weight ~rng ~feature_schema ~x);
+        (fun ~metadata ~rng ~feature_schema ~x ~y:_ ->
+          transformer.fit_transform ~metadata ~rng ~feature_schema ~x);
     }
 
   let add_transformer (builder : builder) (transformer : transformer) =
@@ -327,25 +435,50 @@ module Pipeline = struct
       stage_names : string list;
     }
 
+    let validate_target ~x ~y =
+      let expected = Matrix.rows x in
+      let observed = Target.length y in
+      if expected = observed then Ok ()
+      else
+        Error
+          (Error.of_data_error
+             ~remediation:"provide one target per training row"
+             (Data_error.Length_mismatch
+                { name = "pipeline targets"; expected; observed }))
+
     let transformer ?(route_sample_weight = false) ~name transformer
         specification =
       let* () = validate_name name in
-      let validate_target ~x ~y =
-        let expected = Matrix.rows x in
-        let observed = Target.length y in
-        if expected = observed then Ok ()
-        else
-          Error
-            (Error.of_data_error
-               ~remediation:"provide one target per training row"
-               (Data_error.Length_mismatch
-                  { name = "pipeline targets"; expected; observed }))
-      in
-      let fit_stage ~sample_weight ~rng ~feature_schema ~x ~y =
+      let fit_stage ~metadata ~rng ~feature_schema ~x ~y =
         fit_transformer ~route_sample_weight ~name transformer specification
-          ~sample_weight ~rng ~feature_schema ~x ~y:(Some y)
+          ~sample_weight:(Metadata.sample_weight metadata)
+          ~rng ~feature_schema ~x ~y:(Some y)
       in
-      Ok { name; validate_target; fit_stage }
+      Ok
+        {
+          name;
+          validate_target;
+          fit_stage;
+          stage_fit_metadata_check = (fun _ -> Ok ());
+          stage_transform_metadata_check = (fun _ -> Ok ());
+        }
+
+    let metadata_transformer ~name transformer specification =
+      let* () = validate_name name in
+      let validate_fit_metadata, validate_transform_metadata, fit =
+        package_metadata_transformer ~name transformer specification
+      in
+      let fit_stage ~metadata ~rng ~feature_schema ~x ~y =
+        fit ~metadata ~rng ~feature_schema ~x ~y:(Some y)
+      in
+      Ok
+        {
+          name;
+          validate_target;
+          stage_fit_metadata_check = validate_fit_metadata;
+          stage_transform_metadata_check = validate_transform_metadata;
+          fit_stage;
+        }
 
     let unsupervised = unsupervised
     let empty = { reversed_stages = []; stage_names = [] }
@@ -387,9 +520,20 @@ module Pipeline = struct
     in
     Rng.create seed
 
-  let fit specification ?sample_weight ~rng ~feature_schema ~x ~y () =
+  let fit_with_metadata specification ~metadata ~rng ~feature_schema ~x ~y () =
     let* () = validate_matrix feature_schema x in
-    let* () = validate_sample_weight x sample_weight in
+    let* () = Metadata.validate ~rows:(Matrix.rows x) metadata in
+    let* () =
+      Array.fold_left
+        (fun result (stage : _ stage) ->
+          let* () = result in
+          with_stage stage.name (stage.stage_fit_metadata_check metadata))
+        (Ok ()) specification.transformers
+    in
+    let* () =
+      with_stage specification.estimator.estimator_name
+        (specification.estimator.estimator_fit_metadata_check metadata)
+    in
     let* () =
       Array.fold_left
         (fun result stage ->
@@ -408,7 +552,7 @@ module Pipeline = struct
         in
         let* fitted, transformed, output_schema =
           with_stage transformer.name
-            (transformer.fit_stage ~sample_weight ~rng:stage_rng
+            (transformer.fit_stage ~metadata ~rng:stage_rng
                ~feature_schema:current_schema ~x:current_x ~y)
         in
         fit_transformers (index + 1) output_schema transformed
@@ -424,7 +568,7 @@ module Pipeline = struct
     in
     let* fitted_estimator =
       with_stage specification.estimator.estimator_name
-        (specification.estimator.fit_estimator ?sample_weight ~rng:estimator_rng
+        (specification.estimator.fit_estimator ~metadata ~rng:estimator_rng
            ~feature_schema:output_schema ~x:transformed_x ~y ())
     in
     Ok
@@ -435,11 +579,25 @@ module Pipeline = struct
         pipeline_output_schema = output_schema;
       }
 
-  let transform fitted ~feature_schema ~x =
+  let fit specification ?sample_weight ~rng ~feature_schema ~x ~y () =
+    fit_with_metadata specification
+      ~metadata:(Metadata.create ?sample_weight ())
+      ~rng ~feature_schema ~x ~y ()
+
+  let transform_with_metadata fitted ~metadata ~feature_schema ~x =
     let* () =
       validate_schema ~expected:fitted.pipeline_input_schema feature_schema
     in
     let* () = validate_matrix feature_schema x in
+    let* () = Metadata.validate ~rows:(Matrix.rows x) metadata in
+    let* () =
+      Array.fold_left
+        (fun result transformer ->
+          let* () = result in
+          with_stage transformer.stage_name
+            (transformer.fitted_transform_metadata_check metadata))
+        (Ok ()) fitted.fitted_transformers
+    in
     let rec apply index current_schema current_x =
       if index = Array.length fitted.fitted_transformers then Ok current_x
       else
@@ -451,8 +609,8 @@ module Pipeline = struct
         in
         let* transformed =
           with_stage transformer.stage_name
-            (transformer.apply_transform ~feature_schema:current_schema
-               ~x:current_x)
+            (transformer.apply_transform ~metadata
+               ~feature_schema:current_schema ~x:current_x)
         in
         let* () =
           with_stage transformer.stage_name
@@ -463,8 +621,10 @@ module Pipeline = struct
     in
     apply 0 feature_schema x
 
-  let predict fitted ~feature_schema ~x =
-    let* transformed = transform fitted ~feature_schema ~x in
+  let predict_with_metadata fitted ~metadata ~feature_schema ~x =
+    let* transformed =
+      transform_with_metadata fitted ~metadata ~feature_schema ~x
+    in
     with_stage fitted.fitted_estimator.terminal_name
       (fitted.fitted_estimator.terminal_predict
          ~feature_schema:fitted.pipeline_output_schema ~x:transformed)
@@ -479,21 +639,39 @@ module Pipeline = struct
            reason = capability ^ " is unavailable";
          })
 
-  let decision_function fitted ~feature_schema ~x =
+  let decision_function_with_metadata fitted ~metadata ~feature_schema ~x =
     match fitted.fitted_estimator.terminal_decision_function with
     | None -> Error (unsupported fitted "decision_function")
     | Some dispatch ->
-        let* transformed = transform fitted ~feature_schema ~x in
+        let* transformed =
+          transform_with_metadata fitted ~metadata ~feature_schema ~x
+        in
         with_stage fitted.fitted_estimator.terminal_name
           (dispatch ~feature_schema:fitted.pipeline_output_schema ~x:transformed)
 
-  let predict_proba fitted ~feature_schema ~x =
+  let predict_proba_with_metadata fitted ~metadata ~feature_schema ~x =
     match fitted.fitted_estimator.terminal_predict_proba with
     | None -> Error (unsupported fitted "predict_proba")
     | Some dispatch ->
-        let* transformed = transform fitted ~feature_schema ~x in
+        let* transformed =
+          transform_with_metadata fitted ~metadata ~feature_schema ~x
+        in
         with_stage fitted.fitted_estimator.terminal_name
           (dispatch ~feature_schema:fitted.pipeline_output_schema ~x:transformed)
+
+  let transform fitted ~feature_schema ~x =
+    transform_with_metadata fitted ~metadata:Metadata.empty ~feature_schema ~x
+
+  let predict fitted ~feature_schema ~x =
+    predict_with_metadata fitted ~metadata:Metadata.empty ~feature_schema ~x
+
+  let decision_function fitted ~feature_schema ~x =
+    decision_function_with_metadata fitted ~metadata:Metadata.empty
+      ~feature_schema ~x
+
+  let predict_proba fitted ~feature_schema ~x =
+    predict_proba_with_metadata fitted ~metadata:Metadata.empty ~feature_schema
+      ~x
 
   let classes fitted =
     match fitted.fitted_estimator.terminal_classes with

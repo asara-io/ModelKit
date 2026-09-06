@@ -823,7 +823,9 @@ module Artifact = struct
               Pipeline.stage_name = name;
               transform_input_schema = input_schema;
               transform_output_schema = output_schema;
-              apply_transform = Simple_imputer.transform fitted;
+              apply_transform =
+                (fun ~metadata:_ -> Simple_imputer.transform fitted);
+              fitted_transform_metadata_check = (fun _ -> Ok ());
               encode_transformer = Some (fun () -> encode_simple_imputer fitted);
             }
     | 2 ->
@@ -863,7 +865,9 @@ module Artifact = struct
               Pipeline.stage_name = name;
               transform_input_schema = input_schema;
               transform_output_schema = output_schema;
-              apply_transform = Standard_scaler.transform fitted;
+              apply_transform =
+                (fun ~metadata:_ -> Standard_scaler.transform fitted);
+              fitted_transform_metadata_check = (fun _ -> Ok ());
               encode_transformer =
                 Some (fun () -> encode_standard_scaler fitted);
             }
@@ -918,7 +922,9 @@ module Artifact = struct
                 Pipeline.stage_name = name;
                 transform_input_schema = input_schema;
                 transform_output_schema = output_schema;
-                apply_transform = Variance_threshold.transform fitted;
+                apply_transform =
+                  (fun ~metadata:_ -> Variance_threshold.transform fitted);
+                fitted_transform_metadata_check = (fun _ -> Ok ());
                 encode_transformer =
                   Some (fun () -> encode_variance_threshold fitted);
               }

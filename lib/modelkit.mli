@@ -509,6 +509,44 @@ module Admission : sig
       reports. *)
 end
 
+(** Immutable, typed, row-aligned inputs for metadata-aware consumers. Metadata
+    is supplied independently for each operation; fitted pipelines do not retain
+    fit metadata for later inference. *)
+module Metadata : sig
+  type t
+
+  val create : ?sample_weight:Sample_weight.t -> ?groups:Groups.t -> unit -> t
+  val empty : t
+  val sample_weight : t -> Sample_weight.t option
+  val groups : t -> Groups.t option
+
+  val validate : rows:int -> t -> (unit, Error.t) result
+  (** Checks every supplied field, including fields ignored by consumers. *)
+
+  module Request : sig
+    (** [Ignore] never delivers the field; [Optional] delivers it when supplied;
+        [Required] rejects absence; [Reject] rejects presence. Requests are
+        independent for each method and each consumer. *)
+    type policy = Ignore | Optional | Required | Reject
+
+    type t
+
+    val create : ?sample_weight:policy -> ?groups:policy -> unit -> t
+    (** Both policies default to [Ignore]. *)
+
+    val none : t
+    val sample_weight : t -> policy
+    val groups : t -> policy
+  end
+
+  val validate_request : Request.t -> t -> (unit, Error.t) result
+
+  val route : Request.t -> t -> (t, Error.t) result
+  (** Checks presence policies and returns only requested fields, sharing the
+      immutable values. This does not check row lengths; use [validate] at the
+      operation boundary. Ignored fields may still reach requesting siblings. *)
+end
+
 (** Shared convention for immutable configured components.
 
     Concrete modules expose [params] as a public typed value. [clone] returns an
@@ -600,6 +638,77 @@ module type TRANSFORMER = sig
   val fitted_params : fitted -> params
   val input_schema : fitted -> Feature_schema.t
   val output_schema : fitted -> Feature_schema.t
+end
+
+(** Transformer with explicit per-method metadata requests. Requests are read
+    from the specification when packaged and remain fixed for its fitted
+    lifetime. Both fit and transform requests are validated before training
+    begins, since fitting also transforms the training rows. The implementation
+    must preserve row count and order and must not retain metadata solely to
+    substitute it for future inference inputs. *)
+module type METADATA_TRANSFORMER = sig
+  include SPECIFICATION
+
+  type target
+  type fitted
+  type rng
+
+  val fit_request : t -> Metadata.Request.t
+  val transform_request : t -> Metadata.Request.t
+
+  val fit :
+    t ->
+    metadata:Metadata.t ->
+    rng:rng ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:target option ->
+    unit ->
+    (fitted, Error.t) result
+
+  val transform :
+    fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val fitted_params : fitted -> params
+  val input_schema : fitted -> Feature_schema.t
+  val output_schema : fitted -> Feature_schema.t
+end
+
+(** Estimator with a declared fit-metadata request. Prediction uses fitted state
+    and features; pipeline preprocessing may separately request inference
+    metadata. *)
+module type METADATA_ESTIMATOR = sig
+  include SPECIFICATION
+
+  type target
+  type prediction
+  type fitted
+  type rng
+
+  val fit_request : t -> Metadata.Request.t
+
+  val fit :
+    t ->
+    metadata:Metadata.t ->
+    rng:rng ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:target ->
+    unit ->
+    (fitted, Error.t) result
+
+  val predict :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (prediction, Error.t) result
+
+  val fitted_params : fitted -> params
+  val feature_schema : fitted -> Feature_schema.t
 end
 
 (** A named scoring rule over observed and predicted values. *)
@@ -1140,11 +1249,11 @@ end
 
     Unsupervised stages do not receive targets; {!Pipeline.Supervised}
     additionally packages target-aware stages in a builder tied to the target
-    kind. Sample weights always route to the terminal estimator and reach a
-    transformer stage only when it was packaged with [route_sample_weight]. Each
-    stage receives a child RNG derived from its logical name and position. Fit
-    and inference are sequential and allocate one dense matrix per transformer
-    stage. *)
+    kind. Legacy packages route sample weights to the terminal estimator and to
+    transformers opting in with [route_sample_weight]. Metadata-aware packages
+    use declared per-method requests for weights and groups. Each stage receives
+    a child RNG derived from its logical name and position. Fit and inference
+    are sequential and allocate one dense matrix per transformer stage. *)
 module Pipeline : sig
   type transformer
   type builder
@@ -1152,6 +1261,19 @@ module Pipeline : sig
   type ('target, 'prediction) t
   type ('target, 'prediction) fitted
   type capabilities = { decision_function : bool; predict_proba : bool }
+
+  val metadata_transformer :
+    name:string ->
+    (module METADATA_TRANSFORMER
+       with type t = 'specification
+        and type target = unit
+        and type fitted = 'fitted
+        and type rng = Rng.t) ->
+    'specification ->
+    (transformer, Error.t) result
+  (** Packages per-method requests from the specification once. Fit validates
+      both the fit request and the training transform request. No artifact codec
+      is supplied for this adapter. *)
 
   val transformer :
     ?route_sample_weight:bool ->
@@ -1167,6 +1289,31 @@ module Pipeline : sig
       Sample weights reach the stage's [fit] only when [route_sample_weight] is
       true; by default the stage fits unweighted, matching transformers that
       declare no weight support. *)
+
+  val metadata_estimator :
+    name:string ->
+    (module METADATA_ESTIMATOR
+       with type t = 'specification
+        and type target = 'target
+        and type prediction = 'prediction
+        and type fitted = 'fitted
+        and type rng = Rng.t) ->
+    ?decision_function:
+      ('fitted ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      (Vector.t, Error.t) result) ->
+    ?predict_proba:
+      ('fitted ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      (Matrix.t, Error.t) result) ->
+    ?classes:('fitted -> int array) ->
+    'specification ->
+    (('target, 'prediction) estimator, Error.t) result
+  (** Packages a terminal fit request and optional prediction capabilities.
+      Weight delivery follows that request; class-weight resolution, when
+      needed, belongs to the consumer. No artifact codec is supplied. *)
 
   val estimator :
     name:string ->
@@ -1231,6 +1378,16 @@ module Pipeline : sig
     type 'kind stage
     type 'kind builder
 
+    val metadata_transformer :
+      name:string ->
+      (module METADATA_TRANSFORMER
+         with type t = 'specification
+          and type target = 'kind Target.t
+          and type fitted = 'fitted
+          and type rng = Rng.t) ->
+      'specification ->
+      ('kind stage, Error.t) result
+
     val transformer :
       ?route_sample_weight:bool ->
       name:string ->
@@ -1264,7 +1421,8 @@ module Pipeline : sig
     (** The terminal and supervised stages share the same target kind. The
         resulting pipeline uses the ordinary fit, prediction, CV, and search
         APIs. Targets are used only during fitting; inference reuses learned
-        transforms without requiring targets or weights.
+        transforms without targets. Metadata-aware stages may separately request
+        inference weights or groups.
 
         A supervised stage fits on and transforms the same training rows. This
         is suitable for feature selection; target encoders needing internal
@@ -1276,6 +1434,53 @@ module Pipeline : sig
   val transformer_names : ('target, 'prediction) t -> string array
   val estimator_name : ('target, 'prediction) t -> string
   val capabilities : ('target, 'prediction) t -> capabilities
+
+  val fit_with_metadata :
+    ('target, 'prediction) t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:'target ->
+    unit ->
+    (('target, 'prediction) fitted, Error.t) result
+  (** Metadata-aware operations validate all supplied row lengths and all
+      declared requests before any consumer runs. Fit preflight includes the
+      transforms of training rows. Requests are structural: configured children
+      are checked even when a column selection later proves empty. Metadata
+      remains row-aligned through feature transformations; values are neither
+      transformed nor implicitly reused from fitting. Existing operations use
+      absent metadata, apart from the legacy fit's optional sample weights.
+      Groups supplied here reach requesting consumers; CV/search routing is a
+      separate operation. *)
+
+  val transform_with_metadata :
+    ('target, 'prediction) fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val predict_with_metadata :
+    ('target, 'prediction) fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    ('prediction, Error.t) result
+
+  val decision_function_with_metadata :
+    ('target, 'prediction) fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Vector.t, Error.t) result
+
+  val predict_proba_with_metadata :
+    ('target, 'prediction) fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
 
   val fit :
     ('target, 'prediction) t ->
@@ -1427,6 +1632,40 @@ module Column_transformer : sig
       transform pass during fitting. Use [Pipeline.Supervised.unsupervised] to
       include it in a target-aware pipeline. *)
 
+  val fit_with_metadata :
+    t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted, Error.t) result
+
+  val fit_transform_with_metadata :
+    t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted * Matrix.t * allocation, Error.t) result
+
+  val transform_with_metadata :
+    fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val transform_with_report_with_metadata :
+    fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t * allocation, Error.t) result
+
   (** Target-aware composition for {!Pipeline.Supervised} pipelines. All active
       children receive the same training targets in row order; sample weights
       retain each child's opt-in policy. Adapt ordinary stages with
@@ -1505,6 +1744,33 @@ module Transformer_pipeline : sig
       unions without an extra training transform pass. Sample weights reach only
       children that request them. Composite artifact codecs are not yet
       supported. *)
+
+  val fit_with_metadata :
+    t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted, Error.t) result
+
+  val fit_transform_with_metadata :
+    t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted * Matrix.t, Error.t) result
+
+  val transform_with_metadata :
+    fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
 
   (** Target-aware composition for {!Pipeline.Supervised} pipelines. All active
       children receive the same training targets in row order; sample weights
@@ -1596,6 +1862,40 @@ module Feature_union : sig
   (** Packages the union as an ordinary transformer stage, retaining child
       weight routing and reusing branch outputs during fitting. It can nest
       inside a column transformer or transformer pipeline. *)
+
+  val fit_with_metadata :
+    t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted, Error.t) result
+
+  val fit_transform_with_metadata :
+    t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted * Matrix.t * allocation, Error.t) result
+
+  val transform_with_metadata :
+    fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val transform_with_report_with_metadata :
+    fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t * allocation, Error.t) result
 
   (** Target-aware composition for {!Pipeline.Supervised} pipelines. All active
       children receive the same training targets in row order; sample weights

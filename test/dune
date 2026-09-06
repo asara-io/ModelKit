@@ -380,3 +380,9 @@
    MODELKIT_NESTED_FIXTURE
    %{dep:fixtures/sklearn/nested_composition_v1.tsv}
    (run %{test}))))
+
+(test
+ (name metadata_routing_test)
+ (modules metadata_routing_test)
+ (package modelkit)
+ (libraries modelkit alcotest))

@@ -20,6 +20,7 @@ The full documentation is available via: [https://ocaml.org/p/modelkit/latest/do
 - Portable numeric, categorical, target, interaction, and missingness transforms cover min-max, max-absolute, robust, per-sample normalization, one-hot, ordinal, label, polynomial, and missing-indicator workflows.
 - Sequential pipelines support unsupervised and target-aware preprocessing fitted only on training rows, with explicit sample-weight routing, preserved feature schemas, and terminal prediction, decision, and probability dispatch.
 - Dense column-wise preprocessing combines independently fitted branches with checked index/name selectors, passthrough/drop, deterministic output names, and observable copy allocations.
+- Typed per-method metadata requests route weights and groups through nested fitting and inference, with early alignment checks.
 - Feature unions, column transformers, and nestable preprocessing chains combine supervised and unsupervised transformations with deterministic feature names and fold-local fitting.
 - Portable weighted ordinary least squares, ridge, lasso, elastic-net, binary and multinomial logistic regression, Poisson and Tweedie generalized linear models, binary and multiclass ridge classification, and incremental SGD estimators keep immutable specifications separate from fitted coefficients and solver diagnostics.
 - Deterministic K-fold, stratified K-fold, group K-fold, and expanding-window time-series splitters produce validated row views that can be explicitly materialized as aligned datasets.

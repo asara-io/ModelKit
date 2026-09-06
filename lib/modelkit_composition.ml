@@ -1,4 +1,5 @@
 open Modelkit_data
+open Modelkit_metadata
 open Modelkit_protocols
 open Modelkit_pipeline
 
@@ -131,11 +132,14 @@ module Stage = struct
   let unsupervised (transformer : Pipeline.transformer) =
     {
       Pipeline.name = transformer.Pipeline.transformer_name;
+      stage_fit_metadata_check =
+        transformer.Pipeline.transformer_fit_metadata_check;
+      stage_transform_metadata_check =
+        transformer.Pipeline.transformer_transform_metadata_check;
       validate_target = (fun ~x:_ ~y:_ -> Ok ());
       fit_stage =
-        (fun ~sample_weight ~rng ~feature_schema ~x ~y:_ ->
-          transformer.Pipeline.fit_transform ~sample_weight ~rng ~feature_schema
-            ~x);
+        (fun ~metadata ~rng ~feature_schema ~x ~y:_ ->
+          transformer.Pipeline.fit_transform ~metadata ~rng ~feature_schema ~x);
     }
 
   let validate stages ~x ~y =
@@ -145,15 +149,39 @@ module Stage = struct
         with_stage stage.Pipeline.name (stage.Pipeline.validate_target ~x ~y))
       (Ok ()) stages
 
-  let package ~name ~validate_target ~fit_transform ~transform ~output_schema
+  let validate_fit stages metadata =
+    Array.fold_left
+      (fun result stage ->
+        let* () = result in
+        with_stage stage.Pipeline.name
+          (stage.Pipeline.stage_fit_metadata_check metadata))
+      (Ok ()) stages
+
+  let validate_transform stages metadata =
+    Array.fold_left
+      (fun result stage ->
+        let* () = result in
+        with_stage stage.Pipeline.name
+          (stage.Pipeline.stage_transform_metadata_check metadata))
+      (Ok ()) stages
+
+  let validate_fitted stages metadata =
+    Array.fold_left
+      (fun result stage ->
+        let* () = result in
+        with_stage stage.Pipeline.stage_name
+          (stage.Pipeline.fitted_transform_metadata_check metadata))
+      (Ok ()) stages
+
+  let package ~name ~validate_target ~validate_fit_metadata
+      ~validate_transform_metadata ~fit_transform ~transform ~output_schema
       specification =
     if String.trim name = "" then
       invalid "pipeline stage name" "must not be blank"
     else
-      let fit_stage ~sample_weight ~rng ~feature_schema ~x ~y =
+      let fit_stage ~metadata ~rng ~feature_schema ~x ~y =
         let* fitted, output =
-          fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y
-            ()
+          fit_transform specification ~metadata ~rng ~feature_schema ~x ~y ()
         in
         let schema = output_schema fitted in
         let packaged =
@@ -162,12 +190,21 @@ module Stage = struct
             transform_input_schema = feature_schema;
             transform_output_schema = schema;
             apply_transform = transform fitted;
+            fitted_transform_metadata_check = validate_transform_metadata;
             encode_transformer = None;
           }
         in
         Ok (packaged, output, schema)
       in
-      Ok Pipeline.{ name; validate_target; fit_stage }
+      Ok
+        Pipeline.
+          {
+            name;
+            validate_target;
+            stage_fit_metadata_check = validate_fit_metadata;
+            stage_transform_metadata_check = validate_transform_metadata;
+            fit_stage;
+          }
 
   let supervised stage =
     let validate_target ~x ~y =
@@ -185,9 +222,12 @@ module Stage = struct
   let erase (stage : unit Pipeline.stage) =
     {
       Pipeline.transformer_name = stage.Pipeline.name;
+      transformer_fit_metadata_check = stage.Pipeline.stage_fit_metadata_check;
+      transformer_transform_metadata_check =
+        stage.Pipeline.stage_transform_metadata_check;
       fit_transform =
-        (fun ~sample_weight ~rng ~feature_schema ~x ->
-          stage.Pipeline.fit_stage ~sample_weight ~rng ~feature_schema ~x ~y:());
+        (fun ~metadata ~rng ~feature_schema ~x ->
+          stage.Pipeline.fit_stage ~metadata ~rng ~feature_schema ~x ~y:());
     }
 end
 
@@ -346,12 +386,18 @@ module Column_transformer_core = struct
               }))
     else Feature_schema.validate_matrix schema x |> data
 
-  let fit_branches specification ~sample_weight ~rng ~feature_schema ~x ~y =
+  let stages specification =
+    Array.to_list specification.branches
+    |> List.filter_map (fun branch ->
+        match branch.action with
+        | Transform stage -> Some stage
+        | Pass | Omit -> None)
+    |> Array.of_list
+
+  let fit_branches specification ~metadata ~rng ~feature_schema ~x ~y =
     let* () = Feature_schema.validate_matrix feature_schema x |> data in
-    let* () =
-      Modelkit_preprocessing.Preprocessing_internal.validate_sample_weight
-        "column transformer" x sample_weight
-    in
+    let* () = Metadata.validate ~rows:(Matrix.rows x) metadata in
+    let* () = Stage.validate_fit (stages specification) metadata in
     let* resolved = resolve specification feature_schema in
     let source_names = input_names feature_schema in
     let rec loop index width copies reversed_branches reversed_blocks
@@ -396,9 +442,8 @@ module Column_transformer_core = struct
                           ~index)
                    in
                    let* fitted, output, output_schema =
-                     transformer.Pipeline.fit_stage ~y ~sample_weight
-                       ~rng:child_rng ~feature_schema:selected_schema
-                       ~x:selected
+                     transformer.Pipeline.fit_stage ~y ~metadata ~rng:child_rng
+                       ~feature_schema:selected_schema ~x:selected
                    in
                    let* () =
                      validate_output ~rows:(Matrix.rows x) ~schema:output_schema
@@ -460,20 +505,22 @@ module Column_transformer_core = struct
     in
     Ok (output, { selected_input_bytes; output_bytes })
 
-  let fit specification ?sample_weight ~rng ~feature_schema ~x ~y () =
+  let fit specification ~metadata ~rng ~feature_schema ~x ~y () =
     let* fitted, _, _ =
-      fit_branches specification ~sample_weight ~rng ~feature_schema ~x ~y
+      fit_branches specification ~metadata ~rng ~feature_schema ~x ~y
     in
     Ok fitted
 
-  let fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y () =
+  let fit_transform specification ~metadata ~rng ~feature_schema ~x ~y () =
     let* fitted, blocks, copies =
-      fit_branches specification ~sample_weight ~rng ~feature_schema ~x ~y
+      fit_branches specification ~metadata ~rng ~feature_schema ~x ~y
     in
     let* output, allocation = concatenate fitted ~x blocks copies in
     Ok (fitted, output, allocation)
 
-  let transform_with_report fitted ~feature_schema ~x =
+  let transform_with_report fitted ~metadata ~feature_schema ~x =
+    let* () = Metadata.validate ~rows:(Matrix.rows x) metadata in
+    let* () = Stage.validate_transform (stages fitted.specification) metadata in
     let* () =
       if Feature_schema.equal fitted.input_schema feature_schema then
         Feature_schema.validate_matrix feature_schema x |> data
@@ -502,7 +549,7 @@ module Column_transformer_core = struct
             | Some transformer ->
                 let* selected = select x branch.info.input_indices in
                 let* output =
-                  transformer.Pipeline.apply_transform
+                  transformer.Pipeline.apply_transform ~metadata
                     ~feature_schema:branch.selected_schema ~x:selected
                 in
                 let* () =
@@ -520,28 +567,24 @@ module Column_transformer_core = struct
     in
     loop 0 0L []
 
-  let transform fitted ~feature_schema ~x =
-    let* output, _ = transform_with_report fitted ~feature_schema ~x in
+  let transform fitted ~metadata ~feature_schema ~x =
+    let* output, _ =
+      transform_with_report fitted ~metadata ~feature_schema ~x
+    in
     Ok output
 
-  let stages specification =
-    Array.to_list specification.branches
-    |> List.filter_map (fun branch ->
-        match branch.action with
-        | Transform stage -> Some stage
-        | Pass | Omit -> None)
-    |> Array.of_list
-
   let stage ~name specification =
-    let fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y ()
-        =
+    let fit_transform specification ~metadata ~rng ~feature_schema ~x ~y () =
       let* fitted, output, _ =
-        fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y ()
+        fit_transform specification ~metadata ~rng ~feature_schema ~x ~y ()
       in
       Ok (fitted, output)
     in
     Stage.package ~name
       ~validate_target:(Stage.validate (stages specification))
+      ~validate_fit_metadata:(Stage.validate_fit (stages specification))
+      ~validate_transform_metadata:
+        (Stage.validate_transform (stages specification))
       ~fit_transform ~transform ~output_schema specification
 end
 
@@ -554,10 +597,9 @@ module Composition_internal = struct
       invalid component "stage names must not be blank"
     else Ok ()
 
-  let validate_fit ~operation ~sample_weight ~feature_schema ~x =
+  let validate_fit ~metadata ~feature_schema ~x =
     let* () = Feature_schema.validate_matrix feature_schema x |> data in
-    Modelkit_preprocessing.Preprocessing_internal.validate_sample_weight
-      operation x sample_weight
+    Metadata.validate ~rows:(Matrix.rows x) metadata
 
   let validate_input expected observed x =
     if Feature_schema.equal expected observed then
@@ -569,11 +611,13 @@ module Composition_internal = struct
              "provide the same ordered feature schema used during fitting"
            (Error.Feature_schema_mismatch { expected; observed }))
 
-  let apply fitted ~feature_schema ~x =
+  let apply fitted ~metadata ~feature_schema ~x =
     let* () =
       validate_input fitted.Pipeline.transform_input_schema feature_schema x
     in
-    let* output = fitted.Pipeline.apply_transform ~feature_schema ~x in
+    let* output =
+      fitted.Pipeline.apply_transform ~metadata ~feature_schema ~x
+    in
     let* () =
       Pipeline.validate_transform_output ~input:x
         ~output_schema:fitted.Pipeline.transform_output_schema output
@@ -610,11 +654,9 @@ module Transformer_pipeline_core = struct
   let stage_names specification =
     Array.map (fun stage -> stage.Pipeline.name) specification
 
-  let fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y () =
-    let* () =
-      validate_fit ~operation:"transformer pipeline" ~sample_weight
-        ~feature_schema ~x
-    in
+  let fit_transform specification ~metadata ~rng ~feature_schema ~x ~y () =
+    let* () = validate_fit ~metadata ~feature_schema ~x in
+    let* () = Stage.validate_fit specification metadata in
     let rec loop index current_schema current_x reversed =
       if index = Array.length specification then
         Ok
@@ -635,20 +677,22 @@ module Transformer_pipeline_core = struct
         in
         let* fitted, output, output_schema =
           with_stage step.Pipeline.name
-            (step.Pipeline.fit_stage ~y ~sample_weight ~rng:child_rng
+            (step.Pipeline.fit_stage ~y ~metadata ~rng:child_rng
                ~feature_schema:current_schema ~x:current_x)
         in
         loop (index + 1) output_schema output (fitted :: reversed)
     in
     loop 0 feature_schema x []
 
-  let fit specification ?sample_weight ~rng ~feature_schema ~x ~y () =
+  let fit specification ~metadata ~rng ~feature_schema ~x ~y () =
     let* fitted, _ =
-      fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y ()
+      fit_transform specification ~metadata ~rng ~feature_schema ~x ~y ()
     in
     Ok fitted
 
-  let transform fitted ~feature_schema ~x =
+  let transform fitted ~metadata ~feature_schema ~x =
+    let* () = Metadata.validate ~rows:(Matrix.rows x) metadata in
+    let* () = Stage.validate_fitted fitted.steps metadata in
     let* () = validate_input fitted.input_schema feature_schema x in
     let rec loop index schema x =
       if index = Array.length fitted.steps then Ok x
@@ -656,7 +700,7 @@ module Transformer_pipeline_core = struct
         let step = fitted.steps.(index) in
         let* output =
           with_stage step.Pipeline.stage_name
-            (apply step ~feature_schema:schema ~x)
+            (apply step ~metadata ~feature_schema:schema ~x)
         in
         loop (index + 1) step.Pipeline.transform_output_schema output
     in
@@ -665,6 +709,8 @@ module Transformer_pipeline_core = struct
   let stage ~name specification =
     Stage.package ~name
       ~validate_target:(Stage.validate specification)
+      ~validate_fit_metadata:(Stage.validate_fit specification)
+      ~validate_transform_metadata:(Stage.validate_transform specification)
       ~fit_transform ~transform ~output_schema specification
 end
 
@@ -727,10 +773,17 @@ module Feature_union_core = struct
   let branches fitted =
     Array.map (fun branch -> branch.info) fitted.fitted_branches
 
-  let fit_branches specification ~sample_weight ~rng ~feature_schema ~x ~y =
-    let* () =
-      validate_fit ~operation:"feature union" ~sample_weight ~feature_schema ~x
-    in
+  let stages specification =
+    Array.to_list specification.branches
+    |> List.filter_map (fun branch ->
+        match branch.action with
+        | Transform stage -> Some stage
+        | Pass | Omit -> None)
+    |> Array.of_list
+
+  let fit_branches specification ~metadata ~rng ~feature_schema ~x ~y =
+    let* () = validate_fit ~metadata ~feature_schema ~x in
+    let* () = Stage.validate_fit (stages specification) metadata in
     let rec loop index width reversed_branches reversed_outputs reversed_names =
       if index = Array.length specification.branches then
         let* output_schema = schema (Array.concat (List.rev reversed_names)) in
@@ -757,8 +810,8 @@ module Feature_union_core = struct
                        ~index)
                 in
                 let* fitted, output, output_schema =
-                  transformer.Pipeline.fit_stage ~y ~sample_weight
-                    ~rng:child_rng ~feature_schema ~x
+                  transformer.Pipeline.fit_stage ~y ~metadata ~rng:child_rng
+                    ~feature_schema ~x
                 in
                 Ok (Some fitted, output, Some output_schema))
         in
@@ -814,22 +867,24 @@ module Feature_union_core = struct
     in
     Ok (output, { output_bytes })
 
-  let fit specification ?sample_weight ~rng ~feature_schema ~x ~y () =
+  let fit specification ~metadata ~rng ~feature_schema ~x ~y () =
     let* fitted, _ =
-      fit_branches specification ~sample_weight ~rng ~feature_schema ~x ~y
+      fit_branches specification ~metadata ~rng ~feature_schema ~x ~y
     in
     Ok fitted
 
-  let fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y () =
+  let fit_transform specification ~metadata ~rng ~feature_schema ~x ~y () =
     let* fitted, outputs =
-      fit_branches specification ~sample_weight ~rng ~feature_schema ~x ~y
+      fit_branches specification ~metadata ~rng ~feature_schema ~x ~y
     in
     let* output, allocation =
       concatenate fitted ~rows:(Matrix.rows x) outputs
     in
     Ok (fitted, output, allocation)
 
-  let transform_with_report fitted ~feature_schema ~x =
+  let transform_with_report fitted ~metadata ~feature_schema ~x =
+    let* () = Metadata.validate ~rows:(Matrix.rows x) metadata in
+    let* () = Stage.validate_transform (stages fitted.specification) metadata in
     let* () = validate_input fitted.input_schema feature_schema x in
     let rec loop index reversed =
       if index = Array.length fitted.fitted_branches then
@@ -841,21 +896,22 @@ module Feature_union_core = struct
           with_stage branch.info.name
             (match branch.transformer with
             | None -> Ok x
-            | Some transformer -> apply transformer ~feature_schema ~x)
+            | Some transformer -> apply transformer ~metadata ~feature_schema ~x)
         in
         loop (index + 1) (output :: reversed)
     in
     loop 0 []
 
-  let transform fitted ~feature_schema ~x =
-    let* output, _ = transform_with_report fitted ~feature_schema ~x in
+  let transform fitted ~metadata ~feature_schema ~x =
+    let* output, _ =
+      transform_with_report fitted ~metadata ~feature_schema ~x
+    in
     Ok output
 
   let stage ~name specification =
-    let fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y ()
-        =
+    let fit_transform specification ~metadata ~rng ~feature_schema ~x ~y () =
       let* fitted, output, _ =
-        fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y ()
+        fit_transform specification ~metadata ~rng ~feature_schema ~x ~y ()
       in
       Ok (fitted, output)
     in
@@ -867,8 +923,10 @@ module Feature_union_core = struct
           | Pass | Omit -> None)
       |> Array.of_list
     in
-    Stage.package ~name ~validate_target:(Stage.validate stages) ~fit_transform
-      ~transform ~output_schema specification
+    Stage.package ~name ~validate_target:(Stage.validate stages)
+      ~validate_fit_metadata:(Stage.validate_fit stages)
+      ~validate_transform_metadata:(Stage.validate_transform stages)
+      ~fit_transform ~transform ~output_schema specification
 end
 
 module Column_transformer = struct
@@ -885,11 +943,37 @@ module Column_transformer = struct
     transformer ~columns (Stage.unsupervised stage)
 
   let fit specification ?sample_weight ~rng ~feature_schema ~x ~y:_ () =
-    fit specification ?sample_weight ~rng ~feature_schema ~x ~y:() ()
+    fit specification
+      ~metadata:(Metadata.create ?sample_weight ())
+      ~rng ~feature_schema ~x ~y:() ()
 
   let fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y:_ ()
       =
-    fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y:() ()
+    fit_transform specification
+      ~metadata:(Metadata.create ?sample_weight ())
+      ~rng ~feature_schema ~x ~y:() ()
+
+  let fit_with_metadata specification ~metadata ~rng ~feature_schema ~x ~y:_ ()
+      =
+    Column_transformer_core.fit specification ~metadata ~rng ~feature_schema ~x
+      ~y:() ()
+
+  let fit_transform_with_metadata specification ~metadata ~rng ~feature_schema
+      ~x ~y:_ () =
+    Column_transformer_core.fit_transform specification ~metadata ~rng
+      ~feature_schema ~x ~y:() ()
+
+  let transform_with_metadata = Column_transformer_core.transform
+
+  let transform fitted ~feature_schema ~x =
+    transform_with_metadata fitted ~metadata:Metadata.empty ~feature_schema ~x
+
+  let transform_with_report_with_metadata =
+    Column_transformer_core.transform_with_report
+
+  let transform_with_report fitted ~feature_schema ~x =
+    transform_with_report_with_metadata fitted ~metadata:Metadata.empty
+      ~feature_schema ~x
 
   let stage ~name specification =
     Result.map Stage.erase (stage ~name specification)
@@ -921,11 +1005,30 @@ module Transformer_pipeline = struct
   let create stages = create (Array.map Stage.unsupervised stages)
 
   let fit specification ?sample_weight ~rng ~feature_schema ~x ~y:_ () =
-    fit specification ?sample_weight ~rng ~feature_schema ~x ~y:() ()
+    fit specification
+      ~metadata:(Metadata.create ?sample_weight ())
+      ~rng ~feature_schema ~x ~y:() ()
 
   let fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y:_ ()
       =
-    fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y:() ()
+    fit_transform specification
+      ~metadata:(Metadata.create ?sample_weight ())
+      ~rng ~feature_schema ~x ~y:() ()
+
+  let fit_with_metadata specification ~metadata ~rng ~feature_schema ~x ~y:_ ()
+      =
+    Transformer_pipeline_core.fit specification ~metadata ~rng ~feature_schema
+      ~x ~y:() ()
+
+  let fit_transform_with_metadata specification ~metadata ~rng ~feature_schema
+      ~x ~y:_ () =
+    Transformer_pipeline_core.fit_transform specification ~metadata ~rng
+      ~feature_schema ~x ~y:() ()
+
+  let transform_with_metadata = Transformer_pipeline_core.transform
+
+  let transform fitted ~feature_schema ~x =
+    transform_with_metadata fitted ~metadata:Metadata.empty ~feature_schema ~x
 
   let stage ~name specification =
     Result.map Stage.erase (stage ~name specification)
@@ -954,11 +1057,37 @@ module Feature_union = struct
   let transformer stage = transformer (Stage.unsupervised stage)
 
   let fit specification ?sample_weight ~rng ~feature_schema ~x ~y:_ () =
-    fit specification ?sample_weight ~rng ~feature_schema ~x ~y:() ()
+    fit specification
+      ~metadata:(Metadata.create ?sample_weight ())
+      ~rng ~feature_schema ~x ~y:() ()
 
   let fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y:_ ()
       =
-    fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y:() ()
+    fit_transform specification
+      ~metadata:(Metadata.create ?sample_weight ())
+      ~rng ~feature_schema ~x ~y:() ()
+
+  let fit_with_metadata specification ~metadata ~rng ~feature_schema ~x ~y:_ ()
+      =
+    Feature_union_core.fit specification ~metadata ~rng ~feature_schema ~x ~y:()
+      ()
+
+  let fit_transform_with_metadata specification ~metadata ~rng ~feature_schema
+      ~x ~y:_ () =
+    Feature_union_core.fit_transform specification ~metadata ~rng
+      ~feature_schema ~x ~y:() ()
+
+  let transform_with_metadata = Feature_union_core.transform
+
+  let transform fitted ~feature_schema ~x =
+    transform_with_metadata fitted ~metadata:Metadata.empty ~feature_schema ~x
+
+  let transform_with_report_with_metadata =
+    Feature_union_core.transform_with_report
+
+  let transform_with_report fitted ~feature_schema ~x =
+    transform_with_report_with_metadata fitted ~metadata:Metadata.empty
+      ~feature_schema ~x
 
   let stage ~name specification =
     Result.map Stage.erase (stage ~name specification)

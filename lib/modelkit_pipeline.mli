@@ -1,4 +1,5 @@
 open Modelkit_data
+open Modelkit_metadata
 open Modelkit_protocols
 
 module Pipeline : sig
@@ -14,7 +15,9 @@ module Pipeline : sig
     stage_name : string;
     transform_input_schema : Feature_schema.t;
     transform_output_schema : Feature_schema.t;
+    fitted_transform_metadata_check : Metadata.t -> (unit, Error.t) result;
     apply_transform :
+      metadata:Metadata.t ->
       feature_schema:Feature_schema.t ->
       x:Matrix.t ->
       (Matrix.t, Error.t) result;
@@ -23,8 +26,10 @@ module Pipeline : sig
 
   type transformer = {
     transformer_name : string;
+    transformer_fit_metadata_check : Metadata.t -> (unit, Error.t) result;
+    transformer_transform_metadata_check : Metadata.t -> (unit, Error.t) result;
     fit_transform :
-      sample_weight:Sample_weight.t option ->
+      metadata:Metadata.t ->
       rng:Rng.t ->
       feature_schema:Feature_schema.t ->
       x:Matrix.t ->
@@ -38,9 +43,11 @@ module Pipeline : sig
 
   type 'target stage = {
     name : string;
+    stage_fit_metadata_check : Metadata.t -> (unit, Error.t) result;
+    stage_transform_metadata_check : Metadata.t -> (unit, Error.t) result;
     validate_target : x:Matrix.t -> y:'target -> (unit, Error.t) result;
     fit_stage :
-      sample_weight:Sample_weight.t option ->
+      metadata:Metadata.t ->
       rng:Rng.t ->
       feature_schema:Feature_schema.t ->
       x:Matrix.t ->
@@ -70,9 +77,10 @@ module Pipeline : sig
 
   type ('target, 'prediction) estimator = {
     estimator_name : string;
+    estimator_fit_metadata_check : Metadata.t -> (unit, Error.t) result;
     estimator_capabilities : capabilities;
     fit_estimator :
-      ?sample_weight:Sample_weight.t ->
+      metadata:Metadata.t ->
       rng:Rng.t ->
       feature_schema:Feature_schema.t ->
       x:Matrix.t ->
@@ -111,6 +119,19 @@ module Pipeline : sig
     'specification ->
     (transformer, Error.t) result
 
+  val metadata_transformer :
+    name:string ->
+    (module METADATA_TRANSFORMER
+       with type t = 'specification
+        and type target = unit
+        and type fitted = 'fitted
+        and type rng = Rng.t) ->
+    'specification ->
+    (transformer, Error.t) result
+  (** Packages per-method requests from the specification once. Fit validates
+      both the fit request and the training transform request. No artifact codec
+      is supplied for this adapter. *)
+
   val transformer :
     ?route_sample_weight:bool ->
     name:string ->
@@ -148,6 +169,31 @@ module Pipeline : sig
     ?classes:('fitted -> int array) ->
     'specification ->
     (('target, 'prediction) estimator, Error.t) result
+
+  val metadata_estimator :
+    name:string ->
+    (module METADATA_ESTIMATOR
+       with type t = 'specification
+        and type target = 'target
+        and type prediction = 'prediction
+        and type fitted = 'fitted
+        and type rng = Rng.t) ->
+    ?decision_function:
+      ('fitted ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      (Vector.t, Error.t) result) ->
+    ?predict_proba:
+      ('fitted ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      (Matrix.t, Error.t) result) ->
+    ?classes:('fitted -> int array) ->
+    'specification ->
+    (('target, 'prediction) estimator, Error.t) result
+  (** Packages a terminal fit request and optional prediction capabilities.
+      Weight delivery follows that request; class-weight resolution, when
+      needed, belongs to the consumer. No artifact codec is supplied. *)
 
   val estimator :
     name:string ->
@@ -230,6 +276,16 @@ module Pipeline : sig
     type nonrec 'kind stage = 'kind Target.t stage
     type 'kind builder
 
+    val metadata_transformer :
+      name:string ->
+      (module METADATA_TRANSFORMER
+         with type t = 'specification
+          and type target = 'kind Target.t
+          and type fitted = 'fitted
+          and type rng = Rng.t) ->
+      'specification ->
+      ('kind stage, Error.t) result
+
     val transformer :
       ?route_sample_weight:bool ->
       name:string ->
@@ -263,7 +319,8 @@ module Pipeline : sig
     (** The terminal and supervised stages share the same target kind. The
         resulting pipeline uses the ordinary fit, prediction, CV, and search
         APIs. Targets are used only during fitting; inference reuses learned
-        transforms without requiring targets or weights.
+        transforms without targets. Metadata-aware stages may separately request
+        inference weights or groups.
 
         A supervised stage fits on and transforms the same training rows. This
         is suitable for feature selection; target encoders needing internal
@@ -275,6 +332,53 @@ module Pipeline : sig
   val transformer_names : ('target, 'prediction) t -> string array
   val estimator_name : ('target, 'prediction) t -> string
   val capabilities : ('target, 'prediction) t -> capabilities
+
+  val fit_with_metadata :
+    ('target, 'prediction) t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:'target ->
+    unit ->
+    (('target, 'prediction) fitted, Error.t) result
+  (** Metadata-aware operations validate all supplied row lengths and all
+      declared requests before any consumer runs. Fit preflight includes the
+      transforms of training rows. Requests are structural: configured children
+      are checked even when a column selection later proves empty. Metadata
+      remains row-aligned through feature transformations; values are neither
+      transformed nor implicitly reused from fitting. Existing operations use
+      absent metadata, apart from the legacy fit's optional sample weights.
+      Groups supplied here reach requesting consumers; CV/search routing is a
+      separate operation. *)
+
+  val transform_with_metadata :
+    ('target, 'prediction) fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val predict_with_metadata :
+    ('target, 'prediction) fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    ('prediction, Error.t) result
+
+  val decision_function_with_metadata :
+    ('target, 'prediction) fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Vector.t, Error.t) result
+
+  val predict_proba_with_metadata :
+    ('target, 'prediction) fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
 
   val fit :
     ('target, 'prediction) t ->

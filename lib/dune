@@ -10,6 +10,7 @@
   modelkit_linear_classifiers
   modelkit_linear_models
   modelkit_metrics
+  modelkit_metadata
   modelkit_model_selection
   modelkit_pipeline
   modelkit_preprocessing

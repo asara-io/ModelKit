@@ -1,4 +1,5 @@
 open Modelkit_data
+open Modelkit_metadata
 open Modelkit_protocols
 open Modelkit_pipeline
 
@@ -110,6 +111,40 @@ module Column_transformer : sig
       transform pass during fitting. Use [Pipeline.Supervised.unsupervised] to
       include it in a target-aware pipeline. *)
 
+  val fit_with_metadata :
+    t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted, Error.t) result
+
+  val fit_transform_with_metadata :
+    t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted * Matrix.t * allocation, Error.t) result
+
+  val transform_with_metadata :
+    fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val transform_with_report_with_metadata :
+    fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t * allocation, Error.t) result
+
   (** Target-aware composition for {!Pipeline.Supervised} pipelines. All active
       children receive the same training targets in row order; sample weights
       retain each child's opt-in policy. Adapt ordinary stages with
@@ -188,6 +223,33 @@ module Transformer_pipeline : sig
       unions without an extra training transform pass. Sample weights reach only
       children that request them. Composite artifact codecs are not yet
       supported. *)
+
+  val fit_with_metadata :
+    t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted, Error.t) result
+
+  val fit_transform_with_metadata :
+    t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted * Matrix.t, Error.t) result
+
+  val transform_with_metadata :
+    fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
 
   (** Target-aware composition for {!Pipeline.Supervised} pipelines. All active
       children receive the same training targets in row order; sample weights
@@ -279,6 +341,40 @@ module Feature_union : sig
   (** Packages the union as an ordinary transformer stage, retaining child
       weight routing and reusing branch outputs during fitting. It can nest
       inside a column transformer or transformer pipeline. *)
+
+  val fit_with_metadata :
+    t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted, Error.t) result
+
+  val fit_transform_with_metadata :
+    t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted * Matrix.t * allocation, Error.t) result
+
+  val transform_with_metadata :
+    fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val transform_with_report_with_metadata :
+    fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t * allocation, Error.t) result
 
   (** Target-aware composition for {!Pipeline.Supervised} pipelines. All active
       children receive the same training targets in row order; sample weights
