@@ -253,6 +253,88 @@ let test_programmer_exception () =
   in
   Alcotest.(check bool) "programmer exception propagated" true propagated
 
+module Target_summary = struct
+  type t = unit
+  type params = unit
+  type target = Target.regression Target.t
+  type fitted = Feature_schema.t * float * float
+  type rng = Rng.t
+
+  let clone () = ()
+  let params () = ()
+
+  let fit () ?sample_weight:_ ~rng ~feature_schema ~x:_ ~y () =
+    match y with
+    | None ->
+        Error
+          (Error.make ~remediation:"route the training targets"
+             (Error.Validation { name = "targets"; reason = "missing targets" }))
+    | Some y ->
+        let values = Target.regression_values y in
+        let mean =
+          Reference_backend.sum values /. Float.of_int (Vector.length values)
+        in
+        let random, _ = Rng.next_float rng in
+        Ok (feature_schema, mean, random)
+
+  let transform (_, mean, random) ~feature_schema:_ ~x =
+    Matrix.init ~rows:(Matrix.rows x) ~columns:1 (fun _ _ -> mean +. random)
+    |> Result.map_error (fun error ->
+        Error.of_data_error ~remediation:"provide valid output dimensions" error)
+
+  let fitted_params _ = ()
+  let input_schema (schema, _, _) = schema
+  let output_schema (schema, _, _) = schema
+end
+
+let test_supervised_domain_count_invariance () =
+  let stage =
+    Pipeline.Supervised.transformer ~name:"target-summary"
+      (module Target_summary)
+      ()
+    |> get
+  in
+  let specification =
+    Pipeline.Supervised.add_transformer Pipeline.Supervised.empty stage |> get
+    |> fun builder ->
+    Pipeline.Supervised.set_estimator builder
+      (Pipeline.estimator ~name:"random" (module Random_regressor) () |> get)
+    |> get
+  in
+  let source = dataset () in
+  let run execution =
+    Cross_validation.Regression.cross_validate ~return_train_score:true
+      ~return_models:true ~return_indices:true ~execution
+      ~splitter:(splitter ())
+      ~scorers:[| Regression_scorer.neg_mean_squared_error |]
+      ~seed:(Seed.of_int 2026) specification source
+    |> get
+  in
+  let expected = run Execution.sequential in
+  let transformed fold =
+    Pipeline.transform
+      (Option.get fold.Cross_validation.model)
+      ~feature_schema:(Dataset.feature_schema source)
+      ~x:(Dataset.features source)
+    |> get |> Matrix.to_arrays
+  in
+  List.iter
+    (fun domains ->
+      let execution =
+        Modelkit_parallel.create ~inner_threads:1 ~domains ()
+        |> get |> Modelkit_parallel.execution
+      in
+      let observed = run execution in
+      check_report expected observed;
+      Array.iter2
+        (fun expected observed ->
+          Alcotest.(check bool)
+            "target-derived state and stage RNG are schedule independent" true
+            (transformed expected = transformed observed))
+        (Cross_validation.folds expected)
+        (Cross_validation.folds observed))
+    [ 1; 2; 4 ]
+
 let () =
   Alcotest.run "parallel execution"
     [
@@ -260,6 +342,8 @@ let () =
         [
           Alcotest.test_case "domain-count invariance" `Quick
             test_domain_count_invariance;
+          Alcotest.test_case "supervised domain-count invariance" `Quick
+            test_supervised_domain_count_invariance;
           Alcotest.test_case "bounded ordered map" `Quick
             test_bounded_ordered_map;
           Alcotest.test_case "lowest failure" `Quick test_lowest_failure;

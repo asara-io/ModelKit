@@ -36,6 +36,18 @@ module Pipeline = struct
     names : string list;
   }
 
+  type 'target stage = {
+    name : string;
+    validate_target : x:Matrix.t -> y:'target -> (unit, Error.t) result;
+    fit_stage :
+      sample_weight:Sample_weight.t option ->
+      rng:Rng.t ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      y:'target ->
+      (fitted_transformer * Matrix.t * Feature_schema.t, Error.t) result;
+  }
+
   type 'prediction fitted_estimator = {
     terminal_name : string;
     terminal_predict :
@@ -70,7 +82,7 @@ module Pipeline = struct
   }
 
   type ('target, 'prediction) t = {
-    transformers : transformer array;
+    transformers : 'target stage array;
     estimator : ('target, 'prediction) estimator;
   }
 
@@ -159,38 +171,42 @@ module Pipeline = struct
   let with_stage name result =
     Result.map_error (Error.with_context (Error.Stage name)) result
 
-  let transformer_internal (type specification fitted) ?encode
-      ?(route_sample_weight = false) ~name
+  let fit_transformer (type specification target fitted) ?encode
+      ~route_sample_weight ~name
       (module Transformer : TRANSFORMER
         with type t = specification
-         and type target = unit
+         and type target = target
          and type fitted = fitted
-         and type rng = Rng.t) (specification : specification) =
+         and type rng = Rng.t) (specification : specification) ~sample_weight
+      ~rng ~feature_schema ~x ~y =
+    let sample_weight = if route_sample_weight then sample_weight else None in
+    let* fitted =
+      Transformer.fit specification ?sample_weight ~rng ~feature_schema ~x ~y ()
+    in
+    let* () =
+      validate_fitted_schema ~stage:name ~expected:feature_schema
+        (Transformer.input_schema fitted)
+    in
+    let output_schema = Transformer.output_schema fitted in
+    let* transformed = Transformer.transform fitted ~feature_schema ~x in
+    let* () = validate_transform_output ~input:x ~output_schema transformed in
+    let fitted_transformer : fitted_transformer =
+      {
+        stage_name = name;
+        transform_input_schema = feature_schema;
+        transform_output_schema = output_schema;
+        apply_transform = Transformer.transform fitted;
+        encode_transformer = Option.map (fun encode () -> encode fitted) encode;
+      }
+    in
+    Ok (fitted_transformer, transformed, output_schema)
+
+  let transformer_internal ?encode ?(route_sample_weight = false) ~name
+      transformer specification =
     let* () = validate_name name in
     let fit_transform ~sample_weight ~rng ~feature_schema ~x =
-      let sample_weight = if route_sample_weight then sample_weight else None in
-      let* fitted =
-        Transformer.fit specification ?sample_weight ~rng ~feature_schema ~x
-          ~y:None ()
-      in
-      let* () =
-        validate_fitted_schema ~stage:name ~expected:feature_schema
-          (Transformer.input_schema fitted)
-      in
-      let output_schema = Transformer.output_schema fitted in
-      let* transformed = Transformer.transform fitted ~feature_schema ~x in
-      let* () = validate_transform_output ~input:x ~output_schema transformed in
-      let fitted_transformer : fitted_transformer =
-        {
-          stage_name = name;
-          transform_input_schema = feature_schema;
-          transform_output_schema = output_schema;
-          apply_transform = Transformer.transform fitted;
-          encode_transformer =
-            Option.map (fun encode () -> encode fitted) encode;
-        }
-      in
-      Ok (fitted_transformer, transformed, output_schema)
+      fit_transformer ?encode ~route_sample_weight ~name transformer
+        specification ~sample_weight ~rng ~feature_schema ~x ~y:None
     in
     Ok { transformer_name = name; fit_transform }
 
@@ -271,6 +287,15 @@ module Pipeline = struct
 
   let empty = { reversed_transformers = []; names = [] }
 
+  let unsupervised (transformer : transformer) =
+    {
+      name = transformer.transformer_name;
+      validate_target = (fun ~x:_ ~y:_ -> Ok ());
+      fit_stage =
+        (fun ~sample_weight ~rng ~feature_schema ~x ~y:_ ->
+          transformer.fit_transform ~sample_weight ~rng ~feature_schema ~x);
+    }
+
   let add_transformer (builder : builder) (transformer : transformer) =
     if List.exists (String.equal transformer.transformer_name) builder.names
     then Error (duplicate_name transformer.transformer_name)
@@ -288,16 +313,68 @@ module Pipeline = struct
     else
       Ok
         {
-          transformers = Array.of_list (List.rev builder.reversed_transformers);
+          transformers =
+            Array.of_list
+              (List.rev_map unsupervised builder.reversed_transformers);
           estimator;
         }
+
+  module Supervised = struct
+    type nonrec 'kind stage = 'kind Target.t stage
+
+    type 'kind builder = {
+      reversed_stages : 'kind stage list;
+      stage_names : string list;
+    }
+
+    let transformer ?(route_sample_weight = false) ~name transformer
+        specification =
+      let* () = validate_name name in
+      let validate_target ~x ~y =
+        let expected = Matrix.rows x in
+        let observed = Target.length y in
+        if expected = observed then Ok ()
+        else
+          Error
+            (Error.of_data_error
+               ~remediation:"provide one target per training row"
+               (Data_error.Length_mismatch
+                  { name = "pipeline targets"; expected; observed }))
+      in
+      let fit_stage ~sample_weight ~rng ~feature_schema ~x ~y =
+        fit_transformer ~route_sample_weight ~name transformer specification
+          ~sample_weight ~rng ~feature_schema ~x ~y:(Some y)
+      in
+      Ok { name; validate_target; fit_stage }
+
+    let unsupervised = unsupervised
+    let empty = { reversed_stages = []; stage_names = [] }
+
+    let add_transformer builder stage =
+      if List.exists (String.equal stage.name) builder.stage_names then
+        Error (duplicate_name stage.name)
+      else
+        Ok
+          {
+            reversed_stages = stage :: builder.reversed_stages;
+            stage_names = stage.name :: builder.stage_names;
+          }
+
+    let set_estimator builder estimator =
+      if List.exists (String.equal estimator.estimator_name) builder.stage_names
+      then Error (duplicate_name estimator.estimator_name)
+      else
+        Ok
+          {
+            transformers = Array.of_list (List.rev builder.reversed_stages);
+            estimator;
+          }
+  end
 
   let clone specification = specification
 
   let transformer_names specification =
-    Array.map
-      (fun transformer -> transformer.transformer_name)
-      specification.transformers
+    Array.map (fun transformer -> transformer.name) specification.transformers
 
   let estimator_name specification = specification.estimator.estimator_name
 
@@ -313,19 +390,26 @@ module Pipeline = struct
   let fit specification ?sample_weight ~rng ~feature_schema ~x ~y () =
     let* () = validate_matrix feature_schema x in
     let* () = validate_sample_weight x sample_weight in
+    let* () =
+      Array.fold_left
+        (fun result stage ->
+          let* () = result in
+          with_stage stage.name (stage.validate_target ~x ~y))
+        (Ok ()) specification.transformers
+    in
     let rec fit_transformers index current_schema current_x reversed_fitted =
       if index = Array.length specification.transformers then
         Ok (Array.of_list (List.rev reversed_fitted), current_schema, current_x)
       else
         let transformer = specification.transformers.(index) in
         let stage_rng =
-          child_rng rng ~kind:"pipeline-transformer"
-            ~name:transformer.transformer_name ~index
+          child_rng rng ~kind:"pipeline-transformer" ~name:transformer.name
+            ~index
         in
         let* fitted, transformed, output_schema =
-          with_stage transformer.transformer_name
-            (transformer.fit_transform ~sample_weight ~rng:stage_rng
-               ~feature_schema:current_schema ~x:current_x)
+          with_stage transformer.name
+            (transformer.fit_stage ~sample_weight ~rng:stage_rng
+               ~feature_schema:current_schema ~x:current_x ~y)
         in
         fit_transformers (index + 1) output_schema transformed
           (fitted :: reversed_fitted)

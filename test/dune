@@ -35,6 +35,12 @@
  (libraries modelkit alcotest))
 
 (test
+ (name supervised_pipeline_test)
+ (modules supervised_pipeline_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
  (name artifact_test)
  (modules artifact_test)
  (package modelkit)

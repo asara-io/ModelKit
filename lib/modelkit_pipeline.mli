@@ -36,6 +36,18 @@ module Pipeline : sig
     names : string list;
   }
 
+  type 'target stage = {
+    name : string;
+    validate_target : x:Matrix.t -> y:'target -> (unit, Error.t) result;
+    fit_stage :
+      sample_weight:Sample_weight.t option ->
+      rng:Rng.t ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      y:'target ->
+      (fitted_transformer * Matrix.t * Feature_schema.t, Error.t) result;
+  }
+
   type 'prediction fitted_estimator = {
     terminal_name : string;
     terminal_predict :
@@ -70,7 +82,7 @@ module Pipeline : sig
   }
 
   type ('target, 'prediction) t = {
-    transformers : transformer array;
+    transformers : 'target stage array;
     estimator : ('target, 'prediction) estimator;
   }
 
@@ -207,6 +219,51 @@ module Pipeline : sig
     builder ->
     ('target, 'prediction) estimator ->
     (('target, 'prediction) t, Error.t) result
+
+  module Supervised : sig
+    type 'kind stage
+    type 'kind builder
+
+    val transformer :
+      ?route_sample_weight:bool ->
+      name:string ->
+      (module TRANSFORMER
+         with type t = 'specification
+          and type target = 'kind Target.t
+          and type fitted = 'fitted
+          and type rng = Rng.t) ->
+      'specification ->
+      ('kind stage, Error.t) result
+    (** Packages a supervised transformer. Each fit receives [Some y] from the
+        pipeline's training rows; weights reach it only when
+        [route_sample_weight] is true. Targets and weights must have one entry
+        per row. Length errors are rejected before any stage fits. Class weights
+        remain a terminal-estimator policy and do not alter the sample weights
+        routed to transformers. *)
+
+    val unsupervised : transformer -> 'kind stage
+    (** Adapts an existing unsupervised stage, retaining its weight-routing and
+        artifact-codec policies. Its fit still receives [y:None]. *)
+
+    val empty : 'kind builder
+
+    val add_transformer :
+      'kind builder -> 'kind stage -> ('kind builder, Error.t) result
+
+    val set_estimator :
+      'kind builder ->
+      ('kind Target.t, 'prediction) estimator ->
+      (('kind Target.t, 'prediction) t, Error.t) result
+    (** The terminal and supervised stages share the same target kind. The
+        resulting pipeline uses the ordinary fit, prediction, CV, and search
+        APIs. Targets are used only during fitting; inference reuses learned
+        transforms without requiring targets or weights.
+
+        A supervised stage fits on and transforms the same training rows. This
+        is suitable for feature selection; target encoders needing internal
+        cross-fitting require a separate fit-transform contract. Supervised
+        stages currently have no artifact codec. *)
+  end
 
   val clone : ('target, 'prediction) t -> ('target, 'prediction) t
   val transformer_names : ('target, 'prediction) t -> string array

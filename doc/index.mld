@@ -519,7 +519,7 @@ val positive_probabilities : Vector.t = <abstr>
 - : float array = [|0.; 0.; 1.|]
 ]}
 
-The current pipeline routes targets and sample weights to its terminal
+The pipeline routes targets and sample weights to its terminal
 estimator. Its unsupervised preprocessing stages receive no targets and receive
 sample weights only when packaged with [~route_sample_weight:true]; the
 standard scaler then fits weighted moments. {!Modelkit.Pipeline.classifier}
@@ -530,6 +530,58 @@ arbitrary extension modules may close over behavior that has no reviewed data
 codec, pipelines intended for persistence use the artifact-aware built-in
 constructors. Encoding any unsupported component returns a typed
 {!Modelkit.Error.Artifact} failure.
+
+{2 Supervised preprocessing}
+
+{!Modelkit.Pipeline.Supervised} builds pipelines whose transformers can learn
+from targets, for example supervised feature selectors. Package a
+{!Modelkit.TRANSFORMER} whose [target] is a regression or classification
+{!Modelkit.Target.t} with {!Modelkit.Pipeline.Supervised.transformer}.
+The builder ties that target kind to the terminal estimator at compile time.
+It produces an ordinary {!Modelkit.Pipeline.t}, so fitting, prediction,
+cross-validation, and grid search use the same APIs as other pipelines.
+
+This helper packages a caller-supplied regression selector before ridge
+regression:
+
+{@ocaml[
+# let regression_pipeline selector specification =
+    let ( let* ) = Result.bind in
+    let* stage =
+      Pipeline.Supervised.transformer ~name:"select" selector specification
+    in
+    let* builder =
+      Pipeline.Supervised.add_transformer Pipeline.Supervised.empty stage
+    in
+    let* ridge = Ridge_regression.create () in
+    let* terminal =
+      Pipeline.estimator ~name:"ridge" (module Ridge_regression) ridge
+    in
+    Pipeline.Supervised.set_estimator builder terminal;;
+val regression_pipeline :
+...
+  result = <fun>
+]}
+
+Each supervised stage receives [Some y] containing only the current fit's
+training targets. Targets and supplied sample weights are checked against
+the feature row count before any stage fits. Stages must preserve row count
+and row order. Weights reach a transformer only when it is packaged with
+[~route_sample_weight:true]; they are the original sample weights, before
+any terminal class-weight adjustment. During CV, all three inputs are
+selected from the same training partition. Inference reuses fitted values
+without requiring targets or weights.
+
+Use {!Modelkit.Pipeline.Supervised.unsupervised} to mix existing preprocessing
+stages into this builder. It preserves their opt-in weight routing and
+artifact codecs, and their fit still receives [y:None]. Stage names, child
+RNG derivation, feature-schema validation, and contextual errors follow the
+ordinary pipeline contract.
+
+Supervised stages currently have no artifact codec. This contract fits a
+stage and transforms the same training rows; it does not supply the internal
+cross-fitting needed by some target encoders. Nested group routing, callbacks,
+and transform-time metadata are not yet supported.
 
 {1 Artifact safety and compatibility}
 

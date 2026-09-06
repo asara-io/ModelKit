@@ -1138,11 +1138,13 @@ end
     unique across the whole pipeline, and failures carry the responsible
     [Error.Stage] context.
 
-    Current transformers are unsupervised and do not receive targets. Sample
-    weights always route to the terminal estimator and reach a transformer stage
-    only when it was packaged with [route_sample_weight]. Each stage receives a
-    child RNG derived from its logical name and position. Fit and inference are
-    sequential and allocate one dense matrix per transformer stage. *)
+    Unsupervised stages do not receive targets; {!Pipeline.Supervised}
+    additionally packages target-aware stages in a builder tied to the target
+    kind. Sample weights always route to the terminal estimator and reach a
+    transformer stage only when it was packaged with [route_sample_weight]. Each
+    stage receives a child RNG derived from its logical name and position. Fit
+    and inference are sequential and allocate one dense matrix per transformer
+    stage. *)
 module Pipeline : sig
   type transformer
   type builder
@@ -1224,6 +1226,51 @@ module Pipeline : sig
     builder ->
     ('target, 'prediction) estimator ->
     (('target, 'prediction) t, Error.t) result
+
+  module Supervised : sig
+    type 'kind stage
+    type 'kind builder
+
+    val transformer :
+      ?route_sample_weight:bool ->
+      name:string ->
+      (module TRANSFORMER
+         with type t = 'specification
+          and type target = 'kind Target.t
+          and type fitted = 'fitted
+          and type rng = Rng.t) ->
+      'specification ->
+      ('kind stage, Error.t) result
+    (** Packages a supervised transformer. Each fit receives [Some y] from the
+        pipeline's training rows; weights reach it only when
+        [route_sample_weight] is true. Targets and weights must have one entry
+        per row. Length errors are rejected before any stage fits. Class weights
+        remain a terminal-estimator policy and do not alter the sample weights
+        routed to transformers. *)
+
+    val unsupervised : transformer -> 'kind stage
+    (** Adapts an existing unsupervised stage, retaining its weight-routing and
+        artifact-codec policies. Its fit still receives [y:None]. *)
+
+    val empty : 'kind builder
+
+    val add_transformer :
+      'kind builder -> 'kind stage -> ('kind builder, Error.t) result
+
+    val set_estimator :
+      'kind builder ->
+      ('kind Target.t, 'prediction) estimator ->
+      (('kind Target.t, 'prediction) t, Error.t) result
+    (** The terminal and supervised stages share the same target kind. The
+        resulting pipeline uses the ordinary fit, prediction, CV, and search
+        APIs. Targets are used only during fitting; inference reuses learned
+        transforms without requiring targets or weights.
+
+        A supervised stage fits on and transforms the same training rows. This
+        is suitable for feature selection; target encoders needing internal
+        cross-fitting require a separate fit-transform contract. Supervised
+        stages currently have no artifact codec. *)
+  end
 
   val clone : ('target, 'prediction) t -> ('target, 'prediction) t
   val transformer_names : ('target, 'prediction) t -> string array
