@@ -598,6 +598,65 @@ The combined output-width limit is checked before final concatenation; each
 child remains responsible for its own allocation bounds. Composite artifact
 codecs and supervised column branches are not yet supported.
 
+{2 Feature unions and nested preprocessing}
+
+{!Modelkit.Transformer_pipeline} is a sequential chain of preprocessing stages
+without a terminal estimator. It passes each learned stage's output and schema
+to the next stage, and can itself be packaged as an ordinary transformer.
+{!Modelkit.Feature_union} instead fits independent branches on the same full
+input and concatenates their outputs in declaration order. Both can nest
+inside column transformers, ordinary pipelines, or each other.
+
+For example, concatenate an imputed/scaled representation with the raw features
+from the preceding column example:
+
+{@ocaml[
+# let prepared = Transformer_pipeline.create
+    [| Pipeline.transformer ~name:"impute" (module Simple_imputer)
+         (Simple_imputer.mean ()) |> Result.get_ok;
+       numeric_stage |] |> Result.get_ok;;
+val prepared : Transformer_pipeline.t = <abstr>
+# let prepared_stage = Transformer_pipeline.stage ~name:"prepared" prepared |> Result.get_ok;;
+val prepared_stage : Pipeline.transformer = <abstr>
+# let representations = Feature_union.create
+    [| Feature_union.transformer prepared_stage;
+       Feature_union.passthrough ~name:"raw" |> Result.get_ok |]
+    |> Result.get_ok;;
+val representations : Feature_union.t = <abstr>
+# let fitted_union, union_output, union_allocation =
+    Feature_union.fit_transform representations ~rng:(Rng.create (Seed.of_int 42))
+      ~feature_schema:column_schema ~x:column_x ~y:None () |> Result.get_ok;;
+val fitted_union : Feature_union.fitted = <abstr>
+val union_output : Matrix.t = <abstr>
+val union_allocation : Feature_union.allocation =
+  {Modelkit.Feature_union.output_bytes = 96L}
+# Matrix.row union_output 0 |> Vector.to_array;;
+- : float array = [|-1.; -1.; -1.; 1.; 2.; 0.|]
+# let representations_stage = Feature_union.stage ~name:"representations" representations |> Result.get_ok;;
+val representations_stage : Pipeline.transformer = <abstr>
+]}
+
+Use the [stage] constructors when nesting: they reuse training outputs rather
+than applying the fitted children again. Union inputs are shared immutable
+matrices; only final concatenation allocates a union-owned numeric buffer.
+Its allocation report excludes child outputs, scratch, and metadata. Chains
+introduce no numeric copies of their own, and an empty chain is the identity.
+
+Union names have the form [branch__feature], using [x0], [x1], etc. for
+anonymous child outputs. Chains retain their final child's schema without
+adding prefixes. Nested names therefore preserve branch provenance. Duplicate
+names fail explicitly, and inference checks the fitted input schema at each
+boundary. Empty/all-dropped unions preserve rows with zero output columns;
+active branches still receive zero-column input and enforce their own policy.
+
+Every level forwards sample weights to child packages, which deliver them
+only to stages explicitly requesting weights. CV fits the entire composition
+inside each training fold. Child random streams derive from logical names
+and positions, and errors retain the full nested stage path. Branches execute
+sequentially so outer CV remains the parallelism owner. Supervised branch
+routing, sparse union output, branch-output weighting, and composite artifact
+codecs remain outside the current API.
+
 {2 Supervised preprocessing}
 
 {!Modelkit.Pipeline.Supervised} builds pipelines whose transformers can learn
