@@ -487,3 +487,348 @@ module Column_transformer = struct
       in
       Ok Pipeline.{ transformer_name = name; fit_transform }
 end
+
+module Composition_internal = struct
+  include Internal
+
+  let validate_names component names =
+    let* () = unique ~name:component names in
+    if Array.exists (fun name -> String.trim name = "") names then
+      invalid component "stage names must not be blank"
+    else Ok ()
+
+  let validate_fit ~operation ~sample_weight ~feature_schema ~x =
+    let* () = Feature_schema.validate_matrix feature_schema x |> data in
+    Modelkit_preprocessing.Preprocessing_internal.validate_sample_weight
+      operation x sample_weight
+
+  let validate_input expected observed x =
+    if Feature_schema.equal expected observed then
+      Feature_schema.validate_matrix observed x |> data
+    else
+      Error
+        (Error.make
+           ~remediation:
+             "provide the same ordered feature schema used during fitting"
+           (Error.Feature_schema_mismatch { expected; observed }))
+
+  let apply fitted ~feature_schema ~x =
+    let* () =
+      validate_input fitted.Pipeline.transform_input_schema feature_schema x
+    in
+    let* output = fitted.Pipeline.apply_transform ~feature_schema ~x in
+    let* () =
+      Pipeline.validate_transform_output ~input:x
+        ~output_schema:fitted.Pipeline.transform_output_schema output
+    in
+    Ok output
+
+  let package ~name ~fit_transform ~transform ~output_schema specification =
+    let* () = validate_names "pipeline stage name" [| name |] in
+    let fit_transform ~sample_weight ~rng ~feature_schema ~x =
+      let* fitted, output =
+        fit_transform specification ?sample_weight ~rng ~feature_schema ~x
+          ~y:None ()
+      in
+      let schema = output_schema fitted in
+      let apply_transform = transform fitted in
+      let packaged =
+        Pipeline.
+          {
+            stage_name = name;
+            transform_input_schema = feature_schema;
+            transform_output_schema = schema;
+            apply_transform;
+            encode_transformer = None;
+          }
+      in
+      Ok (packaged, output, schema)
+    in
+    Ok Pipeline.{ transformer_name = name; fit_transform }
+end
+
+module Transformer_pipeline = struct
+  open Composition_internal
+
+  type t = Pipeline.transformer array
+  type params = t
+  type target = unit
+  type rng = Rng.t
+
+  type fitted = {
+    specification : t;
+    steps : Pipeline.fitted_transformer array;
+    input_schema : Feature_schema.t;
+    output_schema : Feature_schema.t;
+  }
+
+  let create stages =
+    let stages = Array.copy stages in
+    let* () =
+      validate_names "transformer pipeline stage names"
+        (Array.map (fun stage -> stage.Pipeline.transformer_name) stages)
+    in
+    Ok stages
+
+  let clone specification = specification
+  let params specification = specification
+  let fitted_params fitted = fitted.specification
+  let input_schema fitted = fitted.input_schema
+  let output_schema fitted = fitted.output_schema
+
+  let stage_names specification =
+    Array.map (fun stage -> stage.Pipeline.transformer_name) specification
+
+  let fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y:_ ()
+      =
+    let* () =
+      validate_fit ~operation:"transformer pipeline" ~sample_weight
+        ~feature_schema ~x
+    in
+    let rec loop index current_schema current_x reversed =
+      if index = Array.length specification then
+        Ok
+          ( {
+              specification;
+              steps = Array.of_list (List.rev reversed);
+              input_schema = feature_schema;
+              output_schema = current_schema;
+            },
+            current_x )
+      else
+        let step = specification.(index) in
+        let child_rng =
+          Rng.create
+            (Seed.derive (Rng.to_seed rng)
+               ~operation:
+                 ("transformer-pipeline:" ^ step.Pipeline.transformer_name)
+               ~index)
+        in
+        let* fitted, output, output_schema =
+          with_stage step.Pipeline.transformer_name
+            (step.Pipeline.fit_transform ~sample_weight ~rng:child_rng
+               ~feature_schema:current_schema ~x:current_x)
+        in
+        loop (index + 1) output_schema output (fitted :: reversed)
+    in
+    loop 0 feature_schema x []
+
+  let fit specification ?sample_weight ~rng ~feature_schema ~x ~y () =
+    let* fitted, _ =
+      fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y ()
+    in
+    Ok fitted
+
+  let transform fitted ~feature_schema ~x =
+    let* () = validate_input fitted.input_schema feature_schema x in
+    let rec loop index schema x =
+      if index = Array.length fitted.steps then Ok x
+      else
+        let step = fitted.steps.(index) in
+        let* output =
+          with_stage step.Pipeline.stage_name
+            (apply step ~feature_schema:schema ~x)
+        in
+        loop (index + 1) step.Pipeline.transform_output_schema output
+    in
+    loop 0 feature_schema x
+
+  let stage ~name specification =
+    package ~name ~fit_transform ~transform ~output_schema specification
+end
+
+module Feature_union = struct
+  open Composition_internal
+
+  type action = Transform of Pipeline.transformer | Pass | Omit
+  type branch = { branch_name : string; action : action }
+  type t = { branches : branch array; max_output_features : int }
+  type params = t
+  type target = unit
+  type rng = Rng.t
+  type branch_info = { name : string; output_start : int; output_count : int }
+
+  type fitted_branch = {
+    info : branch_info;
+    transformer : Pipeline.fitted_transformer option;
+  }
+
+  type fitted = {
+    specification : t;
+    input_schema : Feature_schema.t;
+    output_schema : Feature_schema.t;
+    fitted_branches : fitted_branch array;
+  }
+
+  type allocation = { output_bytes : int64 }
+
+  let transformer transformer =
+    {
+      branch_name = transformer.Pipeline.transformer_name;
+      action = Transform transformer;
+    }
+
+  let passthrough ~name =
+    let* () = validate_names "feature union branch name" [| name |] in
+    Ok { branch_name = name; action = Pass }
+
+  let drop ~name =
+    let* () = validate_names "feature union branch name" [| name |] in
+    Ok { branch_name = name; action = Omit }
+
+  let create ?(max_output_features = 100_000) branches =
+    let branches = Array.copy branches in
+    let* () =
+      validate_names "feature union branch names"
+        (Array.map (fun branch -> branch.branch_name) branches)
+    in
+    if max_output_features < 0 || max_output_features > Sys.max_array_length
+    then
+      invalid "feature union output limit"
+        "must be between zero and Sys.max_array_length"
+    else Ok { branches; max_output_features }
+
+  let clone specification = specification
+  let params specification = specification
+  let fitted_params fitted = fitted.specification
+  let input_schema fitted = fitted.input_schema
+  let output_schema fitted = fitted.output_schema
+
+  let branches fitted =
+    Array.map (fun branch -> branch.info) fitted.fitted_branches
+
+  let fit_branches specification ~sample_weight ~rng ~feature_schema ~x =
+    let* () =
+      validate_fit ~operation:"feature union" ~sample_weight ~feature_schema ~x
+    in
+    let rec loop index width reversed_branches reversed_outputs reversed_names =
+      if index = Array.length specification.branches then
+        let* output_schema = schema (Array.concat (List.rev reversed_names)) in
+        Ok
+          ( {
+              specification;
+              input_schema = feature_schema;
+              output_schema;
+              fitted_branches = Array.of_list (List.rev reversed_branches);
+            },
+            Array.of_list (List.rev reversed_outputs) )
+      else
+        let branch = specification.branches.(index) in
+        let* fitted_transformer, output, output_schema =
+          with_stage branch.branch_name
+            (match branch.action with
+            | Omit -> Ok (None, x, None)
+            | Pass -> Ok (None, x, Some feature_schema)
+            | Transform transformer ->
+                let child_rng =
+                  Rng.create
+                    (Seed.derive (Rng.to_seed rng)
+                       ~operation:("feature-union:" ^ branch.branch_name)
+                       ~index)
+                in
+                let* fitted, output, output_schema =
+                  transformer.Pipeline.fit_transform ~sample_weight
+                    ~rng:child_rng ~feature_schema ~x
+                in
+                Ok (Some fitted, output, Some output_schema))
+        in
+        let count =
+          match output_schema with
+          | None -> 0
+          | Some schema -> Feature_schema.feature_count schema
+        in
+        let* () =
+          with_stage branch.branch_name
+            (if count > specification.max_output_features - width then
+               invalid "feature union output limit"
+                 "combined branch width exceeds max_output_features"
+             else Ok ())
+        in
+        let names =
+          match output_schema with
+          | None -> [||]
+          | Some schema ->
+              Array.map
+                (fun name -> branch.branch_name ^ "__" ^ name)
+                (input_names schema)
+        in
+        let info =
+          {
+            name = branch.branch_name;
+            output_start = width;
+            output_count = count;
+          }
+        in
+        loop (index + 1) (width + count)
+          ({ info; transformer = fitted_transformer } :: reversed_branches)
+          (output :: reversed_outputs)
+          (names :: reversed_names)
+    in
+    loop 0 0 [] [] []
+
+  let concatenate fitted ~rows outputs =
+    let columns = Feature_schema.feature_count fitted.output_schema in
+    let* output_bytes = payload_bytes ~rows ~columns in
+    let sources = Array.make columns (0, 0) in
+    Array.iteri
+      (fun index branch ->
+        for column = 0 to branch.info.output_count - 1 do
+          sources.(branch.info.output_start + column) <- (index, column)
+        done)
+      fitted.fitted_branches;
+    let* output =
+      Matrix.init ~rows ~columns (fun row column ->
+          let index, column = sources.(column) in
+          Matrix.get outputs.(index) row column)
+      |> data
+    in
+    Ok (output, { output_bytes })
+
+  let fit specification ?sample_weight ~rng ~feature_schema ~x ~y:_ () =
+    let* fitted, _ =
+      fit_branches specification ~sample_weight ~rng ~feature_schema ~x
+    in
+    Ok fitted
+
+  let fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y:_ ()
+      =
+    let* fitted, outputs =
+      fit_branches specification ~sample_weight ~rng ~feature_schema ~x
+    in
+    let* output, allocation =
+      concatenate fitted ~rows:(Matrix.rows x) outputs
+    in
+    Ok (fitted, output, allocation)
+
+  let transform_with_report fitted ~feature_schema ~x =
+    let* () = validate_input fitted.input_schema feature_schema x in
+    let rec loop index reversed =
+      if index = Array.length fitted.fitted_branches then
+        concatenate fitted ~rows:(Matrix.rows x)
+          (Array.of_list (List.rev reversed))
+      else
+        let branch = fitted.fitted_branches.(index) in
+        let* output =
+          with_stage branch.info.name
+            (match branch.transformer with
+            | None -> Ok x
+            | Some transformer -> apply transformer ~feature_schema ~x)
+        in
+        loop (index + 1) (output :: reversed)
+    in
+    loop 0 []
+
+  let transform fitted ~feature_schema ~x =
+    let* output, _ = transform_with_report fitted ~feature_schema ~x in
+    Ok output
+
+  let stage ~name specification =
+    let fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y ()
+        =
+      let* fitted, output, _ =
+        fit_transform specification ?sample_weight ~rng ~feature_schema ~x ~y ()
+      in
+      Ok (fitted, output)
+    in
+    package ~name ~fit_transform ~transform ~output_schema specification
+end

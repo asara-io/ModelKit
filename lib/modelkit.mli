@@ -1436,6 +1436,123 @@ module Column_transformer : sig
        and type rng = Rng.t
 end
 
+(** Sequential preprocessing that can itself be used as a transformer stage.
+
+    Each child fits only on the output of earlier children from the same
+    training partition. Fitted schemas propagate without additional name
+    prefixes. The empty chain is the identity, including its input schema.
+    Stages preserve row count and order. Child RNGs derive from stage names and
+    positions; sample weights retain each child's explicit routing policy. The
+    chain allocates no additional numeric buffers beyond its children. *)
+module Transformer_pipeline : sig
+  type t
+  type params = t
+  type fitted
+
+  val create : Pipeline.transformer array -> (t, Error.t) result
+  (** Copies the stage array and rejects duplicate names. *)
+
+  val stage_names : t -> string array
+
+  val fit_transform :
+    t ->
+    ?sample_weight:Sample_weight.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted * Matrix.t, Error.t) result
+  (** Fits and transforms each child once, reusing its output for the next
+      child. All children are unsupervised and receive no targets. *)
+
+  val stage : name:string -> t -> (Pipeline.transformer, Error.t) result
+  (** Packages a chain for ordinary pipelines, column transformers, or feature
+      unions without an extra training transform pass. Sample weights reach only
+      children that request them. Composite artifact codecs are not yet
+      supported. *)
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Dense concatenation of independently fitted unsupervised branches.
+
+    Every active branch receives the same immutable full input and schema,
+    without selection copies. Outputs concatenate in declaration order with
+    names [branch__feature]. Anonymous child outputs use branch-local [x0],
+    [x1], etc. Duplicate generated names are typed failures.
+
+    Dropped branches do no work. Active branches receive zero-column inputs too,
+    leaving their admissibility to each transformer. Empty or all-dropped unions
+    produce a zero-column matrix retaining the input row count. Branches run
+    sequentially; surrounding CV may own bounded parallelism. This API does not
+    add sparse output, branch-output weighting, supervised branch routing, or
+    composite artifact codecs. *)
+module Feature_union : sig
+  type branch
+  type t
+  type params = t
+  type fitted
+
+  val transformer : Pipeline.transformer -> branch
+  val passthrough : name:string -> (branch, Error.t) result
+  val drop : name:string -> (branch, Error.t) result
+
+  val create : ?max_output_features:int -> branch array -> (t, Error.t) result
+  (** Copies the branch array and rejects duplicate or blank names.
+      [max_output_features] defaults to [100_000] and must be between zero and
+      [Sys.max_array_length]. The combined width is checked before generating
+      output names and concatenating; each child owns its own allocation bounds.
+  *)
+
+  type branch_info = { name : string; output_start : int; output_count : int }
+
+  val branches : fitted -> branch_info array
+
+  type allocation = { output_bytes : int64 }
+  (** Payload bytes of the final concatenated matrix only. Input is shared;
+      child allocations, metadata, and scratch are excluded. *)
+
+  val fit_transform :
+    t ->
+    ?sample_weight:Sample_weight.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted * Matrix.t * allocation, Error.t) result
+  (** Fits each active branch once, reuses its training output, and derives
+      random streams from branch names and positions. Sample weights are checked
+      for row alignment before any branch fits, then routed only to children
+      explicitly requesting them. *)
+
+  val transform_with_report :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t * allocation, Error.t) result
+
+  val stage : name:string -> t -> (Pipeline.transformer, Error.t) result
+  (** Packages the union as an ordinary transformer stage, retaining child
+      weight routing and reusing branch outputs during fitting. It can nest
+      inside a column transformer or transformer pipeline. *)
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
 (** Diagnostics retained by fitted numerical estimators.
 
     [rank] is present when the solver computes a meaningful numerical rank;

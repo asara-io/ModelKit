@@ -1,0 +1,21 @@
+# ModelKit sklearn nested composition reference fixture v1
+train	0	nan,1
+train	1	2,2
+train	2	4,nan
+train	3	6,8
+test	0	10,nan
+test	1	nan,-3
+union_train	0	0,-0.99611649018350434,4,1
+union_train	1	-1.4142135623730949,-0.62257280636469015,2,2
+union_train	2	0,0,4,3.6666666666666665
+union_train	3	1.4142135623730949,1.6186892965481949,6,8
+union_test	0	4.2426406871192848,0,10,3.6666666666666665
+union_test	1	0,-2.4902912254587606,4,-3
+union_names	scaled__x0,scaled__x1,imputed__x0,imputed__x1
+nested_train	0	0,0,-0.99611649018350434
+nested_train	1	-1.4142135623730951,-1.4142135623730949,-0.62257280636469015
+nested_train	2	0,0,0
+nested_train	3	1.4142135623730951,1.4142135623730949,1.6186892965481949
+nested_test	0	4.2426406871192857,4.2426406871192848,0
+nested_test	1	0,0,-2.4902912254587606
+nested_names	numeric__scaled__x0,numeric__raw__x0,other__x1

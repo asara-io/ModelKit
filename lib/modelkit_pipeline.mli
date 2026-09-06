@@ -93,6 +93,12 @@ module Pipeline : sig
     pipeline_output_schema : Feature_schema.t;
   }
 
+  val validate_transform_output :
+    input:Matrix.t ->
+    output_schema:Feature_schema.t ->
+    Matrix.t ->
+    (unit, Error.t) result
+
   val transformer_internal :
     ?encode:('fitted -> (encoded_component, Error.t) result) ->
     ?route_sample_weight:bool ->

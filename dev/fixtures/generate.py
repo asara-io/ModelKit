@@ -1880,6 +1880,94 @@ def generate_column_transformer_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_nested_composition_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.compose import ColumnTransformer
+    from sklearn.impute import SimpleImputer
+    from sklearn.pipeline import FeatureUnion, Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    train = np.array([[np.nan, 1.0], [2.0, 2.0], [4.0, np.nan], [6.0, 8.0]])
+    test = np.array([[10.0, np.nan], [np.nan, -3.0]])
+    union = FeatureUnion(
+        [
+            ("scaled", Pipeline([("impute", SimpleImputer()), ("scale", StandardScaler())])),
+            ("imputed", SimpleImputer()),
+            ("unused", "drop"),
+        ]
+    )
+    nested = Pipeline(
+        [
+            (
+                "columns",
+                ColumnTransformer(
+                    [
+                        (
+                            "numeric",
+                            Pipeline(
+                                [
+                                    ("impute", SimpleImputer()),
+                                    (
+                                        "views",
+                                        FeatureUnion(
+                                            [("scaled", StandardScaler()), ("raw", "passthrough")]
+                                        ),
+                                    ),
+                                ]
+                            ),
+                            [0],
+                        ),
+                        ("other", SimpleImputer(), [1]),
+                    ]
+                ),
+            ),
+            ("scale", StandardScaler()),
+        ]
+    )
+    rows = ["# ModelKit sklearn nested composition reference fixture v1"]
+
+    def add_matrix(name: str, values) -> None:
+        for row, values in enumerate(values):
+            rows.append(f"{name}\t{row}\t{float_values(values)}")
+
+    add_matrix("train", train)
+    add_matrix("test", test)
+    for name, specification in [("union", union), ("nested", nested)]:
+        add_matrix(f"{name}_train", specification.fit_transform(train))
+        add_matrix(f"{name}_test", specification.transform(test))
+        rows.append(f"{name}_names\t" + ",".join(specification.get_feature_names_out()))
+    (fixture_dir / "nested_composition_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {
+            "dense_output": True,
+            "fit_rows": 4,
+            "inference_rows": 2,
+            "absolute_tolerance": 1e-12,
+            "relative_tolerance": 1e-12,
+            "cases": ["union", "nested"],
+        },
+        "environment": environment.metadata(),
+        "fixture": "nested_composition_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.pipeline.FeatureUnion",
+            "sklearn.pipeline.Pipeline",
+            "sklearn.compose.ColumnTransformer",
+            "sklearn.impute.SimpleImputer",
+            "sklearn.preprocessing.StandardScaler",
+        ],
+        "schema_version": 1,
+    }
+    (fixture_dir / "nested_composition_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
@@ -1890,6 +1978,7 @@ def main() -> None:
     generate_preprocessing_fixture(fixture_dir)
     generate_transform_fixture(fixture_dir)
     generate_column_transformer_fixture(fixture_dir)
+    generate_nested_composition_fixture(fixture_dir)
     generate_linear_model_fixture(fixture_dir)
     generate_regularized_linear_fixture(fixture_dir)
     generate_ridge_classifier_fixture(fixture_dir)

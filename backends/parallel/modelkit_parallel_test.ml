@@ -335,27 +335,9 @@ let test_supervised_domain_count_invariance () =
         (Cross_validation.folds observed))
     [ 1; 2; 4 ]
 
-let test_column_domain_count_invariance () =
-  let columns = Column_selector.indices [| 0 |] |> get in
-  let scaler =
-    Pipeline.transformer ~name:"scale"
-      (module Standard_scaler)
-      (Standard_scaler.create ())
-    |> get
-  in
-  let composition =
-    Column_transformer.create
-      [|
-        Column_transformer.transformer ~columns scaler;
-        Column_transformer.passthrough ~name:"raw" ~columns |> get;
-      |]
-    |> get
-  in
+let check_transformer_domains stage =
   let specification =
-    Pipeline.add_transformer Pipeline.empty
-      (Column_transformer.stage ~name:"columns" composition |> get)
-    |> get
-    |> fun builder ->
+    Pipeline.add_transformer Pipeline.empty stage |> get |> fun builder ->
     Pipeline.set_estimator builder
       (Pipeline.estimator ~name:"random" (module Random_regressor) () |> get)
     |> get
@@ -388,11 +370,67 @@ let test_column_domain_count_invariance () =
       Array.iter2
         (fun expected observed ->
           Alcotest.(check bool)
-            "column outputs are schedule independent" true
+            "composed outputs are schedule independent" true
             (transformed expected = transformed observed))
         (Cross_validation.folds expected)
         (Cross_validation.folds observed))
     [ 1; 2; 4 ]
+
+let test_column_domain_count_invariance () =
+  let columns = Column_selector.indices [| 0 |] |> get in
+  let scaler =
+    Pipeline.transformer ~name:"scale"
+      (module Standard_scaler)
+      (Standard_scaler.create ())
+    |> get
+  in
+  let composition =
+    Column_transformer.create
+      [|
+        Column_transformer.transformer ~columns scaler;
+        Column_transformer.passthrough ~name:"raw" ~columns |> get;
+      |]
+    |> get
+  in
+  check_transformer_domains
+    (Column_transformer.stage ~name:"columns" composition |> get)
+
+let test_nested_domain_count_invariance () =
+  let imputer =
+    Pipeline.transformer ~name:"impute"
+      (module Simple_imputer)
+      (Simple_imputer.mean ())
+    |> get
+  in
+  let scaler =
+    Pipeline.transformer ~name:"scale"
+      (module Standard_scaler)
+      (Standard_scaler.create ())
+    |> get
+  in
+  let prepared =
+    Transformer_pipeline.create [| imputer; scaler |]
+    |> get
+    |> Transformer_pipeline.stage ~name:"prepared"
+    |> get
+  in
+  let union =
+    Feature_union.create
+      [|
+        Feature_union.transformer prepared;
+        Feature_union.passthrough ~name:"raw" |> get;
+      |]
+    |> get
+    |> Feature_union.stage ~name:"union"
+    |> get
+  in
+  let nested =
+    Transformer_pipeline.create [| union; scaler |]
+    |> get
+    |> Transformer_pipeline.stage ~name:"nested"
+    |> get
+  in
+  check_transformer_domains nested
 
 let () =
   Alcotest.run "parallel execution"
@@ -405,6 +443,8 @@ let () =
             test_supervised_domain_count_invariance;
           Alcotest.test_case "column domain-count invariance" `Quick
             test_column_domain_count_invariance;
+          Alcotest.test_case "nested domain-count invariance" `Quick
+            test_nested_domain_count_invariance;
           Alcotest.test_case "bounded ordered map" `Quick
             test_bounded_ordered_map;
           Alcotest.test_case "lowest failure" `Quick test_lowest_failure;

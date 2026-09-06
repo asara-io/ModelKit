@@ -368,3 +368,15 @@
    MODELKIT_COLUMN_FIXTURE
    %{dep:fixtures/sklearn/column_transformer_v1.tsv}
    (run %{test}))))
+
+(test
+ (name nested_composition_test)
+ (modules nested_composition_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/nested_composition_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_NESTED_FIXTURE
+   %{dep:fixtures/sklearn/nested_composition_v1.tsv}
+   (run %{test}))))
