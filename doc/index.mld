@@ -747,8 +747,8 @@ later inference.
 Supervised stages currently have no artifact codec. This contract fits a
 stage and transforms the same training rows; it does not supply the internal
 cross-fitting needed by some target encoders. Metadata-aware consumers can
-request groups and weights for fitting and inference as described below;
-callback delivery remains unsupported.
+request groups, weights, and callbacks for fitting and inference as described
+below.
 
 {2 Metadata requests and delivery}
 
@@ -814,9 +814,65 @@ nested stage path, and programmer exceptions propagate as with existing
 components.
 
 Metadata-aware adapters currently have no artifact codecs. Existing codec
-packages continue to round-trip unchanged. CV and search still use their
-existing weight routing and splitter groups; delivery of groups and inference
-metadata to nested consumers through those evaluators is not yet available.
+packages continue to round-trip unchanged.
+
+{2 Evaluation metadata and callbacks}
+
+CV and grid search default to {!Modelkit.Metadata.of_dataset}: dataset weights
+and groups follow the same row selections as features and targets for fitting
+and prediction. Full-data refit receives the complete metadata carrier. An
+explicit [~metadata] replaces this default without merging fields. This allows
+consumer weights or groups to differ from scoring weights or splitter groups:
+scorers and splitters continue using the dataset's own fields. Every supplied
+row-aligned field is validated against the full dataset before evaluation.
+
+Add a {!Modelkit.Callback.t} with [Metadata.of_dataset ~callback dataset] to
+observe evaluation, candidates, folds, and refit. Metadata-aware consumers opt
+in separately with [Metadata.Request.create ~callback:Optional ()] (or
+[Required]); their fit/transform lifecycle then appears in the event stream.
+They may call [Callback.progress] using the callback received through metadata,
+and must propagate its errors. A callback delivered to a consumer must not be
+retained or invoked after that operation returns.
+
+A handler returns [Ok Continue], [Ok Cancel], or [Error reason]. For example,
+this handler cancels before the evaluator plans any folds:
+
+{@ocaml[
+# let stop = Callback.create (fun _ -> Ok Callback.Cancel) |> Result.get_ok;;
+val stop : Callback.t = <abstr>
+# Cross_validation.Binary_classification.cross_validate
+    ~metadata:(Metadata.of_dataset ~callback:stop dataset)
+    ~splitter:(Cross_validation.target_aware_splitter (module Stratified_k_fold) splitter)
+    ~scorers:[| Binary_classification_scorer.accuracy |]
+    ~seed:(Seed.of_int 42) pipeline dataset
+  |> function Error error -> Error.kind error = Error.Cancelled | Ok _ -> false;;
+- : bool = true
+]}
+
+Direct pipeline callbacks run synchronously. CV buffers events independently
+for each fold, executes at most the backend's concurrency per batch, and then
+delivers events serially on the caller domain: candidate order, fold order,
+then emission order inside each fold. The positive [max_buffered_events]
+limit defaults to 10,000 per fold. Exceeding it produces
+[Error.Callback_failure], with no unbounded event accumulation. Concurrent
+emitters inside a custom consumer determine their own emission order.
+
+Cancellation returns [Error.Cancelled] without a partial report and prevents
+later batches, candidates, and refit. Already-running work can finish; buffered events after cancellation are
+discarded. This is cooperative cancellation between bounded batches, not
+preemption of a solver in another domain. Handler errors become
+[Error.Callback_failure] and handler exceptions propagate. Both callback errors
+and [Error.Cancelled] abort even under [Record]; they are never substituted
+with a score. Handlers must synchronize their own state only when shared
+across independent concurrent evaluations.
+
+[Started] and [Finished] bracket operations that return normally. Ordinary
+failures produce [Finished (Failed error)], including recorded fold failures;
+cancellation, callback errors, and exceptions need not produce a finishing
+event. Callback errors take precedence if a handler fails while receiving an
+ordinary failure. Events contain logical identities and nested stage paths,
+not timestamps, training observations, or fitted models. Reports retain the
+existing fit/score timing and failure details.
 
 {1 Artifact safety and compatibility}
 
