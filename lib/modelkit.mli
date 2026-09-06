@@ -424,6 +424,7 @@ module Error : sig
     | Convergence of { algorithm : string; reason : string }
     | Compatibility of { component : string; reason : string }
     | Artifact of { operation : string; reason : string }
+    | Callback_failure of { reason : string }
     | Cancelled
 
   type t
@@ -509,16 +510,97 @@ module Admission : sig
       reports. *)
 end
 
+(** Typed progress and lifecycle notifications. Handlers may continue, cancel,
+    or return an explanatory error. Exceptions raised by a handler propagate. *)
+module Callback : sig
+  (** Lifecycle events enclose evaluation, candidates, folds, refit, and
+      requesting consumers' fit/transform methods. [Finished (Failed error)]
+      reports ordinary failures, including recorded fold failures. Cancellation,
+      callback failure, or an exception may leave a started operation
+      unfinished. A handler error becomes [Error.Callback_failure]; [Cancel]
+      becomes [Error.Cancelled]. Both abort evaluation even under [Record].
+      Handler failures take precedence over an operation failure delivered to
+      them. Events after the first handler failure or cancellation are
+      discarded.
+
+      CV admits at most [Execution.concurrency] folds per batch. Their events
+      are delivered after that batch finishes, in fold order and then emission
+      order within each fold. Cancellation prevents subsequent batches,
+      candidates, or refit; already-running work may finish. Events are bounded
+      per fold, and overflow aborts with [Error.Callback_failure]. Timing is not
+      part of an event. Custom consumers with concurrent emitters determine
+      their own emission order. No callbacks run while handling an exception. *)
+  type operation =
+    | Fit
+    | Transform
+    | Cross_validation
+    | Fold
+    | Search
+    | Candidate
+    | Refit
+
+  type outcome = Succeeded | Failed of Error.t
+
+  type status =
+    | Started
+    | Progress of { completed : int; total : int option }
+    | Finished of outcome
+
+  type event = {
+    operation : operation;
+    context : Error.context list;
+    status : status;
+  }
+
+  type decision = Continue | Cancel
+  type t
+
+  val create :
+    ?max_buffered_events:int ->
+    (event -> (decision, string) result) ->
+    (t, Error.t) result
+  (** The positive event bound defaults to [10_000] per buffered fold. Direct
+      pipeline calls deliver synchronously; CV buffers fold events and delivers
+      them serially on the caller domain in logical fold order, one bounded
+      batch at a time. Callbacks need not synchronize their own mutable state
+      within one evaluation. Sharing a handler across independent concurrent
+      evaluations requires caller synchronization. *)
+
+  val progress :
+    t -> completed:int -> ?total:int -> unit -> (unit, Error.t) result
+  (** Consumers report progress through the callback delivered in metadata.
+      Counts must satisfy [0 <= completed <= total] when a total is given. The
+      library supplies the enclosing operation and nested context. Consumers
+      must propagate errors from this call and must not retain the delivered
+      callback after their operation returns. *)
+
+  val is_control_error : Error.t -> bool
+  (** Recognizes [Error.Cancelled] and [Error.Callback_failure]. Evaluators
+      always abort on these errors, including under [Record] failure policy. *)
+end
+
 (** Immutable, typed, row-aligned inputs for metadata-aware consumers. Metadata
     is supplied independently for each operation; fitted pipelines do not retain
     fit metadata for later inference. *)
 module Metadata : sig
   type t
 
-  val create : ?sample_weight:Sample_weight.t -> ?groups:Groups.t -> unit -> t
+  val create :
+    ?sample_weight:Sample_weight.t ->
+    ?groups:Groups.t ->
+    ?callback:Callback.t ->
+    unit ->
+    t
+
   val empty : t
   val sample_weight : t -> Sample_weight.t option
   val groups : t -> Groups.t option
+  val callback : t -> Callback.t option
+  val of_dataset : ?callback:Callback.t -> _ Dataset.t -> t
+
+  val select : t -> Row_view.t -> (t, Error.t) result
+  (** Selects weights and groups in exactly the row-view order; the callback is
+      shared, not sliced. Source lengths are checked before selection. *)
 
   val validate : rows:int -> t -> (unit, Error.t) result
   (** Checks every supplied field, including fields ignored by consumers. *)
@@ -531,12 +613,14 @@ module Metadata : sig
 
     type t
 
-    val create : ?sample_weight:policy -> ?groups:policy -> unit -> t
-    (** Both policies default to [Ignore]. *)
+    val create :
+      ?sample_weight:policy -> ?groups:policy -> ?callback:policy -> unit -> t
+    (** All policies default to [Ignore]. *)
 
     val none : t
     val sample_weight : t -> policy
     val groups : t -> policy
+    val callback : t -> policy
   end
 
   val validate_request : Request.t -> t -> (unit, Error.t) result
@@ -1450,9 +1534,8 @@ module Pipeline : sig
       are checked even when a column selection later proves empty. Metadata
       remains row-aligned through feature transformations; values are neither
       transformed nor implicitly reused from fitting. Existing operations use
-      absent metadata, apart from the legacy fit's optional sample weights.
-      Groups supplied here reach requesting consumers; CV/search routing is a
-      separate operation. *)
+      absent metadata, apart from the legacy fit's optional sample weights. CV
+      and search can select these inputs from their metadata carrier. *)
 
   val transform_with_metadata :
     ('target, 'prediction) fitted ->
@@ -3386,6 +3469,19 @@ end
     them; a pipeline without the requested capability records a typed prediction
     failure for the fold. *)
 module Cross_validation : sig
+  (** [metadata] defaults to {!Metadata.of_dataset}: dataset weights and groups
+      are selected with each fold's exact training/test row views, including
+      inference. An explicit carrier replaces that default without merging; its
+      fields must match the complete dataset's row count. Splitters still use
+      dataset groups and scorers still use dataset weights. Search refit
+      receives the complete carrier. These inputs are never inferred from a
+      previously fitted model.
+
+      A supplied callback receives evaluation lifecycle events and is delivered
+      to nested consumers only when their per-method request opts in. Fold
+      events are buffered and dispatched on the caller domain in logical order;
+      see {!Callback} for bounds, cancellation, and failure semantics. *)
+
   type failure_policy = Abort | Record
   type partition = Train | Test
 
@@ -3449,6 +3545,7 @@ module Cross_validation : sig
       ?failure_policy:failure_policy ->
       ?fit_seed:Seed.t ->
       ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
       splitter:Target.regression Target.t splitter ->
       scorers:Regression_scorer.t array ->
       seed:Seed.t ->
@@ -3470,6 +3567,7 @@ module Cross_validation : sig
       ?failure_policy:failure_policy ->
       ?fit_seed:Seed.t ->
       ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
       splitter:Target.classification Target.t splitter ->
       scorers:Binary_classification_scorer.t array ->
       seed:Seed.t ->
@@ -3493,6 +3591,7 @@ module Cross_validation : sig
       ?failure_policy:failure_policy ->
       ?fit_seed:Seed.t ->
       ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
       splitter:Target.classification Target.t splitter ->
       scorers:Multiclass_classification_scorer.t array ->
       seed:Seed.t ->
@@ -3523,6 +3622,19 @@ end
     execution; candidates themselves are evaluated in stable sequential order.
 *)
 module Grid_search : sig
+  (** [metadata] defaults to {!Metadata.of_dataset}: dataset weights and groups
+      are selected with each fold's exact training/test row views, including
+      inference. An explicit carrier replaces that default without merging; its
+      fields must match the complete dataset's row count. Splitters still use
+      dataset groups and scorers still use dataset weights. Search refit
+      receives the complete carrier. These inputs are never inferred from a
+      previously fitted model.
+
+      A supplied callback receives evaluation lifecycle events and is delivered
+      to nested consumers only when their per-method request opts in. Fold
+      events are buffered and dispatched on the caller domain in logical order;
+      see {!Callback} for bounds, cancellation, and failure semantics. *)
+
   type parameter_value =
     | Bool of bool
     | Int of int
@@ -3590,6 +3702,7 @@ module Grid_search : sig
       ?return_train_score:bool ->
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
       grid:
         ( 'configuration,
           Target.regression Target.t,
@@ -3610,6 +3723,7 @@ module Grid_search : sig
       ?return_train_score:bool ->
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
       grid:
         ( 'configuration,
           Target.classification Target.t,
@@ -3630,6 +3744,7 @@ module Grid_search : sig
       ?return_train_score:bool ->
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
       grid:
         ( 'configuration,
           Target.classification Target.t,

@@ -1,9 +1,23 @@
 open Modelkit_data
+open Modelkit_metadata
 open Modelkit_protocols
 open Modelkit_pipeline
 open Modelkit_metrics
 
 module Cross_validation : sig
+  (** [metadata] defaults to {!Metadata.of_dataset}: dataset weights and groups
+      are selected with each fold's exact training/test row views, including
+      inference. An explicit carrier replaces that default without merging; its
+      fields must match the complete dataset's row count. Splitters still use
+      dataset groups and scorers still use dataset weights. Search refit
+      receives the complete carrier. These inputs are never inferred from a
+      previously fitted model.
+
+      A supplied callback receives evaluation lifecycle events and is delivered
+      to nested consumers only when their per-method request opts in. Fold
+      events are buffered and dispatched on the caller domain in logical order;
+      see {!Callback} for bounds, cancellation, and failure semantics. *)
+
   type failure_policy = Abort | Record
   type partition = Train | Test
 
@@ -67,6 +81,7 @@ module Cross_validation : sig
       ?failure_policy:failure_policy ->
       ?fit_seed:Seed.t ->
       ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
       splitter:Target.regression Target.t splitter ->
       scorers:Regression_scorer.t array ->
       seed:Seed.t ->
@@ -88,6 +103,7 @@ module Cross_validation : sig
       ?failure_policy:failure_policy ->
       ?fit_seed:Seed.t ->
       ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
       splitter:Target.classification Target.t splitter ->
       scorers:Binary_classification_scorer.t array ->
       seed:Seed.t ->
@@ -111,6 +127,7 @@ module Cross_validation : sig
       ?failure_policy:failure_policy ->
       ?fit_seed:Seed.t ->
       ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
       splitter:Target.classification Target.t splitter ->
       scorers:Multiclass_classification_scorer.t array ->
       seed:Seed.t ->
@@ -141,6 +158,19 @@ end
     execution; candidates themselves are evaluated in stable sequential order.
 *)
 module Grid_search : sig
+  (** [metadata] defaults to {!Metadata.of_dataset}: dataset weights and groups
+      are selected with each fold's exact training/test row views, including
+      inference. An explicit carrier replaces that default without merging; its
+      fields must match the complete dataset's row count. Splitters still use
+      dataset groups and scorers still use dataset weights. Search refit
+      receives the complete carrier. These inputs are never inferred from a
+      previously fitted model.
+
+      A supplied callback receives evaluation lifecycle events and is delivered
+      to nested consumers only when their per-method request opts in. Fold
+      events are buffered and dispatched on the caller domain in logical order;
+      see {!Callback} for bounds, cancellation, and failure semantics. *)
+
   type parameter_value =
     | Bool of bool
     | Int of int
@@ -208,6 +238,7 @@ module Grid_search : sig
       ?return_train_score:bool ->
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
       grid:
         ( 'configuration,
           Target.regression Target.t,
@@ -228,6 +259,7 @@ module Grid_search : sig
       ?return_train_score:bool ->
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
       grid:
         ( 'configuration,
           Target.classification Target.t,
@@ -248,6 +280,7 @@ module Grid_search : sig
       ?return_train_score:bool ->
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
       grid:
         ( 'configuration,
           Target.classification Target.t,

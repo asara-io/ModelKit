@@ -1214,6 +1214,7 @@ module Error = struct
     | Convergence of { algorithm : string; reason : string }
     | Compatibility of { component : string; reason : string }
     | Artifact of { operation : string; reason : string }
+    | Callback_failure of { reason : string }
     | Cancelled
 
   type t = { kind : kind; context : context list; remediation : string }
@@ -1256,6 +1257,8 @@ module Error = struct
         Format.fprintf formatter "%s is incompatible: %s" component reason
     | Artifact { operation; reason } ->
         Format.fprintf formatter "artifact %s failed: %s" operation reason
+    | Callback_failure { reason } ->
+        Format.fprintf formatter "callback failed: %s" reason
     | Cancelled -> Format.pp_print_string formatter "operation was cancelled"
 
   let pp_context formatter = function

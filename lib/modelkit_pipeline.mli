@@ -348,9 +348,8 @@ module Pipeline : sig
       are checked even when a column selection later proves empty. Metadata
       remains row-aligned through feature transformations; values are neither
       transformed nor implicitly reused from fitting. Existing operations use
-      absent metadata, apart from the legacy fit's optional sample weights.
-      Groups supplied here reach requesting consumers; CV/search routing is a
-      separate operation. *)
+      absent metadata, apart from the legacy fit's optional sample weights. CV
+      and search can select these inputs from their metadata carrier. *)
 
   val transform_with_metadata :
     ('target, 'prediction) fitted ->

@@ -180,6 +180,7 @@ module Stage = struct
       invalid "pipeline stage name" "must not be blank"
     else
       let fit_stage ~metadata ~rng ~feature_schema ~x ~y =
+        let metadata = Metadata.scope (Error.Stage name) metadata in
         let* fitted, output =
           fit_transform specification ~metadata ~rng ~feature_schema ~x ~y ()
         in
@@ -189,7 +190,11 @@ module Stage = struct
             Pipeline.stage_name = name;
             transform_input_schema = feature_schema;
             transform_output_schema = schema;
-            apply_transform = transform fitted;
+            apply_transform =
+              (fun ~metadata ~feature_schema ~x ->
+                transform fitted
+                  ~metadata:(Metadata.scope (Error.Stage name) metadata)
+                  ~feature_schema ~x);
             fitted_transform_metadata_check = validate_transform_metadata;
             encode_transformer = None;
           }

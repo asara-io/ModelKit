@@ -11,6 +11,7 @@
   modelkit_linear_models
   modelkit_metrics
   modelkit_metadata
+  modelkit_callback
   modelkit_model_selection
   modelkit_pipeline
   modelkit_preprocessing

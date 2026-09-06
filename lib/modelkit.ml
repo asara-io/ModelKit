@@ -17,6 +17,7 @@ module Dataset = Modelkit_data.Dataset
 module Error = Modelkit_data.Error
 module Conversion_report = Modelkit_data.Conversion_report
 module Admission = Modelkit_data.Admission
+module Callback = Modelkit_callback.Callback
 module Metadata = Modelkit_metadata.Metadata
 
 module type METADATA_TRANSFORMER = Modelkit_protocols.METADATA_TRANSFORMER

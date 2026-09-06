@@ -1,4 +1,6 @@
 open Modelkit_data
+open Modelkit_metadata
+module Callback = Modelkit_callback.Callback
 open Modelkit_protocols
 open Modelkit_pipeline
 open Modelkit_metrics
@@ -92,7 +94,10 @@ module Cross_validation = struct
         else count)
       0 report.report_folds
 
-  let contextualize fold error = Error.with_context (Error.Fold fold) error
+  let[@warning "-4"] contextualize fold error =
+    match Error.context error with
+    | Error.Fold index :: _ when index = fold -> error
+    | _ -> Error.with_context (Error.Fold fold) error
 
   let scorer_error fold scorer error =
     error
@@ -148,106 +153,186 @@ module Cross_validation = struct
     (Sys.time () -. started, result)
 
   let run ~return_train_score ~return_models ~return_indices ~failure_policy
-      ~fit_seed ~execution ~splitter ~scorer_names ~seed ~score_model pipeline
-      dataset =
+      ~fit_seed ~execution ~metadata ~splitter ~scorer_names ~seed ~score_model
+      pipeline dataset =
     let ( let* ) = Result.bind in
     let* () = validate_scorers scorer_names in
-    let splitter_rng =
-      Seed.derive seed ~operation:"cross-validation-splitter" ~index:0
-      |> Rng.create
-    in
-    let* view_pairs =
-      splitter.run_splitter ~rng:splitter_rng ~groups:(Dataset.groups dataset)
-        ~x:(Dataset.features dataset) ~y:(Dataset.target dataset)
-    in
-    let* splits =
-      let rec validate index reversed =
-        if index = Array.length view_pairs then
-          Ok (Array.of_list (List.rev reversed))
-        else
-          let train, test = view_pairs.(index) in
-          match Split.of_views ~train ~test with
-          | Ok split -> validate (index + 1) (split :: reversed)
-          | Error error -> Error (contextualize index error)
-      in
-      validate 0 []
-    in
-    let evaluate ~index:fold_index split =
-      let train_indices, test_indices = retain_indices return_indices split in
-      match Split.materialize dataset split with
-      | Error error ->
-          let error = contextualize fold_index error in
-          if failure_policy = Abort then Error error
-          else
-            Ok
-              {
-                fold_index;
-                fit_time = 0.0;
-                score_time = 0.0;
-                scores = empty_scores ~return_train_score scorer_names;
-                model = None;
-                train_indices;
-                test_indices;
-                failures = [| { phase = Materialization; error } |];
-              }
-      | Ok (train, test) -> (
-          let fold_rng =
-            Seed.derive fit_seed ~operation:"cross-validation-fold"
-              ~index:fold_index
-            |> Rng.create
+    let* () = Metadata.validate ~rows:(Dataset.sample_count dataset) metadata in
+    Callback.run
+      ~outcome:(fun report ->
+        let failure =
+          Array.to_list report.report_folds
+          |> List.find_map (fun fold ->
+              if Array.length fold.failures = 0 then None
+              else Some fold.failures.(0).error)
+        in
+        match failure with
+        | None -> Callback.Succeeded
+        | Some error -> Callback.Failed error)
+      (Metadata.callback metadata)
+      ~operation:Callback.Cross_validation
+      (fun () ->
+        let splitter_rng =
+          Seed.derive seed ~operation:"cross-validation-splitter" ~index:0
+          |> Rng.create
+        in
+        let* view_pairs =
+          splitter.run_splitter ~rng:splitter_rng
+            ~groups:(Dataset.groups dataset) ~x:(Dataset.features dataset)
+            ~y:(Dataset.target dataset)
+        in
+        let* splits =
+          let rec validate index reversed =
+            if index = Array.length view_pairs then
+              Ok (Array.of_list (List.rev reversed))
+            else
+              let train, test = view_pairs.(index) in
+              match Split.of_views ~train ~test with
+              | Ok split -> validate (index + 1) (split :: reversed)
+              | Error error -> Error (contextualize index error)
           in
-          let fit_time, fitted =
-            timed (fun () ->
-                Pipeline.fit (Pipeline.clone pipeline)
-                  ?sample_weight:(Dataset.sample_weight train)
-                  ~rng:fold_rng
-                  ~feature_schema:(Dataset.feature_schema train)
-                  ~x:(Dataset.features train) ~y:(Dataset.target train) ())
+          validate 0 []
+        in
+        let evaluate metadata ~index:fold_index split =
+          let train_indices, test_indices =
+            retain_indices return_indices split
           in
-          match fitted with
+          let materialized =
+            let* train, test = Split.materialize dataset split in
+            let* train_metadata =
+              Metadata.select metadata (Split.train split)
+            in
+            let* test_metadata = Metadata.select metadata (Split.test split) in
+            Ok (train, test, train_metadata, test_metadata)
+          in
+          match materialized with
           | Error error ->
               let error = contextualize fold_index error in
-              if failure_policy = Abort then Error error
+              if failure_policy = Abort || Callback.is_control_error error then
+                Error error
               else
                 Ok
                   {
                     fold_index;
-                    fit_time;
+                    fit_time = 0.0;
                     score_time = 0.0;
                     scores = empty_scores ~return_train_score scorer_names;
                     model = None;
                     train_indices;
                     test_indices;
-                    failures = [| { phase = Fitting; error } |];
+                    failures = [| { phase = Materialization; error } |];
                   }
-          | Ok fitted ->
-              let score_time, scored =
-                timed (fun () ->
-                    score_model ~fold_index ~return_train_score ~failure_policy
-                      fitted train test)
+          | Ok (train, test, train_metadata, test_metadata) -> (
+              let fold_rng =
+                Seed.derive fit_seed ~operation:"cross-validation-fold"
+                  ~index:fold_index
+                |> Rng.create
               in
-              let* scores, failures = scored in
-              Ok
-                {
-                  fold_index;
-                  fit_time;
-                  score_time;
-                  scores;
-                  model = (if return_models then Some fitted else None);
-                  train_indices;
-                  test_indices;
-                  failures;
-                })
-    in
-    let* report_folds = Execution.map execution ~f:evaluate splits in
-    Ok { report_folds }
+              let fit_time, fitted =
+                timed (fun () ->
+                    Pipeline.fit_with_metadata (Pipeline.clone pipeline)
+                      ~metadata:train_metadata ~rng:fold_rng
+                      ~feature_schema:(Dataset.feature_schema train)
+                      ~x:(Dataset.features train) ~y:(Dataset.target train) ())
+              in
+              match fitted with
+              | Error error ->
+                  let error = contextualize fold_index error in
+                  if failure_policy = Abort || Callback.is_control_error error
+                  then Error error
+                  else
+                    Ok
+                      {
+                        fold_index;
+                        fit_time;
+                        score_time = 0.0;
+                        scores = empty_scores ~return_train_score scorer_names;
+                        model = None;
+                        train_indices;
+                        test_indices;
+                        failures = [| { phase = Fitting; error } |];
+                      }
+              | Ok fitted ->
+                  let score_time, scored =
+                    timed (fun () ->
+                        score_model ~fold_index ~return_train_score
+                          ~failure_policy ~train_metadata ~test_metadata fitted
+                          train test)
+                  in
+                  let* scores, failures = scored in
+                  Ok
+                    {
+                      fold_index;
+                      fit_time;
+                      score_time;
+                      scores;
+                      model = (if return_models then Some fitted else None);
+                      train_indices;
+                      test_indices;
+                      failures;
+                    })
+        in
+        let run_fold metadata ~index split =
+          let metadata = Metadata.scope (Error.Fold index) metadata in
+          Callback.run
+            ~outcome:(fun fold ->
+              if Array.length fold.failures = 0 then Callback.Succeeded
+              else Callback.Failed fold.failures.(0).error)
+            (Metadata.callback metadata)
+            ~operation:Callback.Fold
+            (fun () -> evaluate metadata ~index split)
+          |> Result.map_error (contextualize index)
+        in
+        let* report_folds =
+          match Metadata.callback metadata with
+          | None -> Execution.map execution ~f:(run_fold metadata) splits
+          | Some callback ->
+              let batch_size = max 1 (Execution.concurrency execution) in
+              let rec batches offset reversed =
+                if offset = Array.length splits then
+                  Ok (Array.of_list (List.rev reversed))
+                else
+                  let count = min batch_size (Array.length splits - offset) in
+                  let batch = Array.sub splits offset count in
+                  let* outcomes =
+                    Execution.map execution batch ~f:(fun ~index split ->
+                        let buffered, flush = Callback.buffer callback in
+                        let scoped =
+                          Metadata.with_callback metadata (Some buffered)
+                        in
+                        let result =
+                          run_fold scoped ~index:(offset + index) split
+                        in
+                        Ok (result, flush))
+                  in
+                  let* reversed =
+                    Array.fold_left
+                      (fun accumulated (result, flush) ->
+                        let* accumulated = accumulated in
+                        let* () = flush () in
+                        let* fold = result in
+                        Ok (fold :: accumulated))
+                      (Ok reversed) outcomes
+                  in
+                  batches (offset + count) reversed
+              in
+              batches 0 []
+        in
+        Ok { report_folds })
 
   let failure ~phase error = { phase; error }
 
   let finish_scoring failure_policy scores failures =
-    match (failure_policy, failures) with
-    | Abort, first :: _ -> Error first.error
-    | (Abort | Record), _ -> Ok (scores, Array.of_list failures)
+    match
+      List.find_opt
+        (fun failure -> Callback.is_control_error failure.error)
+        failures
+    with
+    | Some failure -> Error failure.error
+    | None -> (
+        match (failure_policy, failures) with
+        | Abort, first :: _ -> Error first.error
+        | (Abort | Record), _ -> Ok (scores, Array.of_list failures))
 
   module Regression = struct
     type model =
@@ -273,9 +358,9 @@ module Cross_validation = struct
         scorers
 
     let score_model scorers ~fold_index ~return_train_score ~failure_policy
-        fitted train test =
-      let predict partition dataset =
-        Pipeline.predict fitted
+        ~train_metadata ~test_metadata fitted train test =
+      let predict partition metadata dataset =
+        Pipeline.predict_with_metadata fitted ~metadata
           ~feature_schema:(Dataset.feature_schema dataset)
           ~x:(Dataset.features dataset)
         |> Result.map_error (contextualize fold_index)
@@ -288,7 +373,7 @@ module Cross_validation = struct
         (result, failures)
       in
       let train_prediction, train_prediction_failures =
-        if return_train_score then predict Train train
+        if return_train_score then predict Train train_metadata train
         else
           ( Error
               (validation ~name:"unused training prediction"
@@ -297,7 +382,9 @@ module Cross_validation = struct
                    "request train scores to compute training predictions"),
             [] )
       in
-      let test_prediction, test_prediction_failures = predict Test test in
+      let test_prediction, test_prediction_failures =
+        predict Test test_metadata test
+      in
       let train_results =
         match train_prediction with
         | Ok prediction ->
@@ -354,12 +441,17 @@ module Cross_validation = struct
 
     let cross_validate ?(return_train_score = false) ?(return_models = false)
         ?(return_indices = false) ?(failure_policy = Abort) ?fit_seed
-        ?(execution = Execution.sequential) ~splitter ~scorers ~seed pipeline
-        dataset =
+        ?(execution = Execution.sequential) ?metadata ~splitter ~scorers ~seed
+        pipeline dataset =
+      let metadata =
+        match metadata with
+        | Some metadata -> metadata
+        | None -> Metadata.of_dataset dataset
+      in
       let fit_seed = Option.value fit_seed ~default:seed in
       let scorer_names = Array.map Regression_scorer.name scorers in
       run ~return_train_score ~return_models ~return_indices ~failure_policy
-        ~fit_seed ~execution ~splitter ~scorer_names ~seed
+        ~fit_seed ~execution ~metadata ~splitter ~scorer_names ~seed
         ~score_model:(score_model scorers) pipeline dataset
   end
 
@@ -401,11 +493,11 @@ module Cross_validation = struct
       probabilities : (Matrix.t * int array, Error.t) result option;
     }
 
-    let probability_data ~fold_index fitted dataset =
+    let probability_data ~fold_index ~metadata fitted dataset =
       let ( let* ) = Result.bind in
       (let* classes = Pipeline.classes fitted in
        let* probabilities =
-         Pipeline.predict_proba fitted
+         Pipeline.predict_proba_with_metadata fitted ~metadata
            ~feature_schema:(Dataset.feature_schema dataset)
            ~x:(Dataset.features dataset)
        in
@@ -413,11 +505,11 @@ module Cross_validation = struct
        Ok (probabilities, classes))
       |> Result.map_error (contextualize fold_index)
 
-    let responses ~fold_index scorers fitted dataset =
+    let responses ~fold_index ~metadata scorers fitted dataset =
       let labels =
         if Array.exists Scoring.needs_labels scorers then
           Some
-            (Pipeline.predict fitted
+            (Pipeline.predict_with_metadata fitted ~metadata
                ~feature_schema:(Dataset.feature_schema dataset)
                ~x:(Dataset.features dataset)
             |> Result.map_error (contextualize fold_index))
@@ -425,7 +517,7 @@ module Cross_validation = struct
       in
       let probabilities =
         if Array.exists Scoring.needs_probabilities scorers then
-          Some (probability_data ~fold_index fitted dataset)
+          Some (probability_data ~fold_index ~metadata fitted dataset)
         else None
       in
       { labels; probabilities }
@@ -491,13 +583,16 @@ module Cross_validation = struct
         scorers
 
     let score_model scorers ~fold_index ~return_train_score ~failure_policy
-        fitted train test =
+        ~train_metadata ~test_metadata fitted train test =
       let train_responses =
         if return_train_score then
-          Some (responses ~fold_index scorers fitted train)
+          Some
+            (responses ~fold_index ~metadata:train_metadata scorers fitted train)
         else None
       in
-      let test_responses = responses ~fold_index scorers fitted test in
+      let test_responses =
+        responses ~fold_index ~metadata:test_metadata scorers fitted test
+      in
       let train_results =
         Option.map
           (score_partition ~fold_index ~partition:Train scorers train)
@@ -536,12 +631,17 @@ module Cross_validation = struct
 
     let cross_validate ?(return_train_score = false) ?(return_models = false)
         ?(return_indices = false) ?(failure_policy = Abort) ?fit_seed
-        ?(execution = Execution.sequential) ~splitter ~scorers ~seed pipeline
-        dataset =
+        ?(execution = Execution.sequential) ?metadata ~splitter ~scorers ~seed
+        pipeline dataset =
+      let metadata =
+        match metadata with
+        | Some metadata -> metadata
+        | None -> Metadata.of_dataset dataset
+      in
       let fit_seed = Option.value fit_seed ~default:seed in
       let scorer_names = Array.map Scoring.name scorers in
       run ~return_train_score ~return_models ~return_indices ~failure_policy
-        ~fit_seed ~execution ~splitter ~scorer_names ~seed
+        ~fit_seed ~execution ~metadata ~splitter ~scorer_names ~seed
         ~score_model:(score_model scorers) pipeline dataset
   end
 
@@ -815,8 +915,10 @@ module Grid_search = struct
       grid.axes
     |> Array.of_list
 
-  let with_candidate candidate error =
-    Error.with_context (Error.Candidate candidate) error
+  let[@warning "-4"] with_candidate candidate error =
+    match Error.context error with
+    | Error.Candidate index :: _ when index = candidate -> error
+    | _ -> Error.with_context (Error.Candidate candidate) error
 
   let missing_score candidate scorer partition =
     validation ~name:"grid-search score"
@@ -931,141 +1033,195 @@ module Grid_search = struct
       if Array.length eligible = 0 then None else Some (fst eligible.(0)) )
 
   let search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
-      ~refit ~seed grid dataset =
+      ~metadata ~refit ~seed grid dataset =
     let ( let* ) = Result.bind in
     let* primary = validate_refit scorer_names refit in
-    let partials = expand grid in
-    let pipelines = Array.make grid.candidate_count None in
-    let rec evaluate candidate_index reversed =
-      if candidate_index = Array.length partials then
-        Ok (Array.of_list (List.rev reversed))
-      else
-        let partial = partials.(candidate_index) in
-        let parameters =
-          partial.reversed_parameters |> List.rev |> Array.of_list
-        in
-        let built =
-          match partial.configuration with
-          | Error error -> Error error
-          | Ok configuration -> grid.build configuration
-        in
-        match built with
-        | Error error ->
-            let error = with_candidate candidate_index error in
-            if failure_policy = Cross_validation.Abort then Error error
-            else
-              let candidate : _ candidate =
-                {
-                  candidate_index;
-                  parameters;
-                  rank = None;
-                  mean_fit_time = 0.0;
-                  mean_score_time = 0.0;
-                  scores =
-                    failed_summaries ~return_train_score scorer_names error;
-                  evaluation = None;
-                  build_error = Some error;
-                }
+    let* () = Metadata.validate ~rows:(Dataset.sample_count dataset) metadata in
+    Callback.run
+      ~outcome:(fun report ->
+        match report.report_selection with
+        | Ok _ -> Callback.Succeeded
+        | Error error -> Callback.Failed error)
+      (Metadata.callback metadata)
+      ~operation:Callback.Search
+      (fun () ->
+        let partials = expand grid in
+        let pipelines = Array.make grid.candidate_count None in
+        let evaluate_candidate candidate_index =
+          let candidate_metadata =
+            Metadata.scope (Error.Candidate candidate_index) metadata
+          in
+          Callback.run
+            ~outcome:(fun candidate ->
+              match candidate.build_error with
+              | Some error -> Callback.Failed error
+              | None -> (
+                  match
+                    Array.to_list candidate.scores
+                    |> List.find_map (fun score ->
+                        match score.test with
+                        | Ok _ -> None
+                        | Error error -> Some error)
+                  with
+                  | None -> Callback.Succeeded
+                  | Some error -> Callback.Failed error))
+            (Metadata.callback candidate_metadata)
+            ~operation:Callback.Candidate
+            (fun () ->
+              let partial = partials.(candidate_index) in
+              let parameters =
+                partial.reversed_parameters |> List.rev |> Array.of_list
               in
-              evaluate (candidate_index + 1) (candidate :: reversed)
-        | Ok pipeline ->
-            pipelines.(candidate_index) <- Some pipeline;
-            let fit_seed =
-              Seed.derive seed ~operation:"grid-search-candidate"
-                ~index:candidate_index
-            in
-            let* evaluation =
-              cross_validate ~return_train_score ~failure_policy ~fit_seed
-                pipeline dataset
-              |> Result.map_error (with_candidate candidate_index)
-            in
-            let candidate : _ candidate =
-              {
-                candidate_index;
-                parameters;
-                rank = None;
-                mean_fit_time =
-                  mean_time
-                    (fun fold -> fold.Cross_validation.fit_time)
-                    evaluation;
-                mean_score_time =
-                  mean_time
-                    (fun fold -> fold.Cross_validation.score_time)
-                    evaluation;
-                scores =
-                  summarize candidate_index scorer_names ~return_train_score
-                    evaluation;
-                evaluation = Some evaluation;
-                build_error = None;
-              }
-            in
+              let built =
+                match partial.configuration with
+                | Error error -> Error error
+                | Ok configuration -> grid.build configuration
+              in
+              match built with
+              | Error error ->
+                  let error = with_candidate candidate_index error in
+                  if
+                    failure_policy = Cross_validation.Abort
+                    || Callback.is_control_error error
+                  then Error error
+                  else
+                    let candidate : _ candidate =
+                      {
+                        candidate_index;
+                        parameters;
+                        rank = None;
+                        mean_fit_time = 0.0;
+                        mean_score_time = 0.0;
+                        scores =
+                          failed_summaries ~return_train_score scorer_names
+                            error;
+                        evaluation = None;
+                        build_error = Some error;
+                      }
+                    in
+                    Ok candidate
+              | Ok pipeline ->
+                  pipelines.(candidate_index) <- Some pipeline;
+                  let fit_seed =
+                    Seed.derive seed ~operation:"grid-search-candidate"
+                      ~index:candidate_index
+                  in
+                  let* evaluation =
+                    cross_validate ~metadata:candidate_metadata
+                      ~return_train_score ~failure_policy ~fit_seed pipeline
+                      dataset
+                    |> Result.map_error (with_candidate candidate_index)
+                  in
+                  let candidate : _ candidate =
+                    {
+                      candidate_index;
+                      parameters;
+                      rank = None;
+                      mean_fit_time =
+                        mean_time
+                          (fun fold -> fold.Cross_validation.fit_time)
+                          evaluation;
+                      mean_score_time =
+                        mean_time
+                          (fun fold -> fold.Cross_validation.score_time)
+                          evaluation;
+                      scores =
+                        summarize candidate_index scorer_names
+                          ~return_train_score evaluation;
+                      evaluation = Some evaluation;
+                      build_error = None;
+                    }
+                  in
+                  Ok candidate)
+          |> Result.map_error (with_candidate candidate_index)
+        in
+        let rec evaluate candidate_index reversed =
+          if candidate_index = Array.length partials then
+            Ok (Array.of_list (List.rev reversed))
+          else
+            let* candidate = evaluate_candidate candidate_index in
             evaluate (candidate_index + 1) (candidate :: reversed)
-    in
-    let* evaluated = evaluate 0 [] in
-    let ranked, best = rank_candidates primary evaluated in
-    let unavailable () =
-      validation ~name:"grid-search selection"
-        ~reason:"no candidate produced an aggregatable primary test score"
-        ~remediation:"inspect candidate build, fold, and scorer failures"
-    in
-    match best with
-    | None ->
-        Ok
-          {
-            report_candidates = ranked;
-            report_selection = Error (unavailable ());
-          }
-    | Some candidate_index -> (
-        match pipelines.(candidate_index) with
-        | None -> assert false
-        | Some pipeline -> (
-            let refit_seed =
-              Seed.derive seed ~operation:"grid-search-refit"
-                ~index:candidate_index
-              |> Rng.create
-            in
-            let refitted =
-              Pipeline.fit (Pipeline.clone pipeline)
-                ?sample_weight:(Dataset.sample_weight dataset)
-                ~rng:refit_seed
-                ~feature_schema:(Dataset.feature_schema dataset)
-                ~x:(Dataset.features dataset) ~y:(Dataset.target dataset) ()
-              |> Result.map_error (with_candidate candidate_index)
-            in
-            match (failure_policy, refitted) with
-            | Cross_validation.Abort, Error error -> Error error
-            | (Cross_validation.Abort | Cross_validation.Record), Ok model ->
-                Ok
-                  {
-                    report_candidates = ranked;
-                    report_selection =
-                      Ok
-                        {
-                          selected_candidate_index = candidate_index;
-                          selected_model = model;
-                        };
-                  }
-            | Cross_validation.Record, Error error ->
-                Ok
-                  { report_candidates = ranked; report_selection = Error error }
-            ))
+        in
+        let* evaluated = evaluate 0 [] in
+        let ranked, best = rank_candidates primary evaluated in
+        let unavailable () =
+          validation ~name:"grid-search selection"
+            ~reason:"no candidate produced an aggregatable primary test score"
+            ~remediation:"inspect candidate build, fold, and scorer failures"
+        in
+        match best with
+        | None ->
+            Ok
+              {
+                report_candidates = ranked;
+                report_selection = Error (unavailable ());
+              }
+        | Some candidate_index -> (
+            match pipelines.(candidate_index) with
+            | None -> assert false
+            | Some pipeline -> (
+                let refit_seed =
+                  Seed.derive seed ~operation:"grid-search-refit"
+                    ~index:candidate_index
+                  |> Rng.create
+                in
+                let refit_metadata =
+                  Metadata.scope (Error.Candidate candidate_index) metadata
+                in
+                let refitted =
+                  Callback.run (Metadata.callback refit_metadata)
+                    ~operation:Callback.Refit (fun () ->
+                      Pipeline.fit_with_metadata (Pipeline.clone pipeline)
+                        ~metadata:refit_metadata ~rng:refit_seed
+                        ~feature_schema:(Dataset.feature_schema dataset)
+                        ~x:(Dataset.features dataset)
+                        ~y:(Dataset.target dataset) ())
+                  |> Result.map_error (with_candidate candidate_index)
+                in
+                match (failure_policy, refitted) with
+                | _, Error error when Callback.is_control_error error ->
+                    Error error
+                | Cross_validation.Abort, Error error -> Error error
+                | (Cross_validation.Abort | Cross_validation.Record), Ok model
+                  ->
+                    Ok
+                      {
+                        report_candidates = ranked;
+                        report_selection =
+                          Ok
+                            {
+                              selected_candidate_index = candidate_index;
+                              selected_model = model;
+                            };
+                      }
+                | Cross_validation.Record, Error error ->
+                    Ok
+                      {
+                        report_candidates = ranked;
+                        report_selection = Error error;
+                      })))
 
   module Regression = struct
     type model = Cross_validation.Regression.model
 
     let search ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ~grid ~splitter ~scorers ~refit
-        ~seed dataset =
+        ?(execution = Execution.sequential) ?metadata ~grid ~splitter ~scorers
+        ~refit ~seed dataset =
+      let metadata =
+        match metadata with
+        | Some metadata -> metadata
+        | None -> Metadata.of_dataset dataset
+      in
       let scorer_names = Array.map Regression_scorer.name scorers in
-      let cross_validate ~return_train_score ~failure_policy ~fit_seed pipeline
-          dataset =
+      let cross_validate ~metadata ~return_train_score ~failure_policy ~fit_seed
+          pipeline dataset =
         Cross_validation.Regression.cross_validate ~return_train_score
-          ~failure_policy ~fit_seed ~execution ~splitter ~scorers ~seed pipeline
-          dataset
+          ~failure_policy ~fit_seed ~execution ~metadata ~splitter ~scorers
+          ~seed pipeline dataset
       in
       search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
-        ~refit ~seed grid dataset
+        ~metadata ~refit ~seed grid dataset
   end
 
   module Binary_classification = struct
@@ -1073,17 +1229,22 @@ module Grid_search = struct
 
     let search ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ~grid ~splitter ~scorers ~refit
-        ~seed dataset =
+        ?(execution = Execution.sequential) ?metadata ~grid ~splitter ~scorers
+        ~refit ~seed dataset =
+      let metadata =
+        match metadata with
+        | Some metadata -> metadata
+        | None -> Metadata.of_dataset dataset
+      in
       let scorer_names = Array.map Binary_classification_scorer.name scorers in
-      let cross_validate ~return_train_score ~failure_policy ~fit_seed pipeline
-          dataset =
+      let cross_validate ~metadata ~return_train_score ~failure_policy ~fit_seed
+          pipeline dataset =
         Cross_validation.Binary_classification.cross_validate
-          ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
-          ~scorers ~seed pipeline dataset
+          ~return_train_score ~failure_policy ~fit_seed ~execution ~metadata
+          ~splitter ~scorers ~seed pipeline dataset
       in
       search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
-        ~refit ~seed grid dataset
+        ~metadata ~refit ~seed grid dataset
   end
 
   module Multiclass_classification = struct
@@ -1091,18 +1252,23 @@ module Grid_search = struct
 
     let search ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ~grid ~splitter ~scorers ~refit
-        ~seed dataset =
+        ?(execution = Execution.sequential) ?metadata ~grid ~splitter ~scorers
+        ~refit ~seed dataset =
+      let metadata =
+        match metadata with
+        | Some metadata -> metadata
+        | None -> Metadata.of_dataset dataset
+      in
       let scorer_names =
         Array.map Multiclass_classification_scorer.name scorers
       in
-      let cross_validate ~return_train_score ~failure_policy ~fit_seed pipeline
-          dataset =
+      let cross_validate ~metadata ~return_train_score ~failure_policy ~fit_seed
+          pipeline dataset =
         Cross_validation.Multiclass_classification.cross_validate
-          ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
-          ~scorers ~seed pipeline dataset
+          ~return_train_score ~failure_policy ~fit_seed ~execution ~metadata
+          ~splitter ~scorers ~seed pipeline dataset
       in
       search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
-        ~refit ~seed grid dataset
+        ~metadata ~refit ~seed grid dataset
   end
 end

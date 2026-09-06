@@ -437,6 +437,7 @@ module Error : sig
     | Convergence of { algorithm : string; reason : string }
     | Compatibility of { component : string; reason : string }
     | Artifact of { operation : string; reason : string }
+    | Callback_failure of { reason : string }
     | Cancelled
 
   type t

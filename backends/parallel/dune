@@ -9,3 +9,9 @@
  (modules modelkit_parallel_test)
  (package modelkit-parallel)
  (libraries modelkit modelkit-parallel alcotest))
+
+(test
+ (name evaluation_metadata_parallel_test)
+ (modules evaluation_metadata_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel modelkit_test_support alcotest))

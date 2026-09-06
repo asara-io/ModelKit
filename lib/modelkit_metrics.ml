@@ -657,7 +657,7 @@ module Binary_classification_metrics = struct
         | Error.Data _ | Error.Shape_mismatch _
         | Error.Feature_schema_mismatch _ | Error.Validation _
         | Error.Numerical _ | Error.Convergence _ | Error.Compatibility _
-        | Error.Artifact _ | Error.Cancelled ->
+        | Error.Artifact _ | Error.Callback_failure _ | Error.Cancelled ->
             Error error)
     | Ok curve ->
         let length = Vector.length curve.false_positive_rates in
@@ -686,7 +686,7 @@ module Binary_classification_metrics = struct
         | Error.Data _ | Error.Shape_mismatch _
         | Error.Feature_schema_mismatch _ | Error.Validation _
         | Error.Numerical _ | Error.Convergence _ | Error.Compatibility _
-        | Error.Artifact _ | Error.Cancelled ->
+        | Error.Artifact _ | Error.Callback_failure _ | Error.Cancelled ->
             Error error)
     | Ok curve ->
         let length = Vector.length curve.recalls in

@@ -1,5 +1,6 @@
 open Modelkit_data
 open Modelkit_metadata
+module Callback = Modelkit_callback.Callback
 open Modelkit_protocols
 
 module Pipeline = struct
@@ -233,10 +234,11 @@ module Pipeline = struct
       validate_transform_metadata metadata
     in
     let fit_transform ~metadata ~rng ~feature_schema ~x ~y =
-      let* fit_metadata = Metadata.route fit_request metadata in
       let* fitted =
-        Transformer.fit specification ~metadata:fit_metadata ~rng
-          ~feature_schema ~x ~y ()
+        Metadata.consume ~name ~operation:Callback.Fit fit_request metadata
+          (fun metadata ->
+            Transformer.fit specification ~metadata ~rng ~feature_schema ~x ~y
+              ())
       in
       let* () =
         validate_fitted_schema ~stage:name ~expected:feature_schema
@@ -244,8 +246,9 @@ module Pipeline = struct
       in
       let output_schema = Transformer.output_schema fitted in
       let apply_transform ~metadata ~feature_schema ~x =
-        let* metadata = Metadata.route transform_request metadata in
-        Transformer.transform fitted ~metadata ~feature_schema ~x
+        Metadata.consume ~name ~operation:Callback.Transform transform_request
+          metadata (fun metadata ->
+            Transformer.transform fitted ~metadata ~feature_schema ~x)
       in
       let* output = apply_transform ~metadata ~feature_schema ~x in
       let* () = validate_transform_output ~input:x ~output_schema output in
@@ -353,9 +356,10 @@ module Pipeline = struct
       }
     in
     let fit ~metadata ~rng ~feature_schema ~x ~y () =
-      let* metadata = Metadata.route fit_request metadata in
       let* fitted =
-        Estimator.fit specification ~metadata ~rng ~feature_schema ~x ~y ()
+        Metadata.consume ~name ~operation:Callback.Fit fit_request metadata
+          (fun metadata ->
+            Estimator.fit specification ~metadata ~rng ~feature_schema ~x ~y ())
       in
       package_fitted_estimator ~name ~expected_schema:feature_schema
         ~fitted_schema:(Estimator.feature_schema fitted)
