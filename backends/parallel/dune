@@ -15,3 +15,9 @@
  (modules evaluation_metadata_parallel_test)
  (package modelkit-parallel)
  (libraries modelkit modelkit-parallel modelkit_test_support alcotest))
+
+(test
+ (name transformed_target_parallel_test)
+ (modules transformed_target_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel modelkit_test_support alcotest))

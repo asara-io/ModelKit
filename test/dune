@@ -4,7 +4,8 @@
  (modules
   backend_conformance
   adapter_conformance
-  evaluation_metadata_support)
+  evaluation_metadata_support
+  transformed_target_support)
  (libraries modelkit alcotest))
 
 (test
@@ -395,3 +396,15 @@
  (modules evaluation_metadata_test)
  (package modelkit)
  (libraries modelkit modelkit_test_support alcotest))
+
+(test
+ (name transformed_target_test)
+ (modules transformed_target_test)
+ (package modelkit)
+ (libraries modelkit modelkit_test_support alcotest)
+ (deps fixtures/sklearn/transformed_target_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_TARGET_FIXTURE
+   %{dep:fixtures/sklearn/transformed_target_v1.tsv}
+   (run %{test}))))

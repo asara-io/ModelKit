@@ -1968,6 +1968,41 @@ def generate_nested_composition_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_transformed_target_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.compose import TransformedTargetRegressor
+    from sklearn.linear_model import LinearRegression
+
+    train = np.arange(6, dtype=np.float64)
+    target = np.expm1([0.4, 0.9, 0.8, 1.8, 1.1, 2.0])
+    weights = np.array([1., 2., 1., 3., 2., 1.])
+    test = np.array([-1., 0.5, 6.])
+    model = TransformedTargetRegressor(
+        regressor=LinearRegression(), func=np.log1p, inverse_func=np.expm1,
+        check_inverse=True,
+    ).fit(train[:, None], target, sample_weight=weights)
+    rows = ["# ModelKit sklearn reference fixture v1"]
+    for name, values in [
+        ("train", train), ("target", target), ("weights", weights),
+        ("test", test), ("prediction", model.predict(test[:, None])),
+    ]:
+        rows.append(f"{name}\t{float_values(values)}")
+    (fixture_dir / "transformed_target_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {"absolute_tolerance": 1e-12, "relative_tolerance": 1e-12,
+                          "func": "log1p", "inverse_func": "expm1", "weighted": True},
+        "environment": environment.metadata(),
+        "fixture": "transformed_target_v1", "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0", "schema_version": 1,
+        "references": ["sklearn.compose.TransformedTargetRegressor", "sklearn.linear_model.LinearRegression"],
+    }
+    (fixture_dir / "transformed_target_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
@@ -1979,6 +2014,7 @@ def main() -> None:
     generate_transform_fixture(fixture_dir)
     generate_column_transformer_fixture(fixture_dir)
     generate_nested_composition_fixture(fixture_dir)
+    generate_transformed_target_fixture(fixture_dir)
     generate_linear_model_fixture(fixture_dir)
     generate_regularized_linear_fixture(fixture_dir)
     generate_ridge_classifier_fixture(fixture_dir)

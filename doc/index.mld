@@ -8,7 +8,7 @@ The supported API is the flat {!Modelkit} namespace documented below. Physical
 additional public namespaces or compatibility targets. Optional integrations,
 such as bounded Domainslib execution, are distributed as separate packages.
 
-Version 0.4.1 provides immutable dense {!Modelkit.Dataset} admission, explicit
+Version 0.5.0-dev provides immutable dense {!Modelkit.Dataset} admission, explicit
 feature-finiteness policies, stable schema fingerprints, zero-copy row-index
 views, and copy/view reports for opaque float64 {!Modelkit.Vector} and
 {!Modelkit.Matrix} values, together with checked {!Modelkit.Csr_matrix}
@@ -65,7 +65,7 @@ The portable {!Modelkit.Reference_backend.feature_matrix_vector_product} and
 {!Modelkit.Reference_backend.transposed_feature_matrix_vector_product} functions
 dispatch without densifying CSR input. Dense and sparse forms agree for finite
 operands; sparse kernels visit only stored entries. Estimators and workflow APIs
-remain dense-only in 0.4.1; sparse estimator integration is scheduled for a
+remain dense-only in 0.5.0-dev; sparse estimator integration is scheduled for a
 later release.
 
 {@ocaml[
@@ -815,6 +815,57 @@ components.
 
 Metadata-aware adapters currently have no artifact codecs. Existing codec
 packages continue to round-trip unchanged.
+
+{2 Transformed-target regression}
+
+{!Modelkit.Transformed_target_regressor} wraps a packaged scalar regressor.
+It fits a target mapping within each training partition and inverse-transforms
+predictions before they leave the pipeline. CV and search therefore score in
+the original target space, using the original scoring weights. Supervised
+feature preprocessing continues to receive original targets; only the wrapped
+regressor receives transformed targets.
+
+For a fixed mapping, supply pure scalar functions:
+
+{@ocaml[
+# let response_transform = Transformed_target_regressor.functions
+    ~transform:log1p ~inverse_transform:expm1;;
+val response_transform : Transformed_target_regressor.transformer = <abstr>
+# let response_regressor =
+    Pipeline.estimator ~name:"linear" (module Linear_regression)
+      (Linear_regression.create ()) |> Result.get_ok;;
+val response_regressor :
+  (Linear_regression.target, Linear_regression.prediction) Pipeline.estimator =
+  <abstr>
+# let response_pipeline =
+    Transformed_target_regressor.create ~name:"response"
+      ~transformer:response_transform ~regressor:response_regressor ()
+    |> Result.get_ok
+    |> Pipeline.set_estimator Pipeline.empty |> Result.get_ok;;
+val response_pipeline :
+  (Target.regression Target.t, Target.regression Target.t) Pipeline.t =
+  <abstr>
+]}
+
+For learned mappings, implement
+{!module-type:Modelkit.Transformed_target_regressor.TRANSFORMER} and package
+it with {!val:Modelkit.Transformed_target_regressor.transformer}. The wrapper clones
+its specification and derives separate deterministic random streams for target
+and regressor fitting on every fold and full-data refit. Declare target-fit
+weights, groups, and callbacks through [fit_request]; the regressor's requests
+remain independent. Both requests are checked before pipeline fitting begins.
+[transform] and [inverse_transform] use only fitted state and target values,
+without inference metadata or implicit reuse of training metadata.
+
+Training checks every target's round trip, with configurable finite,
+nonnegative relative and absolute tolerances. A mismatch is a typed error,
+not a warning. Target transformations and inverse predictions must preserve
+row count and order; the wrapper checks lengths and target admission rejects
+non-finite results. The training check does not prove invertibility on unseen
+values. For example, [log1p] requires targets above [-1.], and [expm1] can
+overflow for sufficiently large predicted log-targets. These produce typed
+errors. Exceptions raised by user functions propagate as with other extension
+code. This wrapper has no artifact codec; attempted persistence fails explicitly.
 
 {2 Evaluation metadata and callbacks}
 

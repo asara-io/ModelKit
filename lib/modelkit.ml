@@ -107,3 +107,6 @@ module Score_aggregation = Modelkit_metrics.Score_aggregation
 module Cross_validation = Modelkit_model_selection.Cross_validation
 module Grid_search = Modelkit_model_selection.Grid_search
 module Artifact = Modelkit_artifact.Artifact
+
+module Transformed_target_regressor =
+  Modelkit_target.Transformed_target_regressor

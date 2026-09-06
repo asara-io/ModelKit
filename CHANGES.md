@@ -1,3 +1,14 @@
+# 0.5.0-dev (unreleased)
+
+- Add typed supervised pipelines, dense column transformation, feature unions,
+  and nested preprocessing chains with fold-local fitting.
+- Route requested weights, groups, and callbacks through nested consumers,
+  cross-validation, search, and full-data refit with bounded cancellation.
+- Add transformed-target regression with fold-local target fitting, metadata
+  requests, checked inverse transforms, and original-space predictions.
+- Record producer version 0.5.0-dev in newly written artifacts while retaining
+  compatibility with existing readers and golden artifacts.
+
 # 0.4.1 (2026-09-04)
 
 - Add checked immutable CSR matrices with canonical structure validation,

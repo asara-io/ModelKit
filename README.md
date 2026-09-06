@@ -22,6 +22,7 @@ The full documentation is available via: [https://ocaml.org/p/modelkit/latest/do
 - Dense column-wise preprocessing combines independently fitted branches with checked index/name selectors, passthrough/drop, deterministic output names, and observable copy allocations.
 - Typed metadata requests route weights, groups, and callbacks through nested fitting, inference, cross-validation, and search, with aligned rows and deterministic progress reporting.
 - Feature unions, column transformers, and nestable preprocessing chains combine supervised and unsupervised transformations with deterministic feature names and fold-local fitting.
+- Transformed-target regression learns target mappings within each training fold, checks inverse transforms, and scores predictions in the original target space.
 - Portable weighted ordinary least squares, ridge, lasso, elastic-net, binary and multinomial logistic regression, Poisson and Tweedie generalized linear models, binary and multiclass ridge classification, and incremental SGD estimators keep immutable specifications separate from fitted coefficients and solver diagnostics.
 - Deterministic K-fold, stratified K-fold, group K-fold, and expanding-window time-series splitters produce validated row views that can be explicitly materialized as aligned datasets.
 - Weighted regression, binary, multiclass, and ranking metrics provide immutable higher-is-better scorers, plotting-neutral residual, ROC, and precision–recall data, stable score aggregation, and an explicit undefined-result policy.
@@ -39,7 +40,7 @@ Anticipating performance benefits from existing work such as using Owl for a num
 
 ## Status
 
-ModelKit 0.4.1 is the current release. The supported API is the flat `Modelkit.*` namespace documented in the [manual](https://ocaml.org/p/modelkit/latest/doc/index.html); the physical `Modelkit_*` source units are private. Optional integrations ship as separate packages that depend inward on the core: `modelkit-parallel` for bounded Domainslib fold execution, and `modelkit-nx` and `modelkit-talon` for checked admission of Raven tensors and dataframe columns.
+This branch builds ModelKit 0.5.0-dev. The supported API is the flat `Modelkit.*` namespace documented in the [manual](https://ocaml.org/p/modelkit/latest/doc/index.html); the physical `Modelkit_*` source units are private. Optional integrations ship as separate packages that depend inward on the core: `modelkit-parallel` for bounded Domainslib fold execution, and `modelkit-nx` and `modelkit-talon` for checked admission of Raven tensors and dataframe columns.
 
 Compared with 0.3.2, this release adds:
 
