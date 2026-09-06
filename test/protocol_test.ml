@@ -350,7 +350,7 @@ let test_public_api_compatibility () =
       | Error.Feature_schema_mismatch _ -> ()
       | Error.Data _ | Error.Shape_mismatch _ | Error.Validation _
       | Error.Numerical _ | Error.Convergence _ | Error.Compatibility _
-      | Error.Artifact _ | Error.Cancelled ->
+      | Error.Artifact _ | Error.Callback_failure _ | Error.Cancelled ->
           raise (Failure "unexpected prediction error"))
   | Ok _ -> raise (Failure "incompatible prediction schema was accepted"));
   ignore (Result.get_ok (Test_scorer.score () ~truth:y ~prediction:y ()));

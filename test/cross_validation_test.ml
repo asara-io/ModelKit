@@ -290,7 +290,7 @@ let test_probability_class_contract () =
         | Error.Data _ | Error.Shape_mismatch _
         | Error.Feature_schema_mismatch _ | Error.Validation _
         | Error.Numerical _ | Error.Convergence _ | Error.Artifact _
-        | Error.Cancelled ->
+        | Error.Callback_failure _ | Error.Cancelled ->
             false);
       Alcotest.(check bool)
         "class-order failure has fold and stage context" true

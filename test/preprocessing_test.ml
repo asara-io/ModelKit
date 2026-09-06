@@ -20,21 +20,22 @@ let is_data = function
   | Error.Data _ -> true
   | Error.Validation _ | Error.Shape_mismatch _
   | Error.Feature_schema_mismatch _ | Error.Numerical _ | Error.Convergence _
-  | Error.Compatibility _ | Error.Artifact _ | Error.Cancelled ->
+  | Error.Compatibility _ | Error.Artifact _ | Error.Callback_failure _
+  | Error.Cancelled ->
       false
 
 let is_validation = function
   | Error.Validation _ -> true
   | Error.Data _ | Error.Shape_mismatch _ | Error.Feature_schema_mismatch _
   | Error.Numerical _ | Error.Convergence _ | Error.Compatibility _
-  | Error.Artifact _ | Error.Cancelled ->
+  | Error.Artifact _ | Error.Callback_failure _ | Error.Cancelled ->
       false
 
 let is_numerical = function
   | Error.Numerical _ -> true
   | Error.Data _ | Error.Shape_mismatch _ | Error.Feature_schema_mismatch _
   | Error.Validation _ | Error.Convergence _ | Error.Compatibility _
-  | Error.Artifact _ | Error.Cancelled ->
+  | Error.Artifact _ | Error.Callback_failure _ | Error.Cancelled ->
       false
 
 let is_data_non_finite = function
@@ -49,14 +50,15 @@ let is_data_non_finite = function
       | Data_error.Invalid_csr_column_order _ )
   | Error.Shape_mismatch _ | Error.Feature_schema_mismatch _
   | Error.Validation _ | Error.Numerical _ | Error.Convergence _
-  | Error.Compatibility _ | Error.Artifact _ | Error.Cancelled ->
+  | Error.Compatibility _ | Error.Artifact _ | Error.Callback_failure _
+  | Error.Cancelled ->
       false
 
 let is_schema_mismatch = function
   | Error.Feature_schema_mismatch _ -> true
   | Error.Data _ | Error.Shape_mismatch _ | Error.Validation _
   | Error.Numerical _ | Error.Convergence _ | Error.Compatibility _
-  | Error.Artifact _ | Error.Cancelled ->
+  | Error.Artifact _ | Error.Callback_failure _ | Error.Cancelled ->
       false
 
 let close expected observed = Float.abs (expected -. observed) <= 1e-12

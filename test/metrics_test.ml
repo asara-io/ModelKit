@@ -24,14 +24,14 @@ let is_validation = function
   | Error.Validation _ -> true
   | Error.Data _ | Error.Shape_mismatch _ | Error.Feature_schema_mismatch _
   | Error.Numerical _ | Error.Convergence _ | Error.Compatibility _
-  | Error.Artifact _ | Error.Cancelled ->
+  | Error.Artifact _ | Error.Callback_failure _ | Error.Cancelled ->
       false
 
 let is_shape = function
   | Error.Shape_mismatch _ -> true
   | Error.Data _ | Error.Feature_schema_mismatch _ | Error.Validation _
   | Error.Numerical _ | Error.Convergence _ | Error.Compatibility _
-  | Error.Artifact _ | Error.Cancelled ->
+  | Error.Artifact _ | Error.Callback_failure _ | Error.Cancelled ->
       false
 
 let expect_error predicate = function

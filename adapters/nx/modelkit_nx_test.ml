@@ -19,7 +19,8 @@ let error_category = function
   | Error.Shape_mismatch _ -> Shape
   | Error.Data _ -> Data
   | Error.Feature_schema_mismatch _ | Error.Numerical _ | Error.Convergence _
-  | Error.Compatibility _ | Error.Artifact _ | Error.Cancelled ->
+  | Error.Compatibility _ | Error.Artifact _ | Error.Callback_failure _
+  | Error.Cancelled ->
       Other
 
 let has_category expected kind = error_category kind = expected

@@ -47,7 +47,8 @@ module Make (Config : CONFIG) = struct
             | Data_error.Invalid_csr_column_order _ )
         | Error.Shape_mismatch _ | Error.Feature_schema_mismatch _
         | Error.Validation _ | Error.Numerical _ | Error.Convergence _
-        | Error.Compatibility _ | Error.Artifact _ | Error.Cancelled ->
+        | Error.Compatibility _ | Error.Artifact _ | Error.Callback_failure _
+        | Error.Cancelled ->
             Alcotest.fail "dimension failure used the wrong error kind")
     | Ok _ -> Alcotest.fail "misaligned operands were accepted"
 
