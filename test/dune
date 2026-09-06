@@ -356,3 +356,15 @@
    MODELKIT_SKLEARN_GLM_FIXTURE
    %{dep:fixtures/sklearn/glm_v1.tsv}
    (run %{test}))))
+
+(test
+ (name column_transformer_test)
+ (modules column_transformer_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/column_transformer_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_COLUMN_FIXTURE
+   %{dep:fixtures/sklearn/column_transformer_v1.tsv}
+   (run %{test}))))

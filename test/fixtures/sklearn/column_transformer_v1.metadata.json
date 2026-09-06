@@ -1,0 +1,37 @@
+{
+  "configuration": {
+    "absolute_tolerance": 1e-12,
+    "cases": [
+      "mixed",
+      "overlap",
+      "encoding"
+    ],
+    "dense_output": true,
+    "fit_rows": 4,
+    "inference_rows": 2,
+    "naming": "Exact names for scale, impute, passthrough, and remainder; encoders retain ModelKit's existing generated feature-name convention.",
+    "relative_tolerance": 1e-12
+  },
+  "environment": {
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "fixture": "column_transformer_v1",
+  "generator": "dev/fixtures/generate.py",
+  "license": "Apache-2.0",
+  "references": [
+    "sklearn.compose.ColumnTransformer",
+    "sklearn.preprocessing.StandardScaler",
+    "sklearn.preprocessing.OneHotEncoder",
+    "sklearn.impute.SimpleImputer"
+  ],
+  "schema_version": 1
+}

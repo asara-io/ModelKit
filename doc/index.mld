@@ -531,6 +531,73 @@ codec, pipelines intended for persistence use the artifact-aware built-in
 constructors. Encoding any unsupported component returns a typed
 {!Modelkit.Error.Artifact} failure.
 
+{2 Column-wise preprocessing}
+
+{!Modelkit.Column_transformer} applies different unsupervised stages to
+selected columns, fits every branch on the same training rows, and joins the
+outputs in declaration order. {!Modelkit.Column_selector} selects by ordered
+indices, ordered names, or all columns. Overlaps between branches are allowed;
+duplicates within one selector are rejected. All selectors are resolved before
+any branch fits.
+
+For example, scale two numeric columns and keep the remaining flag:
+
+{@ocaml[
+# let column_x = Matrix.of_arrays [| [| 1.; 2.; 0. |]; [| 3.; 4.; 1. |] |] |> Result.get_ok;;
+val column_x : Matrix.t = <abstr>
+# let column_schema =
+    Feature_names.create ~expected_count:3 [| "height"; "weight"; "flag" |]
+    |> Result.get_ok |> Feature_schema.named;;
+val column_schema : Feature_schema.t = <abstr>
+# let numeric_columns = Column_selector.names [| "height"; "weight" |] |> Result.get_ok;;
+val numeric_columns : Column_selector.t = <abstr>
+# let numeric_stage = Pipeline.transformer ~name:"scale" (module Standard_scaler)
+    (Standard_scaler.create ()) |> Result.get_ok;;
+val numeric_stage : Pipeline.transformer = <abstr>
+# let columns = Column_transformer.create ~remainder:Column_transformer.Passthrough
+    [| Column_transformer.transformer ~columns:numeric_columns numeric_stage |]
+    |> Result.get_ok;;
+val columns : Column_transformer.t = <abstr>
+# let fitted_columns, transformed_columns, column_allocation =
+    Column_transformer.fit_transform columns ~rng:(Rng.create (Seed.of_int 42))
+      ~feature_schema:column_schema ~x:column_x ~y:None () |> Result.get_ok;;
+val fitted_columns : Column_transformer.fitted = <abstr>
+val transformed_columns : Matrix.t = <abstr>
+val column_allocation : Column_transformer.allocation =
+  {Modelkit.Column_transformer.selected_input_bytes = 32L;
+   output_bytes = 48L}
+# Matrix.to_arrays transformed_columns;;
+- : float array array = [|[|-1.; -1.; 0.|]; [|1.; 1.; 1.|]|]
+# Column_transformer.output_schema fitted_columns |> Feature_schema.names
+    |> Option.get |> Feature_names.to_array;;
+- : string array = [|"scale__height"; "scale__weight"; "remainder__flag"|]
+# let columns_stage = Column_transformer.stage ~name:"columns" columns |> Result.get_ok;;
+val columns_stage : Pipeline.transformer = <abstr>
+]}
+
+Add [columns_stage] to an ordinary pipeline, or adapt it with
+{!Modelkit.Pipeline.Supervised.unsupervised} for a target-aware pipeline.
+{!Modelkit.Column_transformer.stage} reuses the branch outputs produced during
+fitting and forwards sample weights to child packages; individual children
+still receive weights only when packaged with [~route_sample_weight:true].
+Cross-validation therefore fits branch statistics and resolves weights within
+each training fold.
+
+Named inputs retain their feature identities inside each branch. Anonymous
+inputs acquire [x0], [x1], etc. using original column positions. Outputs are
+prefixed with the branch name, and passthrough remainder columns appear last
+in original order. Empty selections skip child fitting and transformation.
+Explicitly dropped columns do not reappear in the remainder; an entirely
+dropped result retains its row count with zero columns. Inference requires
+the same complete ordered input schema as fitting.
+
+Allocation reports count the dense payload of selected inputs copied for
+transform branches and the final output matrix. Passthrough copies directly
+into that output. Child allocations, scratch, and OCaml metadata are excluded.
+The combined output-width limit is checked before final concatenation; each
+child remains responsible for its own allocation bounds. Composite artifact
+codecs and supervised column branches are not yet supported.
+
 {2 Supervised preprocessing}
 
 {!Modelkit.Pipeline.Supervised} builds pipelines whose transformers can learn
