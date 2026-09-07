@@ -432,6 +432,30 @@ def worker_commands(scenario: dict[str, object], scenario_path: Path) -> dict[st
             ",".join(str(value) for value in scenario["alphas"]),
             ",".join(str(value).lower() for value in scenario["fit_intercepts"]),
         ]
+    elif workload == "permutation_test":
+        modelkit_worker = (
+            ROOT
+            / "_build"
+            / "default"
+            / "bench"
+            / "ocaml"
+            / "permutation_test_worker.exe"
+        )
+        if not modelkit_worker.exists():
+            raise RuntimeError(
+                "ModelKit benchmark worker is missing; run "
+                "`opam exec -- dune build bench/ocaml/permutation_test_worker.exe`"
+            )
+        dataset = scenario["dataset"]
+        commands["modelkit"] = [
+            str(modelkit_worker),
+            str(dataset["samples"]),
+            str(dataset["features"]),
+            str(dataset["seed"]),
+            str(scenario["folds"]),
+            str(scenario["permutations"]),
+            str(scenario["ridge_alpha"]),
+        ]
     return commands
 
 
@@ -526,6 +550,7 @@ def main() -> None:
         "cross_validation": 1e-7,
         "parallel_cross_validation": 1e-7,
         "grid_search": 1e-7,
+        "permutation_test": 1e-7,
         "adapter_admission": 1e-7,
         "sparse_kernels": 1e-7,
         "solver_shapes": 1e-7,

@@ -1222,6 +1222,76 @@ def grid_search(scenario: dict[str, object]) -> dict[str, object]:
     }
 
 
+def permutation_test(scenario: dict[str, object]) -> dict[str, object]:
+    import hashlib
+    import numpy as np
+    from sklearn.linear_model import Ridge
+    from sklearn.model_selection import KFold, permutation_test_score
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    dataset = scenario["dataset"]
+    rows = np.arange(dataset["samples"], dtype=np.int64)[:, np.newaxis]
+    columns = np.arange(dataset["features"], dtype=np.int64)[np.newaxis, :]
+    x = (
+        (rows * (17 + columns * 12) + columns * 31 + dataset["seed"]) % 1000
+    ).astype(np.float64)
+    x = (x / 100.0) - 5.0
+    coefficients = ((columns[0] % 5) - 2).astype(np.float64) * 0.2
+    source_rows = (rows[:, 0] // 2) * 2
+    group_x = (
+        (
+            source_rows[:, np.newaxis] * (17 + columns * 12)
+            + columns * 31
+            + dataset["seed"]
+        )
+        % 1000
+    ).astype(np.float64)
+    group_x = (group_x / 100.0) - 5.0
+    y = 1.25 + group_x @ coefficients
+    groups = rows[:, 0] // 2
+    folds = list(
+        KFold(n_splits=scenario["folds"], shuffle=False).split(x, y)
+    )
+    pipeline = Pipeline(
+        [
+            ("scale", StandardScaler()),
+            ("ridge", Ridge(alpha=scenario["ridge_alpha"], solver="svd")),
+        ]
+    )
+    observed, permutation_scores, p_value = permutation_test_score(
+        pipeline,
+        x,
+        y,
+        groups=groups,
+        cv=folds,
+        n_permutations=scenario["permutations"],
+        random_state=dataset["seed"],
+        scoring="neg_mean_squared_error",
+        n_jobs=1,
+    )
+    signature = np.asarray(
+        [observed, *permutation_scores.tolist(), p_value], dtype="<f8"
+    )
+    return {
+        "allocated_words": None,
+        "checksum": hashlib.sha256(signature.tobytes()).hexdigest(),
+        "features": x.shape[1],
+        "folds": scenario["folds"],
+        "operations": [
+            "standard_scaling",
+            "ridge_regression",
+            "permutation_test_score",
+            "within_group_shuffling",
+            "corrected_p_value",
+        ],
+        "permutations": scenario["permutations"],
+        "samples": x.shape[0],
+        "signature": signature.tolist(),
+        "threadpools": threadpools(),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("scenario", type=Path)
@@ -1263,6 +1333,8 @@ def main() -> None:
         result = cross_validation(scenario)
     elif workload == "grid_search":
         result = grid_search(scenario)
+    elif workload == "permutation_test":
+        result = permutation_test(scenario)
     else:
         raise ValueError(f"unknown workload {workload!r}")
     print(json.dumps(result))

@@ -23,6 +23,12 @@
  (libraries modelkit modelkit-parallel alcotest))
 
 (test
+ (name permutation_test_parallel_test)
+ (modules permutation_test_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel alcotest))
+
+(test
  (name evaluation_metadata_parallel_test)
  (modules evaluation_metadata_parallel_test)
  (package modelkit-parallel)

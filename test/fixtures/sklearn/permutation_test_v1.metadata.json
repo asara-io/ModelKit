@@ -1,0 +1,35 @@
+{
+  "comparison": "Observed score, within-group permutation scores, and corrected upper-tail p-value.",
+  "configuration": {
+    "folds": 3,
+    "groups": "two rows per group; target is constant within each group",
+    "n_permutations": 5,
+    "random_state": 73,
+    "ridge_alpha": 0.5,
+    "ridge_solver": "svd",
+    "scoring": "neg_mean_squared_error",
+    "shuffle": false,
+    "standard_scaling": true
+  },
+  "environment": {
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "fixture": "permutation_test_v1",
+  "generator": "dev/fixtures/generate.py",
+  "license": "Apache-2.0",
+  "references": [
+    "sklearn.model_selection.permutation_test_score",
+    "sklearn.linear_model.Ridge",
+    "sklearn.preprocessing.StandardScaler"
+  ],
+  "schema_version": 1
+}

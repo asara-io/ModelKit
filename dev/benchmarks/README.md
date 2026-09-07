@@ -559,6 +559,49 @@ The raw report is
 toolchain versions, thread limits, candidate output signatures, allocations,
 and the full scenario.
 
+## Dense grouped permutation test v1
+
+`permutation_test_dense_v1` evaluates a fold-local standard-scaling and ridge
+pipeline on one observed regression target and 20 within-group permutations
+over a deterministic 2,000 by 10 float64 dataset. Five shared K-fold partitions
+produce 105 complete pipeline fits. Each two-row group has one constant target,
+so shuffling within groups leaves the target unchanged and lets the harness
+compare all observed and null scores plus the corrected p-value across runtimes
+without requiring ModelKit to reproduce NumPy's random stream.
+
+The output signatures must agree within `1e-7` absolute and relative tolerance
+before a report is written. The harness performs one warmup and three interleaved
+measured runs in fresh sequential processes. Timings include runtime startup,
+deterministic data generation, target permutations, all fits and scores, and
+report construction. Peak RSS is sampled every millisecond; ModelKit also
+reports cumulative OCaml heap allocation words.
+
+The committed macOS arm64 report recorded these medians:
+
+| Implementation | Wall time | Peak RSS | OCaml allocation words |
+| --- | ---: | ---: | ---: |
+| ModelKit 0.5.0-dev / OCaml 5.3.0 | 0.455 s | 13,615,104 bytes | 80,898,368 |
+| scikit-learn 1.9.0 / Python 3.14.3 | 0.926 s | 128,925,696 bytes | unavailable |
+
+This scenario is `claim_eligible: false`. Its invariant grouped targets isolate
+orchestration and repeated fitting but do not represent a useful significance
+test, and it has not run on independent CI targets. It provides parity,
+allocation, and gross regression evidence rather than support for a comparative
+product claim.
+
+Build and run it from the repository root:
+
+```sh
+opam exec -- dune build bench/ocaml/permutation_test_worker.exe
+env/bin/python dev/benchmarks/run.py \
+  --scenario dev/benchmarks/scenarios/permutation_test_dense.json
+```
+
+The raw report is
+`results/permutation_test_dense_v1.darwin-arm64.json`; it records every raw
+run, toolchain versions, thread limits, output signatures, allocations, and the
+full scenario.
+
 ## Adapter admission v1
 
 `adapter_admission_dense_v1` measures the copy and allocation cost of moving a

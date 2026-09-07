@@ -757,6 +757,108 @@ module Validation_curve : sig
   end
 end
 
+(** Cross-validated permutation significance tests.
+
+    The observed target and every permuted target are evaluated on one shared,
+    validated split plan. Preprocessing and supervised pipeline stages are
+    fitted independently inside every training fold. A single scorer is used
+    because the corrected upper-tail p-value is defined for one higher-is-better
+    statistic.
+
+    Targets shuffle globally when the dataset has no groups. When dataset groups
+    are present, values move only among rows with the same group ID; groups
+    still reach the splitter and metadata consumers normally. Permutation and
+    fit seeds derive from logical permutation identities, so results do not
+    depend on scheduling. ModelKit random streams intentionally do not reproduce
+    NumPy streams.
+
+    The observed evaluation runs first. Permutations use the supplied bounded
+    {!Execution.t}; folds within each permutation run sequentially to prevent
+    nested parallelism. Any split, fit, prediction, scoring, callback, or
+    aggregation failure aborts with a typed error because omitting failed
+    permutations would invalidate the p-value. Fitted models from permutations
+    are never retained. *)
+module Permutation_test : sig
+  type t
+
+  val create : ?permutations:int -> ?max_fits:int -> unit -> (t, Error.t) result
+  (** Defaults to 100 permutations. Both arguments must be positive. [max_fits],
+      when supplied, bounds [(permutations + 1) * folds] before any fit runs;
+      the additional evaluation is the observed target. *)
+
+  val permutation_count : t -> int
+  val max_fits : t -> int option
+
+  type 'model report
+
+  val observed_score : 'model report -> float
+  (** Mean validation-fold score for the unpermuted target. *)
+
+  val permutation_scores : 'model report -> float array
+  (** Mean validation-fold scores in logical permutation order. Returns a
+      defensive copy. *)
+
+  val p_value : 'model report -> float
+  (** Corrected upper-tail estimate
+      [(1 + count (permuted >= observed)) / (1 + permutations)]. *)
+
+  val observed_evaluation : 'model report -> 'model Cross_validation.report
+  (** The ordinary unpermuted fold report. Models are omitted; indices are
+      included only when requested. *)
+
+  module Regression : sig
+    type model = Cross_validation.Regression.model
+
+    val evaluate :
+      ?return_indices:bool ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      specification:t ->
+      splitter:Target.regression Target.t Cross_validation.splitter ->
+      scorer:Regression_scorer.t ->
+      seed:Seed.t ->
+      (Target.regression Target.t, Target.regression Target.t) Pipeline.t ->
+      Target.regression Dataset.t ->
+      (model report, Error.t) result
+  end
+
+  module Binary_classification : sig
+    type model = Cross_validation.Binary_classification.model
+
+    val evaluate :
+      ?return_indices:bool ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      specification:t ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorer:Binary_classification_scorer.t ->
+      seed:Seed.t ->
+      ( Target.classification Target.t,
+        Target.classification Target.t )
+      Pipeline.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+  end
+
+  module Multiclass_classification : sig
+    type model = Cross_validation.Multiclass_classification.model
+
+    val evaluate :
+      ?return_indices:bool ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      specification:t ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorer:Multiclass_classification_scorer.t ->
+      seed:Seed.t ->
+      ( Target.classification Target.t,
+        Target.classification Target.t )
+      Pipeline.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+  end
+end
+
 (** Typed immutable parameter distributions with explicit random streams. *)
 module Parameter_distribution : sig
   type 'a t

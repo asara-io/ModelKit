@@ -188,6 +188,24 @@
    (run %{test}))))
 
 (test
+ (name permutation_test)
+ (modules permutation_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name permutation_fixture_test)
+ (modules permutation_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/permutation_test_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_PERMUTATION_FIXTURE
+   %{dep:fixtures/sklearn/permutation_test_v1.tsv}
+   (run %{test}))))
+
+(test
  (name cross_val_prediction_fixture_test)
  (modules cross_val_prediction_fixture_test)
  (package modelkit)

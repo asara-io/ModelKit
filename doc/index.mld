@@ -1099,6 +1099,54 @@ cross-validation lifecycle with candidate indices equal to point indices.
 Metadata routing, weights, deterministic logical seeds, cancellation, and
 callback bounds otherwise retain their existing CV/search contracts.
 
+{1 Permutation significance tests}
+
+{!Modelkit.Permutation_test} estimates whether a pipeline's cross-validated
+score is unusually high relative to scores obtained after breaking the
+feature/target association. It evaluates exactly one higher-is-better scorer,
+reports the observed mean score and ordered null scores, and applies the
+standard corrected upper-tail estimate so even zero exceedances produce a
+nonzero p-value.
+
+The splitter runs once against the observed target. Its validated row views are
+then shared by the observed evaluation and every permutation. Each evaluation
+clones and fits the complete pipeline independently within its training folds,
+preventing preprocessing or supervised-selection leakage. Fitted models from
+permutations are not retained.
+
+{@ocaml[
+# let permutation_specification =
+      Permutation_test.create ~permutations:5 ~max_fits:18 ()
+      |> Result.get_ok in
+  let permutation_report = Permutation_test.Regression.evaluate
+      ~return_indices:true ~specification:permutation_specification
+      ~splitter:oof_splitter
+      ~scorer:Regression_scorer.neg_mean_absolute_error
+      ~seed:(Seed.of_int 42) oof_pipeline oof_data
+      |> Result.get_ok in
+  (Array.length (Permutation_test.permutation_scores permutation_report),
+   (let p = Permutation_test.p_value permutation_report in
+    p > 0.0 && p <= 1.0),
+   Cross_validation.successful_fold_count
+     (Permutation_test.observed_evaluation permutation_report));;
+- : int * bool * int = (5, true, 3)
+]}
+
+Without dataset groups, targets shuffle globally. With groups, each target
+remains inside its original group, matching grouped permutation-test semantics
+while the same groups also reach the splitter and requested metadata consumers.
+Permutation streams derive from logical permutation and stable first-seen group
+identities. They are reproducible across execution backends but intentionally
+do not reproduce NumPy's random sequence.
+
+The observed evaluation runs first. Permutations use the supplied bounded
+{!Modelkit.Execution.t}, while folds within one permutation remain sequential
+to avoid nested oversubscription. The optional [max_fits] preflights
+[(permutations + 1) * folds]. Any routine failure aborts with its typed
+permutation/fold context: dropping failed null scores would change the test and
+invalidate its p-value. The observed report can retain indices for auditing,
+but never fitted fold models.
+
 {1 Randomized search and selection policies}
 
 {!Modelkit.Parameter_distribution} supplies typed finite choices, uniform,

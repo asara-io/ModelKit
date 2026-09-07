@@ -3065,6 +3065,383 @@ module Validation_curve = struct
   end
 end
 
+module Permutation_test = struct
+  type t = { pt_permutations : int; pt_max_fits : int option }
+
+  let invalid reason =
+    Error
+      (Error.make
+         ~remediation:
+           "provide a positive permutation count and, when used, a positive \
+            total-fit ceiling"
+         (Error.Validation { name = "permutation-test specification"; reason }))
+
+  let create ?(permutations = 100) ?max_fits () =
+    if permutations < 1 then invalid "permutations must be positive"
+    else if permutations > Sys.max_array_length then
+      invalid "permutations exceed the maximum array length"
+    else if Option.fold ~none:false ~some:(fun value -> value < 1) max_fits then
+      invalid "max_fits must be positive"
+    else Ok { pt_permutations = permutations; pt_max_fits = max_fits }
+
+  let permutation_count specification = specification.pt_permutations
+  let max_fits specification = specification.pt_max_fits
+
+  type 'model report = {
+    pt_observed_score : float;
+    pt_permutation_scores : float array;
+    pt_p_value : float;
+    pt_observed_evaluation : 'model Cross_validation.report;
+  }
+
+  let observed_score report = report.pt_observed_score
+  let permutation_scores report = Array.copy report.pt_permutation_scores
+  let p_value report = report.pt_p_value
+  let observed_evaluation report = report.pt_observed_evaluation
+
+  let fit_bound specification folds =
+    let evaluations = specification.pt_permutations + 1 in
+    if evaluations > max_int / folds then
+      invalid "planned fit count exceeds the integer limit"
+    else
+      let fits = evaluations * folds in
+      match specification.pt_max_fits with
+      | Some maximum when fits > maximum ->
+          invalid
+            (Format.sprintf "planned fit count %d exceeds max_fits %d" fits
+               maximum)
+      | None | Some _ -> Ok ()
+
+  let freeze_splitter ~specification ~splitter ~seed ~metadata dataset =
+    let ( let* ) = Result.bind in
+    let rows = Dataset.sample_count dataset in
+    let* () = Metadata.validate ~rows metadata in
+    let rng =
+      Seed.derive seed ~operation:"cross-validation-splitter" ~index:0
+      |> Rng.create
+    in
+    let* pairs =
+      splitter.Cross_validation.run_splitter ~rng
+        ~groups:(Dataset.groups dataset) ~x:(Dataset.features dataset)
+        ~y:(Dataset.target dataset)
+    in
+    let folds = Array.length pairs in
+    let* () =
+      if folds = 0 then invalid "at least one validation fold is required"
+      else Ok ()
+    in
+    let* () = fit_bound specification folds in
+    let rec validate fold_index =
+      if fold_index = folds then Ok ()
+      else
+        let train, test = pairs.(fold_index) in
+        let checked =
+          let* _ = Split.of_views ~train ~test in
+          let* () =
+            if
+              Row_view.source_size train <> rows
+              || Row_view.source_size test <> rows
+            then invalid "fold source size differs from the dataset"
+            else Ok ()
+          in
+          let* () = Validation_curve.validate_view dataset metadata train in
+          Validation_curve.validate_view dataset metadata test
+        in
+        let* () =
+          Result.map_error (Error.with_context (Error.Fold fold_index)) checked
+        in
+        validate (fold_index + 1)
+    in
+    let* () = validate 0 in
+    Ok
+      {
+        Cross_validation.run_splitter =
+          (fun ~rng:_ ~groups:_ ~x:_ ~y:_ -> Ok pairs);
+      }
+
+  let grouped_rows groups rows =
+    let by_group = Hashtbl.create (Groups.distinct_count groups) in
+    let order = ref [] in
+    for row = 0 to rows - 1 do
+      let group = Groups.get groups row in
+      if not (Hashtbl.mem by_group group) then order := group :: !order;
+      let reversed =
+        Option.value (Hashtbl.find_opt by_group group) ~default:[]
+      in
+      Hashtbl.replace by_group group (row :: reversed)
+    done;
+    List.rev !order |> Array.of_list
+    |> Array.map (fun group ->
+        Hashtbl.find by_group group |> List.rev |> Array.of_list)
+
+  let permutation_indices ~seed ~index dataset =
+    let rows = Dataset.sample_count dataset in
+    let indices = Array.init rows Fun.id in
+    let permutation_seed =
+      Seed.derive seed ~operation:"permutation-test-target" ~index
+    in
+    match Dataset.groups dataset with
+    | None ->
+        Splitter_internal.shuffle (Rng.create permutation_seed) indices;
+        indices
+    | Some groups ->
+        grouped_rows groups rows
+        |> Array.iteri (fun group_index positions ->
+            let sources = Array.copy positions in
+            let rng =
+              Seed.derive permutation_seed ~operation:"group" ~index:group_index
+              |> Rng.create
+            in
+            Splitter_internal.shuffle rng sources;
+            Array.iteri
+              (fun position row -> indices.(row) <- sources.(position))
+              positions);
+        indices
+
+  let dataset_with_target dataset target =
+    Dataset.create
+      ~finiteness:(Dataset.finiteness dataset)
+      ?feature_names:(Feature_schema.names (Dataset.feature_schema dataset))
+      ?sample_weight:(Dataset.sample_weight dataset)
+      ?groups:(Dataset.groups dataset) ~x:(Dataset.features dataset) ~y:target
+      ()
+    |> Result.map_error (fun error ->
+        Error.of_data_error ~remediation:"preserve a valid target permutation"
+          error)
+
+  let mean_test_score report =
+    let ( let* ) = Result.bind in
+    let folds = Cross_validation.folds report in
+    let scores = Array.make (Array.length folds) 0.0 in
+    let rec collect index =
+      if index = Array.length folds then
+        let* summary = Score_aggregation.summarize scores in
+        Ok summary.Score_aggregation.mean
+      else
+        let fold = folds.(index) in
+        if Array.length fold.Cross_validation.failures > 0 then
+          Error fold.Cross_validation.failures.(0).Cross_validation.error
+        else if Array.length fold.Cross_validation.scores <> 1 then
+          invalid "cross-validation did not return exactly one scorer"
+        else
+          match
+            fold.Cross_validation.scores.(0).Cross_validation.test_score
+          with
+          | Some (Ok value) ->
+              scores.(index) <- value;
+              collect (index + 1)
+          | Some (Error error) -> Error error
+          | None -> invalid "a validation fold did not return its test score"
+    in
+    collect 0
+
+  let map_with_callbacks execution metadata inputs ~f =
+    match Metadata.callback metadata with
+    | None ->
+        Execution.map execution inputs ~f:(fun ~index input ->
+            f ~metadata ~index input)
+    | Some callback ->
+        let batch_size = max 1 (Execution.concurrency execution) in
+        let rec batches offset reversed =
+          if offset = Array.length inputs then
+            Ok (Array.of_list (List.rev reversed))
+          else
+            let count = min batch_size (Array.length inputs - offset) in
+            let batch = Array.sub inputs offset count in
+            let ( let* ) = Result.bind in
+            let* outcomes =
+              Execution.map execution batch ~f:(fun ~index input ->
+                  let buffered, flush = Callback.buffer callback in
+                  let scoped =
+                    Metadata.with_callback metadata (Some buffered)
+                  in
+                  Ok (f ~metadata:scoped ~index:(offset + index) input, flush))
+            in
+            let* reversed =
+              Array.fold_left
+                (fun accumulated (result, flush) ->
+                  let* accumulated = accumulated in
+                  let* () = flush () in
+                  let* output = result in
+                  Ok (output :: accumulated))
+                (Ok reversed) outcomes
+            in
+            batches (offset + count) reversed
+        in
+        batches 0 []
+
+  let evaluate ?(return_indices = false) ?(execution = Execution.sequential)
+      ?metadata ~specification ~splitter ~scorer_name ~scorer ~seed
+      ~permute_target ~cross_validate pipeline dataset =
+    let ( let* ) = Result.bind in
+    let metadata =
+      Option.value metadata ~default:(Metadata.of_dataset dataset)
+    in
+    let* () = Cross_validation.validate_scorers [| scorer_name |] in
+    let* splitter =
+      freeze_splitter ~specification ~splitter ~seed ~metadata dataset
+    in
+    let evaluate_dataset ~metadata ~index dataset =
+      let fit_seed =
+        Seed.derive seed ~operation:"permutation-test-fit" ~index
+      in
+      let* evaluation =
+        cross_validate ~return_train_score:false ~return_models:false
+          ~return_indices ~failure_policy:Cross_validation.Abort ~fit_seed
+          ~execution:Execution.sequential ~metadata ~splitter
+          ~scorers:[| scorer |] ~seed pipeline dataset
+      in
+      let* score = mean_test_score evaluation in
+      Ok (score, evaluation)
+    in
+    let* observed_score, observed_evaluation =
+      evaluate_dataset ~metadata ~index:0 dataset
+      |> Result.map_error
+           (Error.with_context (Error.Stage "observed permutation-test score"))
+    in
+    let permutation_tasks = Array.init specification.pt_permutations Fun.id in
+    let evaluate_permutation ~metadata ~index:_ permutation_index =
+      let stage =
+        Error.Stage (Format.sprintf "permutation %d" permutation_index)
+      in
+      let scoped_metadata = Metadata.scope stage metadata in
+      let indices =
+        permutation_indices ~seed ~index:permutation_index dataset
+      in
+      let* target = permute_target (Dataset.target dataset) indices in
+      let* permuted = dataset_with_target dataset target in
+      evaluate_dataset ~metadata:scoped_metadata ~index:(permutation_index + 1)
+        permuted
+      |> Result.map fst
+      |> Result.map_error (Error.with_context stage)
+    in
+    let* pt_permutation_scores =
+      map_with_callbacks execution metadata permutation_tasks
+        ~f:evaluate_permutation
+    in
+    let exceedances =
+      Array.fold_left
+        (fun count score ->
+          if score >= observed_score then count + 1 else count)
+        0 pt_permutation_scores
+    in
+    let pt_p_value =
+      Float.of_int (exceedances + 1)
+      /. Float.of_int (specification.pt_permutations + 1)
+    in
+    Ok
+      {
+        pt_observed_score = observed_score;
+        pt_permutation_scores;
+        pt_p_value;
+        pt_observed_evaluation = observed_evaluation;
+      }
+
+  module Regression = struct
+    type model = Cross_validation.Regression.model
+
+    let evaluate ?return_indices ?execution ?metadata ~specification ~splitter
+        ~scorer ~seed pipeline dataset =
+      evaluate ?return_indices ?execution ?metadata ~specification ~splitter
+        ~scorer_name:(Regression_scorer.name scorer)
+        ~scorer ~seed
+        ~permute_target:(fun target indices ->
+          Target.regression_values target |> fun values ->
+          Vector.unsafe_init (Array.length indices) (fun row ->
+              Vector.get values indices.(row))
+          |> Target.regression
+          |> Result.map_error (fun error ->
+              Error.of_data_error
+                ~remediation:"preserve finite permuted regression targets" error))
+        ~cross_validate:(fun
+            ~return_train_score
+            ~return_models
+            ~return_indices
+            ~failure_policy
+            ~fit_seed
+            ~execution
+            ~metadata
+            ~splitter
+            ~scorers
+            ~seed
+            pipeline
+            dataset
+          ->
+          Cross_validation.Regression.cross_validate ~return_train_score
+            ~return_models ~return_indices ~failure_policy ~fit_seed ~execution
+            ~metadata ~splitter ~scorers ~seed pipeline dataset)
+        pipeline dataset
+  end
+
+  module Binary_classification = struct
+    type model = Cross_validation.Binary_classification.model
+
+    let evaluate ?return_indices ?execution ?metadata ~specification ~splitter
+        ~scorer ~seed pipeline dataset =
+      evaluate ?return_indices ?execution ?metadata ~specification ~splitter
+        ~scorer_name:(Binary_classification_scorer.name scorer)
+        ~scorer ~seed
+        ~permute_target:(fun target indices ->
+          let values = Target.classification_values target in
+          Ok
+            (Target.classification
+               (Array.map (fun source -> values.(source)) indices)))
+        ~cross_validate:(fun
+            ~return_train_score
+            ~return_models
+            ~return_indices
+            ~failure_policy
+            ~fit_seed
+            ~execution
+            ~metadata
+            ~splitter
+            ~scorers
+            ~seed
+            pipeline
+            dataset
+          ->
+          Cross_validation.Binary_classification.cross_validate
+            ~return_train_score ~return_models ~return_indices ~failure_policy
+            ~fit_seed ~execution ~metadata ~splitter ~scorers ~seed pipeline
+            dataset)
+        pipeline dataset
+  end
+
+  module Multiclass_classification = struct
+    type model = Cross_validation.Multiclass_classification.model
+
+    let evaluate ?return_indices ?execution ?metadata ~specification ~splitter
+        ~scorer ~seed pipeline dataset =
+      evaluate ?return_indices ?execution ?metadata ~specification ~splitter
+        ~scorer_name:(Multiclass_classification_scorer.name scorer)
+        ~scorer ~seed
+        ~permute_target:(fun target indices ->
+          let values = Target.classification_values target in
+          Ok
+            (Target.classification
+               (Array.map (fun source -> values.(source)) indices)))
+        ~cross_validate:(fun
+            ~return_train_score
+            ~return_models
+            ~return_indices
+            ~failure_policy
+            ~fit_seed
+            ~execution
+            ~metadata
+            ~splitter
+            ~scorers
+            ~seed
+            pipeline
+            dataset
+          ->
+          Cross_validation.Multiclass_classification.cross_validate
+            ~return_train_score ~return_models ~return_indices ~failure_policy
+            ~fit_seed ~execution ~metadata ~splitter ~scorers ~seed pipeline
+            dataset)
+        pipeline dataset
+  end
+end
+
 module Parameter_distribution = struct
   type 'a t = Choices of 'a array | Sample of (Rng.t -> ('a, Error.t) result)
 

@@ -2379,6 +2379,78 @@ def generate_validation_curve_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_permutation_test_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.linear_model import Ridge
+    from sklearn.model_selection import KFold, permutation_test_score
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    target = np.repeat(np.arange(6, dtype=float), 2)
+    groups = np.repeat(np.arange(6), 2)
+    feature_0 = np.linspace(-2.0, 3.5, target.size)
+    x = np.column_stack((feature_0, np.sin(feature_0)))
+    estimator = Pipeline(
+        [
+            ("scale", StandardScaler()),
+            ("ridge", Ridge(alpha=0.5, fit_intercept=True, solver="svd")),
+        ]
+    )
+    folds = list(KFold(n_splits=3, shuffle=False).split(x, target))
+    observed, permutation_scores, p_value = permutation_test_score(
+        estimator,
+        x,
+        target,
+        groups=groups,
+        cv=folds,
+        n_permutations=5,
+        random_state=73,
+        scoring="neg_mean_squared_error",
+    )
+    rows = [
+        "# ModelKit sklearn permutation-test fixture v1",
+        "feature_0\t" + float_values(x[:, 0]),
+        "feature_1\t" + float_values(x[:, 1]),
+        "target\t" + float_values(target),
+        "groups\t" + comma_separated(groups),
+        "observed_score\t" + float_value(observed),
+        "permutation_scores\t" + float_values(permutation_scores),
+        "p_value\t" + float_value(p_value),
+    ]
+    (fixture_dir / "permutation_test_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {
+            "folds": 3,
+            "groups": "two rows per group; target is constant within each group",
+            "n_permutations": 5,
+            "random_state": 73,
+            "ridge_alpha": 0.5,
+            "ridge_solver": "svd",
+            "scoring": "neg_mean_squared_error",
+            "shuffle": False,
+            "standard_scaling": True,
+        },
+        "comparison": "Observed score, within-group permutation scores, and corrected upper-tail p-value.",
+        "environment": environment.metadata(),
+        "fixture": "permutation_test_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "schema_version": 1,
+        "references": [
+            "sklearn.model_selection.permutation_test_score",
+            "sklearn.linear_model.Ridge",
+            "sklearn.preprocessing.StandardScaler",
+        ],
+    }
+    (fixture_dir / "permutation_test_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
@@ -2391,6 +2463,7 @@ def main() -> None:
     generate_cross_val_prediction_fixture(fixture_dir)
     generate_learning_curve_fixture(fixture_dir)
     generate_validation_curve_fixture(fixture_dir)
+    generate_permutation_test_fixture(fixture_dir)
     generate_metrics_fixture(fixture_dir)
     generate_preprocessing_fixture(fixture_dir)
     generate_transform_fixture(fixture_dir)
