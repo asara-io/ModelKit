@@ -1011,6 +1011,77 @@ The existing [selection] accessor returns a fitted winner, or a typed error
 when refitting was disabled or selection/refitting failed. Sampler and selector
 failures remain reviewable without silently substituting a different winner.
 
+{1 Successive-halving search}
+
+{!Modelkit.Successive_halving} allocates progressively larger training subsets
+per fold and promotes the highest-scoring candidates. It accepts existing grids
+or randomized spaces for regression, binary classification, and multiclass
+classification. Randomized configurations are sampled once and reused across
+rounds. Each candidate is built and fitted fresh in each round; the pipeline
+contract does not support fitted-state continuation.
+
+Resources count training rows {e per fold}. Validation rows remain fixed, and
+training subsets grow as nested seeded prefixes shared by every candidate.
+Classification prefixes include every class, and every base training and
+validation fold must contain every class. Budgets must fit all training folds.
+A single holdout fold is supported. Subsetting preserves a group-aware splitter's
+training/validation separation, without requiring whole training groups to be
+sampled together. Weights and other metadata follow the selected rows.
+
+{@ocaml[
+# let halving_budget = Successive_halving.budget ~min_samples:4
+    ~max_samples:12 ~factor:2 ~max_fits:16 () |> Result.get_ok;;
+val halving_budget : Successive_halving.budget = <abstr>
+# Successive_halving.resources halving_budget;;
+- : int array = [|4; 8; 12|]
+# let halving_x = Matrix.init ~rows:16 ~columns:1
+    (fun row _ -> float_of_int row) |> Result.get_ok;;
+val halving_x : Matrix.t = <abstr>
+# let halving_y = Target.regression
+    (Vector.of_array (Array.init 16 (fun row -> 3. *. float_of_int row +. 5.)))
+    |> Result.get_ok;;
+val halving_y : Target.regression Target.t = <abstr>
+# let halving_data = Dataset.create ~finiteness:Dataset.Require_finite
+    ~x:halving_x ~y:halving_y () |> Result.get_ok;;
+val halving_data : Target.regression Dataset.t = <abstr>
+# let halving_splitter = Cross_validation.target_independent_splitter
+    (module K_fold) (K_fold.create ~folds:4 () |> Result.get_ok);;
+...
+# let halving_report = Successive_halving.Regression.search_with_policy
+    ~budget:halving_budget ~candidates:(Successive_halving.of_randomized random_space)
+    ~splitter:halving_splitter ~scorers:[|Regression_scorer.neg_mean_squared_error|]
+    ~promotion_score:"neg_mean_squared_error" ~policy:Grid_search.No_refit
+    ~seed:(Seed.of_int 1729) halving_data |> Result.get_ok;;
+...
+# Array.map (fun round -> round.Successive_halving.training_samples,
+    Array.length round.Successive_halving.candidates)
+    (Successive_halving.rounds halving_report);;
+- : (int * int) array = [|(4, 2); (8, 1); (12, 1)|]
+# Successive_halving.refit_result halving_report = Ok None;;
+- : bool = true
+]}
+
+Each promotion retains up to [ceil(current_candidate_count / factor)] candidates
+with successful promotion-score aggregates. Ties favor the lowest original
+candidate index. Reports retain every evaluated candidate, its round's scores,
+ranks on the promotion metric, and training/validation row indices. Promoted
+indices appear in score order; candidates are evaluated in original-index order.
+Rounds continue to the declared maximum even if only one candidate remains.
+
+[search ~refit] uses the same metric for promotion and final selection.
+[search_with_policy] separates [promotion_score] from the final named-score,
+custom, or no-refit policy. Custom selectors receive only final-round survivors
+and return an array position; candidate and selected indices retain their
+original identities. A selected pipeline refits on the full input dataset with
+its original metadata. Optional [max_fits] conservatively caps the scheduled
+candidate/fold fits plus that refit, before any candidate is built or fitted.
+
+Ordinary candidate failures follow [Record] or [Abort]. Under [Record], a round
+with no eligible survivor stops promotion and retains its reports with an error
+selection. Final-round no-refit behavior follows the existing no-refit contract.
+Callbacks carry [Stage "halving round N"] context and report search progress
+after each round. Cancellation stops subsequent work and returns an error.
+
 {1 Resampling and aligned train/test data}
 
 {!Modelkit.Shuffle_split} draws independent random train/test partitions;

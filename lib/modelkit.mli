@@ -4535,3 +4535,207 @@ module Randomized_search : sig
       (model report, Error.t) result
   end
 end
+
+(** Successive halving with nested training-row budgets and fixed validation
+    folds. Each round fits fresh pipelines; fitted-state continuation is not
+    supported. All candidates in a round receive identical rows. Training
+    subsets are seeded prefixes, with one row per class placed first for
+    classification. Every base training and validation fold must contain every
+    class; at least one fold is required. Group separation from the splitter is
+    preserved by subsetting.
+
+    Promotion uses descending mean test score, breaking ties by original
+    candidate index, and retains [ceil(candidate_count / factor)] eligible
+    candidates. Failed promotion aggregates are ineligible. Rounds continue to
+    the maximum budget even with one survivor. Final selection sees only
+    final-round candidates; refitting uses the entire input dataset. Custom
+    selectors return an array position, while reported candidate indices retain
+    their original identities.
+
+    Configurations are sampled once and reused, with fresh builds and fits each
+    round. Specifications and user functions must obey the same purity contracts
+    as grid and randomized search. Candidate/fold seeds remain stable across
+    rounds. Callbacks include a zero-based [Stage "halving round N"] context,
+    with one outer search lifecycle and progress after each completed round.
+    Cancellation and callback failures stop evaluation and return an error,
+    without a partial report. Timings are observational; score and promotion
+    reproducibility follows the pipeline and execution contracts. *)
+module Successive_halving : sig
+  type budget
+
+  val budget :
+    ?max_fits:int ->
+    min_samples:int ->
+    max_samples:int ->
+    factor:int ->
+    unit ->
+    (budget, Error.t) result
+  (** Training rows per fold grow geometrically, capped at [max_samples].
+      Require [1 <= min_samples <= max_samples] and [factor >= 2]. The maximum
+      must fit every base training fold; the minimum must cover every class.
+      Optional [max_fits] bounds scheduled candidate/fold fits plus an optional
+      full-data refit. This conservative bound assumes successful promotion and
+      is checked before building or fitting candidates. Overflow is a validation
+      error. Row alignment and positive total weights in all scheduled subsets
+      are also checked before candidate fitting. *)
+
+  val resources : budget -> int array
+  (** A copied array of training-row counts in round order. *)
+
+  type ('configuration, 'target, 'prediction) candidates
+
+  val of_grid :
+    ('configuration, 'target, 'prediction) Grid_search.grid ->
+    ('configuration, 'target, 'prediction) candidates
+
+  val of_randomized :
+    ('configuration, 'target, 'prediction) Randomized_search.space ->
+    ('configuration, 'target, 'prediction) candidates
+
+  type 'model round = {
+    round_index : int;
+    training_samples : int;
+    candidates : 'model Grid_search.candidate array;
+    promoted_candidate_indices : int array;
+  }
+  (** Candidates are in original-index order, ranked on the promotion score.
+      Promoted indices are in score order; the final round promotes none.
+      Evaluation reports retain train/test row indices, without fitted fold
+      models. Returned arrays are defensive copies. *)
+
+  type 'model report
+
+  val rounds : 'model report -> 'model round array
+  val selection : 'model report -> ('model Grid_search.selected, Error.t) result
+
+  val refit_result :
+    'model report -> ('model Grid_search.selected option, Error.t) result
+  (** [No_refit] yields [Ok None] after a completed final round. If promotion
+      cannot proceed, [Record] retains completed rounds with an error selection;
+      [Abort] returns the error directly. Ordinary final selection/refit
+      failures follow the same policy. Inspect candidate reports for recorded
+      evaluation failures. *)
+
+  module Regression : sig
+    type model = Cross_validation.Regression.model
+
+    val search :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      budget:budget ->
+      candidates:
+        ( 'configuration,
+          Target.regression Target.t,
+          Target.regression Target.t )
+        candidates ->
+      splitter:Target.regression Target.t Cross_validation.splitter ->
+      scorers:Regression_scorer.t array ->
+      refit:string ->
+      seed:Seed.t ->
+      Target.regression Dataset.t ->
+      (model report, Error.t) result
+
+    val search_with_policy :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      budget:budget ->
+      candidates:
+        ( 'configuration,
+          Target.regression Target.t,
+          Target.regression Target.t )
+        candidates ->
+      splitter:Target.regression Target.t Cross_validation.splitter ->
+      scorers:Regression_scorer.t array ->
+      promotion_score:string ->
+      policy:model Grid_search.refit_policy ->
+      seed:Seed.t ->
+      Target.regression Dataset.t ->
+      (model report, Error.t) result
+  end
+
+  module Binary_classification : sig
+    type model = Cross_validation.Binary_classification.model
+
+    val search :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      budget:budget ->
+      candidates:
+        ( 'configuration,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        candidates ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Binary_classification_scorer.t array ->
+      refit:string ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+
+    val search_with_policy :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      budget:budget ->
+      candidates:
+        ( 'configuration,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        candidates ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Binary_classification_scorer.t array ->
+      promotion_score:string ->
+      policy:model Grid_search.refit_policy ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+  end
+
+  module Multiclass_classification : sig
+    type model = Cross_validation.Multiclass_classification.model
+
+    val search :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      budget:budget ->
+      candidates:
+        ( 'configuration,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        candidates ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Multiclass_classification_scorer.t array ->
+      refit:string ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+
+    val search_with_policy :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      budget:budget ->
+      candidates:
+        ( 'configuration,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        candidates ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Multiclass_classification_scorer.t array ->
+      promotion_score:string ->
+      policy:model Grid_search.refit_policy ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+  end
+end

@@ -1,5 +1,8 @@
 # 0.5.0-dev (unreleased)
 
+- Add successive-halving search over grid or randomized candidates with nested
+  training-row budgets, deterministic promotion, class and weight feasibility
+  checks, fresh fits, per-round reports, and optional bounded full-data refitting.
 - Add typed randomized parameter distributions and search with finite sampling
   without replacement, distribution sampling, and deterministic candidate streams.
 - Share named-score, no-refit, and custom multi-metric selection policies across

@@ -127,3 +127,4 @@ module Leave_one_group_out = Modelkit_partitioning.Leave_one_group_out
 module Stratified_group_k_fold = Modelkit_partitioning.Stratified_group_k_fold
 module Parameter_distribution = Modelkit_model_selection.Parameter_distribution
 module Randomized_search = Modelkit_model_selection.Randomized_search
+module Successive_halving = Modelkit_model_selection.Successive_halving

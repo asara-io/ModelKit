@@ -8,7 +8,8 @@
   transformed_target_support
   resampling_support
   partitioning_support
-  randomized_search_support)
+  randomized_search_support
+  halving_support)
  (libraries modelkit alcotest))
 
 (test
@@ -465,3 +466,9 @@
    MODELKIT_RANDOMIZED_FIXTURE
    %{dep:fixtures/sklearn/randomized_search_v1.tsv}
    (run %{test}))))
+
+(test
+ (name halving_test)
+ (modules halving_test)
+ (package modelkit)
+ (libraries modelkit modelkit_test_support alcotest))

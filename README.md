@@ -27,7 +27,7 @@ The full documentation is available via: [https://ocaml.org/p/modelkit/latest/do
 - Deterministic K-fold, stratified and repeated K-fold, shuffle and stratified-shuffle, holdout, group and stratified-group K-fold, predefined, leave-one-out/group-out, and expanding-window time-series splitters produce validated row views; train/test helpers materialize aligned features, targets, weights, and groups.
 - Weighted regression, binary, multiclass, and ranking metrics provide immutable higher-is-better scorers, plotting-neutral residual, ROC, and precision–recall data, stable score aggregation, and an explicit undefined-result policy.
 - Cross-validation fits pipelines within deterministic folds and reports ordered train/test scores, CPU timings, optional fitted models and indices, and typed failures; the optional `modelkit-parallel` package adds bounded Domainslib fold execution.
-- Typed grid and randomized search evaluate immutable configurations on shared deterministic splits, support named-score or custom multi-metric selection and optional refitting, and retain candidate failures.
+- Typed grid, randomized, and successive-halving search evaluate immutable configurations on shared deterministic splits, support named-score or custom multi-metric selection and optional refitting, and retain candidate failures; halving adds bounded training-row budgets and deterministic promotion.
 - Versioned data-only artifacts save and load fitted built-in regression and binary-classification pipelines with feature-schema identity, bounded readers, and corruption detection.
 
 ## Motivation and Future Work
@@ -52,7 +52,7 @@ Compared with 0.3.2, this release adds:
 
 Every new estimator runs through pipelines, cross-validation, scoring, and grid search, and every metric and solver is checked against committed scikit-learn reference fixtures. The comparative benchmarks under `dev/benchmarks/` are development evidence only; they record convergence parity across data shapes together with a throughput gap on wide designs that later releases will address.
 
-Source checkouts additionally support target-aware pipelines, dense column transformation, feature unions, and nested preprocessing chains. Planned for later versions: further splitters and randomized search, sparse feature input to estimators, artifact codecs for the estimators added since 0.3.2, tree and ensemble models, and accelerated numerical backends. The artifact format remains experimental during 0.x, with a committed golden reader for each released schema.
+Source checkouts additionally support target-aware pipelines, dense column transformation, feature unions, nested preprocessing chains, expanded splitters, and randomized and successive-halving search. Planned for later versions: resumable search, sparse feature input to estimators, artifact codecs for the estimators added since 0.3.2, tree and ensemble models, and accelerated numerical backends. The artifact format remains experimental during 0.x, with a committed golden reader for each released schema.
 
 ## Development
 

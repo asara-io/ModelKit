@@ -1012,25 +1012,26 @@ module Grid_search = struct
 
   let rank_candidates primary candidates =
     let eligible =
-      candidates |> Array.to_list
-      |> List.filter_map (fun (candidate : _ candidate) ->
+      candidates
+      |> Array.mapi (fun position candidate ->
           match candidate.scores.(primary).test with
           | Ok summary ->
-              Some (candidate.candidate_index, summary.Score_aggregation.mean)
+              Some
+                ( position,
+                  candidate.candidate_index,
+                  summary.Score_aggregation.mean )
           | Error _ -> None)
-      |> Array.of_list
+      |> Array.to_list |> List.filter_map Fun.id |> Array.of_list
     in
     Array.sort
-      (fun (left_index, left_score) (right_index, right_score) ->
-        let score_order = Float.compare right_score left_score in
-        if score_order <> 0 then score_order
-        else Int.compare left_index right_index)
+      (fun (_, left, left_score) (_, right, right_score) ->
+        let order = Float.compare right_score left_score in
+        if order <> 0 then order else Int.compare left right)
       eligible;
     let ranks = Array.make (Array.length candidates) None in
-    let previous_score = ref None in
-    let previous_rank = ref 0 in
+    let previous_score = ref None and previous_rank = ref 0 in
     Array.iteri
-      (fun position (candidate, score) ->
+      (fun position (candidate, _, score) ->
         let rank =
           match !previous_score with
           | Some previous when Float.compare previous score = 0 ->
@@ -1042,12 +1043,16 @@ module Grid_search = struct
         previous_rank := rank)
       eligible;
     ( Array.mapi
-        (fun index candidate -> { candidate with rank = ranks.(index) })
+        (fun position candidate -> { candidate with rank = ranks.(position) })
         candidates,
-      if Array.length eligible = 0 then None else Some (fst eligible.(0)) )
+      if Array.length eligible = 0 then None
+      else
+        let position, _, _ = eligible.(0) in
+        Some position )
 
-  let search_candidates ~return_train_score ~failure_policy ~cross_validate
-      ~scorer_names ~metadata ~policy ~seed ~operation ~prepare ~build dataset =
+  let search_candidates ?(candidate_id = Fun.id) ?(search_callback = true)
+      ~return_train_score ~failure_policy ~cross_validate ~scorer_names
+      ~metadata ~policy ~seed ~operation ~prepare ~build dataset =
     let ( let* ) = Result.bind in
     let* primary =
       match policy with
@@ -1059,17 +1064,22 @@ module Grid_search = struct
             (Cross_validation.validate_scorers scorer_names)
     in
     let* () = Metadata.validate ~rows:(Dataset.sample_count dataset) metadata in
-    Callback.run
-      ~outcome:(fun report ->
-        match report.report_selection with
-        | Ok _ -> Callback.Succeeded
-        | Error error -> Callback.Failed error)
-      (Metadata.callback metadata)
-      ~operation:Callback.Search
-      (fun () ->
+    let with_search f =
+      if not search_callback then f ()
+      else
+        Callback.run
+          ~outcome:(fun report ->
+            match report.report_selection with
+            | Ok _ -> Callback.Succeeded
+            | Error error -> Callback.Failed error)
+          (Metadata.callback metadata)
+          ~operation:Callback.Search f
+    in
+    with_search (fun () ->
         let count, partial_at = prepare () in
         let pipelines = Array.make count None in
-        let evaluate_candidate candidate_index =
+        let evaluate_candidate position =
+          let candidate_index = candidate_id position in
           let candidate_metadata =
             Metadata.scope (Error.Candidate candidate_index) metadata
           in
@@ -1090,7 +1100,7 @@ module Grid_search = struct
             (Metadata.callback candidate_metadata)
             ~operation:Callback.Candidate
             (fun () ->
-              let partial = partial_at candidate_index in
+              let partial = partial_at position in
               let parameters =
                 partial.reversed_parameters |> List.rev |> Array.of_list
               in
@@ -1123,7 +1133,7 @@ module Grid_search = struct
                     in
                     Ok candidate
               | Ok pipeline ->
-                  pipelines.(candidate_index) <- Some pipeline;
+                  pipelines.(position) <- Some pipeline;
                   let fit_seed =
                     Seed.derive seed ~operation:(operation ^ "-candidate")
                       ~index:candidate_index
@@ -1204,55 +1214,58 @@ module Grid_search = struct
             if candidate_index < 0 || candidate_index >= count then
               failure
                 (invalid "selector returned an out-of-range candidate index")
-            else if
-              not
-                (Array.exists
-                   (fun score -> Result.is_ok score.test)
-                   ranked.(candidate_index).scores)
-            then
-              failure
-                (invalid
-                   "selected candidate has no successful test-score aggregate"
-                |> with_candidate candidate_index)
             else
-              match pipelines.(candidate_index) with
-              | None ->
-                  failure
-                    (invalid "selected candidate did not build"
-                    |> with_candidate candidate_index)
-              | Some pipeline -> (
-                  let refit_seed =
-                    Seed.derive seed ~operation:(operation ^ "-refit")
-                      ~index:candidate_index
-                    |> Rng.create
-                  in
-                  let refit_metadata =
-                    Metadata.scope (Error.Candidate candidate_index) metadata
-                  in
-                  let refitted =
-                    Callback.run (Metadata.callback refit_metadata)
-                      ~operation:Callback.Refit (fun () ->
-                        Pipeline.fit_with_metadata (Pipeline.clone pipeline)
-                          ~metadata:refit_metadata ~rng:refit_seed
-                          ~feature_schema:(Dataset.feature_schema dataset)
-                          ~x:(Dataset.features dataset)
-                          ~y:(Dataset.target dataset) ())
-                    |> Result.map_error (with_candidate candidate_index)
-                  in
-                  match refitted with
-                  | Error error -> failure error
-                  | Ok model ->
-                      Ok
-                        {
-                          report_candidates = ranked;
-                          report_selection =
-                            Ok
-                              (Some
-                                 {
-                                   selected_candidate_index = candidate_index;
-                                   selected_model = model;
-                                 });
-                        })))
+              let position = candidate_index in
+              let candidate_index = candidate_id position in
+              if
+                not
+                  (Array.exists
+                     (fun score -> Result.is_ok score.test)
+                     ranked.(position).scores)
+              then
+                failure
+                  (invalid
+                     "selected candidate has no successful test-score aggregate"
+                  |> with_candidate candidate_index)
+              else
+                match pipelines.(position) with
+                | None ->
+                    failure
+                      (invalid "selected candidate did not build"
+                      |> with_candidate candidate_index)
+                | Some pipeline -> (
+                    let refit_seed =
+                      Seed.derive seed ~operation:(operation ^ "-refit")
+                        ~index:candidate_index
+                      |> Rng.create
+                    in
+                    let refit_metadata =
+                      Metadata.scope (Error.Candidate candidate_index) metadata
+                    in
+                    let refitted =
+                      Callback.run (Metadata.callback refit_metadata)
+                        ~operation:Callback.Refit (fun () ->
+                          Pipeline.fit_with_metadata (Pipeline.clone pipeline)
+                            ~metadata:refit_metadata ~rng:refit_seed
+                            ~feature_schema:(Dataset.feature_schema dataset)
+                            ~x:(Dataset.features dataset)
+                            ~y:(Dataset.target dataset) ())
+                      |> Result.map_error (with_candidate candidate_index)
+                    in
+                    match refitted with
+                    | Error error -> failure error
+                    | Ok model ->
+                        Ok
+                          {
+                            report_candidates = ranked;
+                            report_selection =
+                              Ok
+                                (Some
+                                   {
+                                     selected_candidate_index = candidate_index;
+                                     selected_model = model;
+                                   });
+                          })))
 
   let search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
       ~metadata ~policy ~seed grid dataset =
@@ -1738,6 +1751,472 @@ module Randomized_search = struct
         ~splitter ~scorers ~refit ~seed dataset =
       search_with_policy ?return_train_score ?failure_policy ?execution
         ?metadata ~space ~splitter ~scorers
+        ~policy:(Grid_search.Best_score refit) ~seed dataset
+  end
+end
+
+module Successive_halving = struct
+  type budget = { schedule : int array; factor : int; max_fits : int option }
+
+  type ('configuration, 'target, 'prediction) candidates = {
+    count : int;
+    prepare : Seed.t -> int -> 'configuration Grid_search.partial;
+    build :
+      'configuration -> (('target, 'prediction) Pipeline.t, Error.t) result;
+  }
+
+  type 'model round = {
+    round_index : int;
+    training_samples : int;
+    candidates : 'model Grid_search.candidate array;
+    promoted_candidate_indices : int array;
+  }
+
+  type 'model report = {
+    completed_rounds : 'model round array;
+    final_report : 'model Grid_search.report;
+  }
+
+  let invalid reason =
+    Error
+      (Grid_search.validation ~name:"successive halving" ~reason
+         ~remediation:
+           "supply feasible training-row budgets, folds, and candidate \
+            specifications")
+
+  let budget ?max_fits ~min_samples ~max_samples ~factor () =
+    if min_samples < 1 || max_samples < min_samples || factor < 2 then
+      invalid "require 1 <= min_samples <= max_samples and factor >= 2"
+    else if Option.fold ~none:false ~some:(fun value -> value < 1) max_fits then
+      invalid "max_fits must be positive"
+    else
+      let rec schedule value reversed =
+        if value = max_samples then Array.of_list (List.rev (value :: reversed))
+        else
+          schedule
+            (if value > max_samples / factor then max_samples
+             else value * factor)
+            (value :: reversed)
+      in
+      Ok { schedule = schedule min_samples []; factor; max_fits }
+
+  let resources budget = Array.copy budget.schedule
+
+  let of_grid grid =
+    {
+      count = Grid_search.candidate_count grid;
+      prepare =
+        (fun _ ->
+          let partials = Grid_search.expand grid in
+          Array.get partials);
+      build = grid.Grid_search.build;
+    }
+
+  let of_randomized space =
+    {
+      count = Randomized_search.candidate_count space;
+      prepare = (fun seed -> snd (Randomized_search.prepare ~seed space));
+      build = space.Randomized_search.sample_build;
+    }
+
+  let rounds report =
+    Array.map
+      (fun round ->
+        {
+          round with
+          candidates = Array.map Grid_search.copy_candidate round.candidates;
+          promoted_candidate_indices =
+            Array.copy round.promoted_candidate_indices;
+        })
+      report.completed_rounds
+
+  let selection report = Grid_search.selection report.final_report
+  let refit_result report = Grid_search.refit_result report.final_report
+  let survivors count factor = 1 + ((count - 1) / factor)
+
+  let fit_bound budget count folds policy =
+    let ( let* ) = Result.bind in
+    let rec sum index count total =
+      if index = Array.length budget.schedule then Ok total
+      else if count > (max_int - total) / folds then
+        invalid "planned fit count exceeds the integer limit"
+      else
+        sum (index + 1) (survivors count budget.factor) (total + (count * folds))
+    in
+    let* total =
+      sum 0 count
+        (match policy with
+        | Grid_search.No_refit -> 0
+        | Grid_search.Best_score _ | Grid_search.Custom _ -> 1)
+    in
+    match budget.max_fits with
+    | Some maximum when total > maximum ->
+        invalid "planned fit count exceeds max_fits"
+    | None | Some _ -> Ok ()
+
+  let data result =
+    Result.map_error
+      (fun error ->
+        Error.of_data_error
+          ~remediation:"supply aligned rows with positive total sample weight"
+          error)
+      result
+
+  let validate_view dataset metadata view =
+    let ( let* ) = Result.bind in
+    let* _ = Metadata.select metadata view in
+    match Dataset.sample_weight dataset with
+    | None -> Ok ()
+    | Some weight ->
+        Result.map (fun _ -> ()) (data (Sample_weight.select weight view))
+
+  let partitions ~budget ~splitter ~labels ~seed ~metadata dataset =
+    let ( let* ) = Result.bind in
+    let rows = Dataset.sample_count dataset in
+    let rng =
+      Seed.derive seed ~operation:"cross-validation-splitter" ~index:0
+      |> Rng.create
+    in
+    let* pairs =
+      splitter.Cross_validation.run_splitter ~rng
+        ~groups:(Dataset.groups dataset) ~x:(Dataset.features dataset)
+        ~y:(Dataset.target dataset)
+    in
+    let* () =
+      if Array.length pairs = 0 then
+        invalid "at least one validation fold is required"
+      else Ok ()
+    in
+    let classes =
+      match labels with
+      | None -> [||]
+      | Some values ->
+          Array.to_list values |> List.sort_uniq Int.compare |> Array.of_list
+    in
+    let* () =
+      if Array.length classes > budget.schedule.(0) then
+        invalid "minimum training budget cannot cover every class"
+      else Ok ()
+    in
+    let validate_classes indices =
+      match labels with
+      | None -> Ok ()
+      | Some values ->
+          let seen = Hashtbl.create (Array.length classes) in
+          Array.iter (fun row -> Hashtbl.replace seen values.(row) ()) indices;
+          if Hashtbl.length seen = Array.length classes then Ok ()
+          else
+            invalid
+              "every base training and validation fold must contain every class"
+    in
+    let rec prepare index reversed =
+      if index = Array.length pairs then Ok (Array.of_list (List.rev reversed))
+      else
+        let train, test = pairs.(index) in
+        let checked =
+          let* _ = Split.of_views ~train ~test in
+          let* () =
+            if
+              Row_view.source_size train <> rows
+              || Row_view.source_size test <> rows
+            then invalid "fold source size differs from the dataset"
+            else Ok ()
+          in
+          let order = Row_view.indices train in
+          let* () =
+            if
+              Array.length order
+              < budget.schedule.(Array.length budget.schedule - 1)
+            then invalid "maximum training budget exceeds a base training fold"
+            else Ok ()
+          in
+          let* () = validate_classes order in
+          let* () = validate_classes (Row_view.indices test) in
+          let* () = validate_view dataset metadata test in
+          let rng =
+            Seed.derive seed ~operation:"halving-training-rows" ~index
+            |> Rng.create
+          in
+          Splitter_internal.shuffle rng order;
+          let order =
+            match labels with
+            | None -> order
+            | Some values ->
+                let seen = Hashtbl.create (Array.length classes) in
+                let first, rest =
+                  Array.to_list order
+                  |> List.partition (fun row ->
+                      if Hashtbl.mem seen values.(row) then false
+                      else (
+                        Hashtbl.add seen values.(row) ();
+                        true))
+                in
+                Array.of_list (first @ rest)
+          in
+          let* views =
+            Array.fold_left
+              (fun result resource ->
+                let* reversed = result in
+                let* train =
+                  data
+                    (Row_view.create ~source_size:rows
+                       (Array.sub order 0 resource))
+                in
+                let* () = validate_view dataset metadata train in
+                Ok ((train, test) :: reversed))
+              (Ok []) budget.schedule
+          in
+          Ok (Array.of_list (List.rev views))
+        in
+        let* views =
+          Result.map_error (Error.with_context (Error.Fold index)) checked
+        in
+        prepare (index + 1) (views :: reversed)
+    in
+    prepare 0 []
+
+  let run ~return_train_score ~failure_policy ~metadata ~budget
+      ~candidates:source ~splitter ~scorer_names ~cross_validate ~labels
+      ~promotion_score ~policy ~seed dataset =
+    let ( let* ) = Result.bind in
+    let* primary = Grid_search.validate_refit scorer_names promotion_score in
+    let* () =
+      match policy with
+      | Grid_search.Best_score name ->
+          Result.map
+            (fun _ -> ())
+            (Grid_search.validate_refit scorer_names name)
+      | Grid_search.No_refit | Grid_search.Custom _ -> Ok ()
+    in
+    let* () = Metadata.validate ~rows:(Dataset.sample_count dataset) metadata in
+    Callback.run
+      (Metadata.callback metadata)
+      ~operation:Callback.Search
+      ~outcome:(fun report ->
+        match refit_result report with
+        | Ok _ -> Callback.Succeeded
+        | Error error -> Callback.Failed error)
+      (fun () ->
+        let* partitions =
+          partitions ~budget ~splitter ~labels ~seed ~metadata dataset
+        in
+        let* () =
+          fit_bound budget source.count (Array.length partitions) policy
+        in
+        let at = source.prepare seed in
+        let cache = Array.make source.count None in
+        let partial index =
+          match cache.(index) with
+          | Some value -> value
+          | None ->
+              let value = at index in
+              cache.(index) <- Some value;
+              value
+        in
+        let rec loop index active reversed =
+          let final = index + 1 = Array.length budget.schedule in
+          let pairs = Array.map (fun views -> views.(index)) partitions in
+          let splitter =
+            {
+              Cross_validation.run_splitter =
+                (fun ~rng:_ ~groups:_ ~x:_ ~y:_ -> Ok pairs);
+            }
+          in
+          let metadata =
+            Metadata.scope
+              (Error.Stage ("halving round " ^ string_of_int index))
+              metadata
+          in
+          let* report =
+            Grid_search.search_candidates ~candidate_id:(Array.get active)
+              ~search_callback:false ~return_train_score ~failure_policy
+              ~cross_validate:(cross_validate splitter) ~scorer_names ~metadata
+              ~policy:(if final then policy else Grid_search.No_refit)
+              ~seed ~operation:"halving-search"
+              ~prepare:(fun () ->
+                (Array.length active, fun position -> partial active.(position)))
+              ~build:source.build dataset
+          in
+          let ranked, _ =
+            Grid_search.rank_candidates primary
+              report.Grid_search.report_candidates
+          in
+          let eligible =
+            Array.to_list ranked
+            |> List.filter (fun candidate ->
+                Option.is_some candidate.Grid_search.rank)
+            |> List.sort (fun left right ->
+                let order =
+                  compare left.Grid_search.rank right.Grid_search.rank
+                in
+                if order <> 0 then order
+                else
+                  Int.compare left.Grid_search.candidate_index
+                    right.Grid_search.candidate_index)
+          in
+          let rec take count = function
+            | [] -> []
+            | _ when count = 0 -> []
+            | head :: tail ->
+                head.Grid_search.candidate_index :: take (count - 1) tail
+          in
+          let promoted =
+            if final then [||]
+            else
+              Array.of_list
+                (take (survivors (Array.length active) budget.factor) eligible)
+          in
+          let round =
+            {
+              round_index = index;
+              training_samples = budget.schedule.(index);
+              candidates = ranked;
+              promoted_candidate_indices = promoted;
+            }
+          in
+          let reversed = round :: reversed in
+          let finish report =
+            Ok
+              {
+                completed_rounds = Array.of_list (List.rev reversed);
+                final_report = report;
+              }
+          in
+          let* () =
+            match Metadata.callback metadata with
+            | None -> Ok ()
+            | Some callback ->
+                Callback.progress
+                  (Callback.for_operation Callback.Search callback)
+                  ~completed:(index + 1)
+                  ~total:(Array.length budget.schedule)
+                  ()
+          in
+          if final then finish report
+          else if Array.length promoted = 0 then
+            let error =
+              match
+                invalid "no candidate has an aggregatable promotion score"
+              with
+              | Error error -> error
+              | Ok _ -> assert false
+            in
+            if failure_policy = Cross_validation.Abort then Error error
+            else
+              finish { report with Grid_search.report_selection = Error error }
+          else
+            let active = Array.copy promoted in
+            Array.sort Int.compare active;
+            loop (index + 1) active reversed
+        in
+        loop 0 (Array.init source.count Fun.id) [])
+
+  module Regression = struct
+    type model = Cross_validation.Regression.model
+
+    let search_with_policy ?(return_train_score = false)
+        ?(failure_policy = Cross_validation.Record)
+        ?(execution = Execution.sequential) ?metadata ~budget ~candidates
+        ~splitter ~scorers ~promotion_score ~policy ~seed dataset =
+      let labels = None in
+      let metadata =
+        Option.value metadata ~default:(Metadata.of_dataset dataset)
+      in
+      let scorer_names = Array.map Regression_scorer.name scorers in
+      let cross_validate splitter ~metadata ~return_train_score ~failure_policy
+          ~fit_seed pipeline dataset =
+        Cross_validation.Regression.cross_validate ~return_indices:true
+          ~metadata ~return_train_score ~failure_policy ~fit_seed ~execution
+          ~splitter ~scorers ~seed pipeline dataset
+      in
+      run ~return_train_score ~failure_policy ~metadata ~budget ~candidates
+        ~splitter ~scorer_names ~cross_validate ~labels ~promotion_score ~policy
+        ~seed dataset
+
+    let search ?return_train_score ?failure_policy ?execution ?metadata ~budget
+        ~candidates ~splitter ~scorers ~refit ~seed dataset =
+      search_with_policy ?return_train_score ?failure_policy ?execution
+        ?metadata ~budget ~candidates ~splitter ~scorers ~promotion_score:refit
+        ~policy:(Grid_search.Best_score refit) ~seed dataset
+  end
+
+  module Binary_classification = struct
+    type model = Cross_validation.Binary_classification.model
+
+    let search_with_policy ?(return_train_score = false)
+        ?(failure_policy = Cross_validation.Record)
+        ?(execution = Execution.sequential) ?metadata ~budget ~candidates
+        ~splitter ~scorers ~promotion_score ~policy ~seed dataset =
+      let ( let* ) = Result.bind in
+      let values = Target.classification_values (Dataset.target dataset) in
+      let classes =
+        List.sort_uniq Int.compare (Array.to_list values) |> List.length
+      in
+      let* () =
+        if classes <> 2 then
+          invalid "Binary_classification requires exactly two classes"
+        else Ok ()
+      in
+      let labels = Some values in
+      let metadata =
+        Option.value metadata ~default:(Metadata.of_dataset dataset)
+      in
+      let scorer_names = Array.map Binary_classification_scorer.name scorers in
+      let cross_validate splitter ~metadata ~return_train_score ~failure_policy
+          ~fit_seed pipeline dataset =
+        Cross_validation.Binary_classification.cross_validate
+          ~return_indices:true ~metadata ~return_train_score ~failure_policy
+          ~fit_seed ~execution ~splitter ~scorers ~seed pipeline dataset
+      in
+      run ~return_train_score ~failure_policy ~metadata ~budget ~candidates
+        ~splitter ~scorer_names ~cross_validate ~labels ~promotion_score ~policy
+        ~seed dataset
+
+    let search ?return_train_score ?failure_policy ?execution ?metadata ~budget
+        ~candidates ~splitter ~scorers ~refit ~seed dataset =
+      search_with_policy ?return_train_score ?failure_policy ?execution
+        ?metadata ~budget ~candidates ~splitter ~scorers ~promotion_score:refit
+        ~policy:(Grid_search.Best_score refit) ~seed dataset
+  end
+
+  module Multiclass_classification = struct
+    type model = Cross_validation.Multiclass_classification.model
+
+    let search_with_policy ?(return_train_score = false)
+        ?(failure_policy = Cross_validation.Record)
+        ?(execution = Execution.sequential) ?metadata ~budget ~candidates
+        ~splitter ~scorers ~promotion_score ~policy ~seed dataset =
+      let ( let* ) = Result.bind in
+      let values = Target.classification_values (Dataset.target dataset) in
+      let classes =
+        List.sort_uniq Int.compare (Array.to_list values) |> List.length
+      in
+      let* () =
+        if classes < 3 then
+          invalid "Multiclass_classification requires at least three classes"
+        else Ok ()
+      in
+      let labels = Some values in
+      let metadata =
+        Option.value metadata ~default:(Metadata.of_dataset dataset)
+      in
+      let scorer_names =
+        Array.map Multiclass_classification_scorer.name scorers
+      in
+      let cross_validate splitter ~metadata ~return_train_score ~failure_policy
+          ~fit_seed pipeline dataset =
+        Cross_validation.Multiclass_classification.cross_validate
+          ~return_indices:true ~metadata ~return_train_score ~failure_policy
+          ~fit_seed ~execution ~splitter ~scorers ~seed pipeline dataset
+      in
+      run ~return_train_score ~failure_policy ~metadata ~budget ~candidates
+        ~splitter ~scorer_names ~cross_validate ~labels ~promotion_score ~policy
+        ~seed dataset
+
+    let search ?return_train_score ?failure_policy ?execution ?metadata ~budget
+        ~candidates ~splitter ~scorers ~refit ~seed dataset =
+      search_with_policy ?return_train_score ?failure_policy ?execution
+        ?metadata ~budget ~candidates ~splitter ~scorers ~promotion_score:refit
         ~policy:(Grid_search.Best_score refit) ~seed dataset
   end
 end
