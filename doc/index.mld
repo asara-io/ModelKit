@@ -908,14 +908,16 @@ limit defaults to 10,000 per fold. Exceeding it produces
 [Error.Callback_failure], with no unbounded event accumulation. Concurrent
 emitters inside a custom consumer determine their own emission order.
 
-Cancellation returns [Error.Cancelled] without a partial report and prevents
+Cancellation returns [Error.Cancelled] and prevents
 later batches, candidates, and refit. Already-running work can finish; buffered events after cancellation are
 discarded. This is cooperative cancellation between bounded batches, not
 preemption of a solver in another domain. Handler errors become
 [Error.Callback_failure] and handler exceptions propagate. Both callback errors
 and [Error.Cancelled] abort even under [Record]; they are never substituted
 with a score. Handlers must synchronize their own state only when shared
-across independent concurrent evaluations.
+across independent concurrent evaluations. Search with an explicit
+{!Modelkit.Search_checkpoint} retains completed candidate reports for inspection
+and resumption; standalone CV does not return a partial report.
 
 [Started] and [Finished] bracket operations that return normally. Ordinary
 failures produce [Finished (Failed error)], including recorded fold failures;
@@ -976,7 +978,7 @@ val intercept_axis : bool Randomized_search.axis = <abstr>
 without building or fitting pipelines. Ordinary sampler/setter errors retain
 candidate and axis context and become candidate build failures under [Record].
 Failed draws omit the corresponding encoded parameter. User exceptions
-propagate. During search, sampling happens inside candidate callbacks, so
+propagate. Without a checkpoint, sampling happens inside candidate callbacks, so
 cancellation prevents later candidates from drawing or fitting; a control
 error also stops remaining draws within the current candidate.
 
@@ -1081,6 +1083,88 @@ with no eligible survivor stops promotion and retains its reports with an error
 selection. Final-round no-refit behavior follows the existing no-refit contract.
 Callbacks carry [Stage "halving round N"] context and report search progress
 after each round. Cancellation stops subsequent work and returns an error.
+
+{1 Search checkpoints and partial reports}
+
+Pass [?checkpoint] to grid, randomized, or successive-halving search to retain
+completed candidate evaluations across cooperative cancellation and process
+restarts. {!val:Modelkit.Search_checkpoint.snapshot} exposes the committed prefix,
+including typed build/fold failures and scores. A candidate commits after its
+finished callback succeeds. Interrupted candidates repeat their whole evaluation;
+completed candidates reuse their saved results. Halving reconstructs promotion
+from completed round results and continues at the correct resource level.
+
+Checkpoints serialize reports and identities. The caller supplies fresh pipeline
+builders, configurations, samplers, scorers, and selectors on resume. Give the
+specification a stable version ID covering all executable behavior and dependency
+versions, and identify the {e entire} immutable configuration, including fields
+absent from reported parameters. These IDs are required because functions and
+abstract configuration values cannot be compared automatically.
+
+Search also verifies feature/target values, schema, dataset and explicit metadata
+weights/groups, actual ordered splits, seeds, search options, encoded parameters,
+and configuration IDs. Callback {e presence} must remain the same because a
+consumer can require or reject it; a resumed handler can simply continue.
+Execution concurrency may change. Checkpointed randomized search prepares all
+initial configurations before fitting to verify their identities.
+
+{@ocaml[
+# let search_session = Search_checkpoint.create
+    ~specification_id:"linear-intercept-example-v1"
+    ~configuration_id:string_of_bool () |> Result.get_ok;;
+val search_session : bool Search_checkpoint.t = <abstr>
+# let stop_after_first = Callback.create (fun event ->
+    if event.Callback.operation = Callback.Candidate
+       && event.Callback.status = Callback.Started
+       && List.mem (Error.Candidate 1) event.Callback.context
+    then Ok Callback.Cancel else Ok Callback.Continue) |> Result.get_ok;;
+val stop_after_first : Callback.t = <abstr>
+# let interrupted_search = Randomized_search.Regression.search
+    ~checkpoint:search_session
+    ~metadata:(Metadata.of_dataset ~callback:stop_after_first halving_data)
+    ~space:random_space ~splitter:halving_splitter
+    ~scorers:[|Regression_scorer.neg_mean_squared_error|]
+    ~refit:"neg_mean_squared_error" ~seed:(Seed.of_int 1729) halving_data;;
+...
+# Result.is_error interrupted_search
+    && Array.length (Search_checkpoint.completed
+         (Search_checkpoint.snapshot search_session)) = 1;;
+- : bool = true
+# let checkpoint_bytes = Search_checkpoint.snapshot search_session
+    |> Search_checkpoint.encode |> Result.get_ok;;
+...
+# let restored_session = Search_checkpoint.create
+    ~resume:(Search_checkpoint.decode checkpoint_bytes |> Result.get_ok)
+    ~specification_id:"linear-intercept-example-v1"
+    ~configuration_id:string_of_bool () |> Result.get_ok;;
+val restored_session : bool Search_checkpoint.t = <abstr>
+# let keep_going = Callback.create (fun _ -> Ok Callback.Continue) |> Result.get_ok;;
+val keep_going : Callback.t = <abstr>
+# let resumed_search = Randomized_search.Regression.search
+    ~checkpoint:restored_session
+    ~metadata:(Metadata.of_dataset ~callback:keep_going halving_data)
+    ~space:random_space ~splitter:halving_splitter
+    ~scorers:[|Regression_scorer.neg_mean_squared_error|]
+    ~refit:"neg_mean_squared_error" ~seed:(Seed.of_int 1729) halving_data
+    |> Result.get_ok;;
+...
+# Array.length (Grid_search.candidates resumed_search) = 2
+    && Result.is_ok (Grid_search.selection resumed_search);;
+- : bool = true
+]}
+
+The byte format is versioned and bounded to 64 MiB, with a checksum for accidental
+corruption. It contains no fitted models, OCaml closures, or [Marshal] payloads.
+The caller owns persistence: write a new checkpoint to a temporary file and
+replace the previous file atomically after writing succeeds. Snapshots can be
+taken from search callbacks on the caller domain. Each session admits one active
+search; other concurrent access is unsupported.
+
+Resumption rebuilds successful candidate specifications and reruns final selection
+and full-data refit. It does not replay cached CV/fit callbacks; candidate lifecycle
+callbacks can repeat. An interruption during refit leaves all candidate evaluations
+available. Deterministic score-based selection matches uninterrupted execution;
+timing-based or side-effect-dependent selection does not have that guarantee.
 
 {1 Resampling and aligned train/test data}
 

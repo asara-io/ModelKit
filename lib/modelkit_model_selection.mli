@@ -139,6 +139,75 @@ module Cross_validation : sig
   end
 end
 
+(** Candidate-boundary search checkpoints and partial evaluation reports.
+    Checkpoints contain data-only reports, including typed failures and timings;
+    they contain no fitted models, configurations, functions, or callbacks. *)
+module Search_checkpoint : sig
+  type snapshot
+  type 'configuration t
+
+  type entry = {
+    stage : string;
+    candidate_index : int;
+    configuration_id : string;
+    evaluation : (unit Cross_validation.report, Error.t) result;
+  }
+  (** A completed candidate evaluation, or a recorded build failure. Halving
+      stages are zero-based round numbers; other searches use ["candidates"].
+      Fold model fields are always [None]. *)
+
+  val create :
+    ?resume:snapshot ->
+    specification_id:string ->
+    configuration_id:('configuration -> string) ->
+    unit ->
+    ('configuration t, Error.t) result
+  (** Supply nonblank stable IDs. [specification_id] must version all behavior
+      that cannot be inspected: pipeline builders, configuration defaults,
+      samplers, scorers, selectors, and their code/dependency versions.
+      [configuration_id] must cover the entire immutable configuration,
+      including fields absent from reported parameters. Callers must supply the
+      same pure specifications on resume; closure identity cannot be verified
+      automatically.
+
+      Search checks feature/target values, schema, dataset and explicit metadata
+      weights/groups, actual ordered splits, seed, task, options, encoded
+      parameters, and configuration IDs before reusing results. Callback
+      presence must match because metadata requests may require or reject it;
+      the handler and execution concurrency may change. IDs and encoders must be
+      deterministic.
+
+      A session admits one search at a time. Snapshots may be taken from its
+      callbacks on the caller domain; other concurrent access is unsupported. *)
+
+  val snapshot : _ t -> snapshot
+
+  val completed : snapshot -> entry array
+  (** Defensive copies of committed candidate reports. A candidate is committed
+      after its finished callback succeeds. Cancellation leaves earlier entries
+      available, and the interrupted candidate restarts in full on resume.
+      Ordinary recorded failures are committed; control errors are not. *)
+
+  val encode : snapshot -> (bytes, Error.t) result
+
+  val decode : bytes -> (snapshot, Error.t) result
+  (** Versioned, bounded data-only encoding with a 64 MiB limit and an integrity
+      checksum. No [Marshal] or executable state is decoded. The checksum
+      detects accidental corruption; it does not authenticate untrusted
+      producers. The caller owns persistence and should replace checkpoint files
+      atomically.
+
+      Resuming reconstructs specifications, candidate reports, promotion, and
+      selection, skipping committed candidate fits. Candidate lifecycle
+      callbacks may repeat, but cached CV/fit callbacks do not.
+      Sampling/configuration IDs are checked before fitting, so checkpointed
+      randomized search prepares all initial configurations eagerly. The final
+      selector and full-data refit run again; neither fitted state nor their
+      completion is checkpointed. Score-based selection agrees with
+      uninterrupted execution for deterministic consumers. Timing-based or
+      side-effect-dependent selectors cannot provide that guarantee. *)
+end
+
 (** Typed exhaustive search over finite immutable configuration grids.
 
     Axes retain declaration order and their values retain caller order. The
@@ -263,6 +332,7 @@ module Grid_search : sig
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
       grid:
         ( 'configuration,
           Target.regression Target.t,
@@ -280,6 +350,7 @@ module Grid_search : sig
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
       grid:
         ( 'configuration,
           Target.regression Target.t,
@@ -301,6 +372,7 @@ module Grid_search : sig
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
       grid:
         ( 'configuration,
           Target.classification Target.t,
@@ -318,6 +390,7 @@ module Grid_search : sig
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
       grid:
         ( 'configuration,
           Target.classification Target.t,
@@ -339,6 +412,7 @@ module Grid_search : sig
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
       grid:
         ( 'configuration,
           Target.classification Target.t,
@@ -356,6 +430,7 @@ module Grid_search : sig
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
       grid:
         ( 'configuration,
           Target.classification Target.t,
@@ -444,7 +519,10 @@ module Randomized_search : sig
       axes still draw after ordinary failures. The first ordinary failure is
       retained with candidate/axis context; control errors override it and stop
       remaining axis draws. Search draws candidates lazily inside candidate
-      callbacks, so cancellation prevents sampling later candidates. *)
+      callbacks, so cancellation prevents sampling later candidates when no
+      checkpoint is supplied. Checkpointed search prepares all configurations
+      before evaluation to validate their identities; see {!Search_checkpoint}.
+  *)
 
   type 'model report = 'model Grid_search.report
 
@@ -462,6 +540,7 @@ module Randomized_search : sig
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
       space:
         ( 'configuration,
           Target.regression Target.t,
@@ -479,6 +558,7 @@ module Randomized_search : sig
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
       space:
         ( 'configuration,
           Target.regression Target.t,
@@ -500,6 +580,7 @@ module Randomized_search : sig
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
       space:
         ( 'configuration,
           Target.classification Target.t,
@@ -517,6 +598,7 @@ module Randomized_search : sig
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
       space:
         ( 'configuration,
           Target.classification Target.t,
@@ -538,6 +620,7 @@ module Randomized_search : sig
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
       space:
         ( 'configuration,
           Target.classification Target.t,
@@ -555,6 +638,7 @@ module Randomized_search : sig
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
       space:
         ( 'configuration,
           Target.classification Target.t,
@@ -590,9 +674,10 @@ end
     as grid and randomized search. Candidate/fold seeds remain stable across
     rounds. Callbacks include a zero-based [Stage "halving round N"] context,
     with one outer search lifecycle and progress after each completed round.
-    Cancellation and callback failures stop evaluation and return an error,
-    without a partial report. Timings are observational; score and promotion
-    reproducibility follows the pipeline and execution contracts. *)
+    Cancellation and callback failures stop evaluation and return an error. With
+    a checkpoint, completed candidates remain available through
+    {!val:Search_checkpoint.snapshot}. Timings are observational; score and
+    promotion reproducibility follows the pipeline and execution contracts. *)
 module Successive_halving : sig
   type budget
 
@@ -657,6 +742,7 @@ module Successive_halving : sig
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
       budget:budget ->
       candidates:
         ( 'configuration,
@@ -675,6 +761,7 @@ module Successive_halving : sig
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
       budget:budget ->
       candidates:
         ( 'configuration,
@@ -698,6 +785,7 @@ module Successive_halving : sig
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
       budget:budget ->
       candidates:
         ( 'configuration,
@@ -716,6 +804,7 @@ module Successive_halving : sig
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
       budget:budget ->
       candidates:
         ( 'configuration,
@@ -739,6 +828,7 @@ module Successive_halving : sig
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
       budget:budget ->
       candidates:
         ( 'configuration,
@@ -757,6 +847,7 @@ module Successive_halving : sig
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
       budget:budget ->
       candidates:
         ( 'configuration,

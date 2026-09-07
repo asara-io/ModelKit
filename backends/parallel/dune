@@ -45,3 +45,9 @@
  (modules halving_parallel_test)
  (package modelkit-parallel)
  (libraries modelkit modelkit-parallel modelkit_test_support alcotest))
+
+(test
+ (name checkpoint_parallel_test)
+ (modules checkpoint_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel modelkit_test_support alcotest))

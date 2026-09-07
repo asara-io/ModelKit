@@ -1,5 +1,8 @@
 # 0.5.0-dev (unreleased)
 
+- Add candidate-boundary search checkpoints with partial evaluation reports,
+  bounded data-only serialization, full data/split/configuration identity checks,
+  and deterministic resumption across process restarts and execution backends.
 - Add successive-halving search over grid or randomized candidates with nested
   training-row budgets, deterministic promotion, class and weight feasibility
   checks, fresh fits, per-round reports, and optional bounded full-data refitting.

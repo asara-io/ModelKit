@@ -775,6 +775,414 @@ module Cross_validation = struct
     Classification_evaluation (Multiclass_scoring)
 end
 
+module Search_checkpoint = struct
+  module Wire = Modelkit_checkpoint_codec
+
+  type entry = {
+    stage : string;
+    candidate_index : int;
+    configuration_id : string;
+    evaluation : (unit Cross_validation.report, Error.t) result;
+  }
+
+  type snapshot = {
+    specification_id : string;
+    identity : string option;
+    plans : (string * string) array;
+    entries : entry array;
+  }
+
+  type 'configuration t = {
+    identify : 'configuration -> string;
+    mutable state : snapshot;
+    busy : bool Atomic.t;
+    cached : (string * int, entry) Hashtbl.t;
+    mutable reversed_entries : entry list;
+  }
+
+  let incompatible reason =
+    Error
+      (Error.make
+         (Error.Compatibility { component = "search checkpoint"; reason })
+         ~remediation:
+           "resume with identical data, splits, seeds, options, and versioned \
+            specifications, or start a new checkpoint")
+
+  let copy_evaluation evaluation =
+    Result.map
+      (fun report ->
+        { Cross_validation.report_folds = Cross_validation.folds report })
+      evaluation
+
+  let copy_entry entry =
+    { entry with evaluation = copy_evaluation entry.evaluation }
+
+  let copy state =
+    {
+      state with
+      plans = Array.copy state.plans;
+      entries = Array.map copy_entry state.entries;
+    }
+
+  let snapshot session =
+    copy
+      {
+        session.state with
+        entries = Array.of_list (List.rev session.reversed_entries);
+      }
+
+  let completed state = Array.map copy_entry state.entries
+
+  let create ?resume ~specification_id ~configuration_id () =
+    if String.trim specification_id = "" then
+      incompatible "specification ID must not be blank"
+    else
+      match resume with
+      | Some state when state.specification_id <> specification_id ->
+          incompatible "specification ID differs"
+      | None | Some _ ->
+          let state =
+            Option.fold
+              ~none:
+                {
+                  specification_id;
+                  identity = None;
+                  plans = [||];
+                  entries = [||];
+                }
+              ~some:copy resume
+          in
+          let cached = Hashtbl.create (Array.length state.entries) in
+          Array.iter
+            (fun entry ->
+              Hashtbl.add cached (entry.stage, entry.candidate_index) entry)
+            state.entries;
+          Ok
+            {
+              identify = configuration_id;
+              busy = Atomic.make false;
+              cached;
+              reversed_entries = List.rev (Array.to_list state.entries);
+              state = { state with entries = [||] };
+            }
+
+  let report_without_models report =
+    let report_folds =
+      Cross_validation.folds report
+      |> Array.map (fun fold ->
+          {
+            Cross_validation.fold_index = fold.Cross_validation.fold_index;
+            fit_time = fold.Cross_validation.fit_time;
+            score_time = fold.Cross_validation.score_time;
+            scores = fold.Cross_validation.scores;
+            model = None;
+            train_indices = fold.Cross_validation.train_indices;
+            test_indices = fold.Cross_validation.test_indices;
+            failures = fold.Cross_validation.failures;
+          })
+    in
+    { Cross_validation.report_folds }
+
+  let find session stage index =
+    Option.bind session (fun session ->
+        Hashtbl.find_opt session.cached (stage, index))
+
+  let record session entry =
+    match session with
+    | None -> ()
+    | Some session ->
+        if
+          Option.is_none (find (Some session) entry.stage entry.candidate_index)
+        then (
+          let entry = copy_entry entry in
+          Hashtbl.add session.cached (entry.stage, entry.candidate_index) entry;
+          session.reversed_entries <- entry :: session.reversed_entries)
+
+  let plan session stage identity =
+    match session with
+    | None -> Ok ()
+    | Some session -> (
+        match
+          Array.find_opt (fun (key, _) -> key = stage) session.state.plans
+        with
+        | Some (_, previous) when previous <> identity ->
+            incompatible
+              "candidate configurations or parameter encodings differ"
+        | Some _ -> Ok ()
+        | None ->
+            session.state <-
+              {
+                session.state with
+                plans = Array.append session.state.plans [| (stage, identity) |];
+              };
+            Ok ())
+
+  let partition emit = function
+    | Cross_validation.Train -> Wire.int emit 0
+    | Cross_validation.Test -> Wire.int emit 1
+
+  let read_partition reader =
+    match Wire.read_int reader with
+    | 0 -> Cross_validation.Train
+    | 1 -> Cross_validation.Test
+    | _ -> Wire.invalid ()
+
+  let failure emit failure =
+    (match failure.Cross_validation.phase with
+    | Cross_validation.Materialization -> Wire.int emit 0
+    | Cross_validation.Fitting -> Wire.int emit 1
+    | Cross_validation.Prediction part ->
+        Wire.int emit 2;
+        partition emit part
+    | Cross_validation.Scoring { partition = part; scorer } ->
+        Wire.int emit 3;
+        partition emit part;
+        Wire.token emit scorer);
+    Wire.error emit failure.Cross_validation.error
+
+  let read_failure reader =
+    let phase =
+      match Wire.read_int reader with
+      | 0 -> Cross_validation.Materialization
+      | 1 -> Cross_validation.Fitting
+      | 2 -> Cross_validation.Prediction (read_partition reader)
+      | 3 ->
+          let partition = read_partition reader in
+          let scorer = Wire.read_token reader in
+          Cross_validation.Scoring { partition; scorer }
+      | _ -> Wire.invalid ()
+    in
+    let error = Wire.read_error reader in
+    { Cross_validation.phase; error }
+
+  let score emit score =
+    Wire.token emit score.Cross_validation.name;
+    Wire.option (Wire.result Wire.float) emit score.Cross_validation.train_score;
+    Wire.option (Wire.result Wire.float) emit score.Cross_validation.test_score
+
+  let read_score reader =
+    let name = Wire.read_token reader in
+    let train_score =
+      Wire.read_option (Wire.read_result Wire.read_float) reader
+    in
+    let test_score =
+      Wire.read_option (Wire.read_result Wire.read_float) reader
+    in
+    { Cross_validation.name; train_score; test_score }
+
+  let fold emit fold =
+    Wire.int emit fold.Cross_validation.fold_index;
+    Wire.float emit fold.Cross_validation.fit_time;
+    Wire.float emit fold.Cross_validation.score_time;
+    Wire.array score emit fold.Cross_validation.scores;
+    Wire.option (Wire.array Wire.int) emit fold.Cross_validation.train_indices;
+    Wire.option (Wire.array Wire.int) emit fold.Cross_validation.test_indices;
+    Wire.array failure emit fold.Cross_validation.failures
+
+  let read_fold reader =
+    let fold_index = Wire.read_int reader in
+    let fit_time = Wire.read_float reader in
+    let score_time = Wire.read_float reader in
+    if
+      fold_index < 0
+      || (not (Float.is_finite fit_time && Float.is_finite score_time))
+      || fit_time < 0. || score_time < 0.
+    then Wire.invalid ();
+    let scores = Wire.read_array read_score reader in
+    let train_indices =
+      Wire.read_option (Wire.read_array Wire.read_int) reader
+    in
+    let test_indices =
+      Wire.read_option (Wire.read_array Wire.read_int) reader
+    in
+    let failures = Wire.read_array read_failure reader in
+    {
+      Cross_validation.fold_index;
+      fit_time;
+      score_time;
+      scores;
+      train_indices;
+      test_indices;
+      failures;
+      model = None;
+    }
+
+  let evaluation emit report =
+    Wire.array fold emit report.Cross_validation.report_folds
+
+  let read_evaluation reader =
+    let report_folds = Wire.read_array read_fold reader in
+    Array.iteri
+      (fun i fold ->
+        if fold.Cross_validation.fold_index <> i then Wire.invalid ())
+      report_folds;
+    { Cross_validation.report_folds }
+
+  let entry emit entry =
+    Wire.token emit entry.stage;
+    Wire.int emit entry.candidate_index;
+    Wire.token emit entry.configuration_id;
+    Wire.result evaluation emit entry.evaluation
+
+  let read_entry reader =
+    let stage = Wire.read_token reader in
+    let candidate_index = Wire.read_int reader in
+    if candidate_index < 0 then Wire.invalid ();
+    let configuration_id = Wire.read_token reader in
+    let evaluation = Wire.read_result read_evaluation reader in
+    { stage; candidate_index; configuration_id; evaluation }
+
+  let pair emit (left, right) =
+    Wire.token emit left;
+    Wire.token emit right
+
+  let read_pair reader =
+    let left = Wire.read_token reader in
+    let right = Wire.read_token reader in
+    (left, right)
+
+  let payload emit state =
+    Wire.token emit "modelkit-search-checkpoint-v1";
+    Wire.token emit state.specification_id;
+    Wire.option Wire.token emit state.identity;
+    Wire.array pair emit state.plans;
+    Wire.array entry emit state.entries
+
+  let encode state =
+    Wire.protect (fun () ->
+        let payload = Wire.encode payload state in
+        Bytes.of_string
+          (Wire.encode
+             (fun emit () ->
+               Wire.token emit payload;
+               Wire.token emit (Digest.to_hex (Digest.string payload)))
+             ()))
+
+  let decode bytes =
+    Wire.protect (fun () ->
+        if Bytes.length bytes > Wire.limit then Wire.invalid ();
+        let outer = Wire.reader (Bytes.to_string bytes) in
+        let payload = Wire.read_token outer in
+        let digest = Wire.read_token outer in
+        Wire.finish outer;
+        if digest <> Digest.to_hex (Digest.string payload) then Wire.invalid ();
+        let reader = Wire.reader payload in
+        if Wire.read_token reader <> "modelkit-search-checkpoint-v1" then
+          Wire.invalid ();
+        let specification_id = Wire.read_token reader in
+        let identity = Wire.read_option Wire.read_token reader in
+        let plans = Wire.read_array read_pair reader in
+        let entries = Wire.read_array read_entry reader in
+        Wire.finish reader;
+        let keys = Hashtbl.create (Array.length plans) in
+        Array.iter
+          (fun (key, _) ->
+            if Hashtbl.mem keys key then Wire.invalid ();
+            Hashtbl.add keys key ())
+          plans;
+        let seen = Hashtbl.create (Array.length entries) in
+        Array.iter
+          (fun entry ->
+            let key = (entry.stage, entry.candidate_index) in
+            if (not (Hashtbl.mem keys entry.stage)) || Hashtbl.mem seen key then
+              Wire.invalid ();
+            Hashtbl.add seen key ())
+          entries;
+        if
+          String.trim specification_id = ""
+          || identity = None
+             && (Array.length plans > 0 || Array.length entries > 0)
+        then Wire.invalid ();
+        { specification_id; identity; plans; entries })
+
+  let vector emit values =
+    Wire.int emit (Vector.length values);
+    for i = 0 to Vector.length values - 1 do
+      Wire.float emit (Vector.get values i)
+    done
+
+  let weights emit value = vector emit (Sample_weight.to_vector value)
+  let groups emit value = Wire.array Wire.int emit (Groups.to_array value)
+
+  let regression emit target =
+    Wire.token emit "regression";
+    vector emit (Target.regression_values target)
+
+  let classification emit target =
+    Wire.token emit "classification";
+    Wire.array Wire.int emit (Target.classification_values target)
+
+  let with_run session ~algorithm ~settings ~seed ~metadata ~target ~splitter
+      dataset f =
+    match session with
+    | None -> f splitter
+    | Some session ->
+        if not (Atomic.compare_and_set session.busy false true) then
+          incompatible "checkpoint is already in use"
+        else
+          Fun.protect
+            ~finally:(fun () -> Atomic.set session.busy false)
+            (fun () ->
+              let ( let* ) = Result.bind in
+              let rng =
+                Seed.derive seed ~operation:"cross-validation-splitter" ~index:0
+                |> Rng.create
+              in
+              let* pairs =
+                splitter.Cross_validation.run_splitter ~rng
+                  ~groups:(Dataset.groups dataset) ~x:(Dataset.features dataset)
+                  ~y:(Dataset.target dataset)
+              in
+              let identity =
+                Wire.digest
+                  (fun emit () ->
+                    Wire.token emit algorithm;
+                    Wire.token emit settings;
+                    Wire.token emit (Seed.to_string seed);
+                    Wire.schema emit (Dataset.feature_schema dataset);
+                    Wire.bool emit
+                      (Dataset.finiteness dataset = Dataset.Require_finite);
+                    let x = Dataset.features dataset in
+                    Wire.int emit (Matrix.rows x);
+                    Wire.int emit (Matrix.columns x);
+                    for row = 0 to Matrix.rows x - 1 do
+                      for col = 0 to Matrix.columns x - 1 do
+                        Wire.float emit (Matrix.get x row col)
+                      done
+                    done;
+                    target emit (Dataset.target dataset);
+                    Wire.option weights emit (Dataset.sample_weight dataset);
+                    Wire.option groups emit (Dataset.groups dataset);
+                    Wire.option weights emit (Metadata.sample_weight metadata);
+                    Wire.option groups emit (Metadata.groups metadata);
+                    Wire.bool emit (Option.is_some (Metadata.callback metadata));
+                    Wire.array
+                      (fun emit (train, test) ->
+                        Wire.int emit (Row_view.source_size train);
+                        Wire.array Wire.int emit (Row_view.indices train);
+                        Wire.int emit (Row_view.source_size test);
+                        Wire.array Wire.int emit (Row_view.indices test))
+                      emit pairs)
+                  ()
+              in
+              let* () =
+                match session.state.identity with
+                | Some previous when previous <> identity ->
+                    incompatible
+                      "data, splits, seed, task, or search options differ"
+                | Some _ -> Ok ()
+                | None ->
+                    session.state <-
+                      { session.state with identity = Some identity };
+                    Ok ()
+              in
+              f
+                {
+                  Cross_validation.run_splitter =
+                    (fun ~rng:_ ~groups:_ ~x:_ ~y:_ -> Ok pairs);
+                })
+end
+
 module Grid_search = struct
   type parameter_value =
     | Bool of bool
@@ -1050,9 +1458,79 @@ module Grid_search = struct
         let position, _, _ = eligible.(0) in
         Some position )
 
-  let search_candidates ?(candidate_id = Fun.id) ?(search_callback = true)
-      ~return_train_score ~failure_policy ~cross_validate ~scorer_names
-      ~metadata ~policy ~seed ~operation ~prepare ~build dataset =
+  let settings ~return_train_score ~failure_policy ~scorer_names ~policy =
+    let module Wire = Modelkit_checkpoint_codec in
+    Wire.encode
+      (fun emit () ->
+        Wire.bool emit return_train_score;
+        Wire.bool emit (failure_policy = Cross_validation.Abort);
+        Wire.array Wire.token emit scorer_names;
+        match policy with
+        | No_refit -> Wire.token emit "none"
+        | Best_score name ->
+            Wire.token emit "best";
+            Wire.token emit name
+        | Custom _ -> Wire.token emit "custom")
+      ()
+
+  let checkpoint_plan checkpoint ~stage ~candidate_id partials =
+    match checkpoint with
+    | None -> Ok (Array.make (Array.length partials) "")
+    | Some session ->
+        let module Wire = Modelkit_checkpoint_codec in
+        let identities =
+          Array.map
+            (fun partial ->
+              match partial.configuration with
+              | Ok configuration ->
+                  session.Search_checkpoint.identify configuration
+              | Error error -> Wire.digest Wire.error error)
+            partials
+        in
+        if Array.exists (fun identity -> String.trim identity = "") identities
+        then
+          Search_checkpoint.incompatible "configuration IDs must not be blank"
+        else
+          let identity =
+            Wire.digest
+              (fun emit () ->
+                Wire.int emit (Array.length partials);
+                Array.iteri
+                  (fun position partial ->
+                    Wire.int emit (candidate_id position);
+                    Wire.token emit identities.(position);
+                    Wire.result
+                      (fun emit _ -> Wire.token emit "configured")
+                      emit partial.configuration;
+                    Wire.array
+                      (fun emit parameter ->
+                        Wire.token emit parameter.parameter_name;
+                        match parameter.parameter_value with
+                        | Bool value ->
+                            Wire.int emit 0;
+                            Wire.bool emit value
+                        | Int value ->
+                            Wire.int emit 1;
+                            Wire.int emit value
+                        | Float value ->
+                            Wire.int emit 2;
+                            Wire.float emit value
+                        | String value ->
+                            Wire.int emit 3;
+                            Wire.token emit value)
+                      emit
+                      (Array.of_list (List.rev partial.reversed_parameters)))
+                  partials)
+              ()
+          in
+          Result.map
+            (fun () -> identities)
+            (Search_checkpoint.plan checkpoint stage identity)
+
+  let search_candidates ?checkpoint ?(checkpoint_stage = "candidates")
+      ?(candidate_id = Fun.id) ?(search_callback = true) ~return_train_score
+      ~failure_policy ~cross_validate ~scorer_names ~metadata ~policy ~seed
+      ~operation ~prepare ~build dataset =
     let ( let* ) = Result.bind in
     let* primary =
       match policy with
@@ -1076,10 +1554,42 @@ module Grid_search = struct
           ~operation:Callback.Search f
     in
     with_search (fun () ->
-        let count, partial_at = prepare () in
+        let count, original_at = prepare () in
+        let* partials =
+          match checkpoint with
+          | None -> Ok None
+          | Some _ ->
+              let rec collect position reversed =
+                if position = count then
+                  Ok (Some (Array.of_list (List.rev reversed)))
+                else
+                  let partial = original_at position in
+                  match partial.configuration with
+                  | Error error when Callback.is_control_error error ->
+                      Error (with_candidate (candidate_id position) error)
+                  | Ok _ | Error _ ->
+                      collect (position + 1) (partial :: reversed)
+              in
+              collect 0 []
+        in
+        let partial_at =
+          match partials with
+          | None -> original_at
+          | Some values -> Array.get values
+        in
+        let* identities =
+          match partials with
+          | None -> Ok [||]
+          | Some values ->
+              checkpoint_plan checkpoint ~stage:checkpoint_stage ~candidate_id
+                values
+        in
         let pipelines = Array.make count None in
         let evaluate_candidate position =
           let candidate_index = candidate_id position in
+          let cached =
+            Search_checkpoint.find checkpoint checkpoint_stage candidate_index
+          in
           let candidate_metadata =
             Metadata.scope (Error.Candidate candidate_index) metadata
           in
@@ -1105,9 +1615,13 @@ module Grid_search = struct
                 partial.reversed_parameters |> List.rev |> Array.of_list
               in
               let built =
-                match partial.configuration with
-                | Error error -> Error error
-                | Ok configuration -> build configuration
+                match cached with
+                | Some { Search_checkpoint.evaluation = Error error; _ } ->
+                    Error error
+                | None | Some { Search_checkpoint.evaluation = Ok _; _ } -> (
+                    match partial.configuration with
+                    | Error error -> Error error
+                    | Ok configuration -> build configuration)
               in
               match built with
               | Error error ->
@@ -1139,10 +1653,16 @@ module Grid_search = struct
                       ~index:candidate_index
                   in
                   let* evaluation =
-                    cross_validate ~metadata:candidate_metadata
-                      ~return_train_score ~failure_policy ~fit_seed pipeline
-                      dataset
-                    |> Result.map_error (with_candidate candidate_index)
+                    match cached with
+                    | Some { Search_checkpoint.evaluation = Ok report; _ } ->
+                        Ok (Search_checkpoint.report_without_models report)
+                    | Some { Search_checkpoint.evaluation = Error error; _ } ->
+                        Error error
+                    | None ->
+                        cross_validate ~metadata:candidate_metadata
+                          ~return_train_score ~failure_policy ~fit_seed pipeline
+                          dataset
+                        |> Result.map_error (with_candidate candidate_index)
                   in
                   let candidate : _ candidate =
                     {
@@ -1171,6 +1691,23 @@ module Grid_search = struct
           if candidate_index = count then Ok (Array.of_list (List.rev reversed))
           else
             let* candidate = evaluate_candidate candidate_index in
+            (match checkpoint with
+            | None -> ()
+            | Some _ ->
+                let evaluation =
+                  match (candidate.evaluation, candidate.build_error) with
+                  | Some report, _ ->
+                      Ok (Search_checkpoint.report_without_models report)
+                  | None, Some error -> Error error
+                  | None, None -> assert false
+                in
+                Search_checkpoint.record checkpoint
+                  {
+                    Search_checkpoint.stage = checkpoint_stage;
+                    candidate_index = candidate.candidate_index;
+                    configuration_id = identities.(candidate_index);
+                    evaluation;
+                  });
             evaluate (candidate_index + 1) (candidate :: reversed)
         in
         let* evaluated = evaluate 0 [] in
@@ -1267,43 +1804,49 @@ module Grid_search = struct
                                    });
                           })))
 
-  let search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
-      ~metadata ~policy ~seed grid dataset =
+  let search ?checkpoint ~return_train_score ~failure_policy ~cross_validate
+      ~scorer_names ~metadata ~policy ~seed grid dataset =
     let prepare () =
       let partials = expand grid in
       (Array.length partials, Array.get partials)
     in
-    search_candidates ~return_train_score ~failure_policy ~cross_validate
-      ~scorer_names ~metadata ~policy ~seed ~operation:"grid-search" ~prepare
-      ~build:grid.build dataset
+    search_candidates ?checkpoint ~return_train_score ~failure_policy
+      ~cross_validate ~scorer_names ~metadata ~policy ~seed
+      ~operation:"grid-search" ~prepare ~build:grid.build dataset
 
   module Regression = struct
     type model = Cross_validation.Regression.model
 
     let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ?metadata ~grid ~splitter ~scorers
-        ~policy ~seed dataset =
+        ?(execution = Execution.sequential) ?metadata ?checkpoint ~grid
+        ~splitter ~scorers ~policy ~seed dataset =
       let metadata =
         match metadata with
         | Some metadata -> metadata
         | None -> Metadata.of_dataset dataset
       in
       let scorer_names = Array.map Regression_scorer.name scorers in
-      let cross_validate ~metadata ~return_train_score ~failure_policy ~fit_seed
-          pipeline dataset =
-        Cross_validation.Regression.cross_validate ~return_train_score
-          ~failure_policy ~fit_seed ~execution ~metadata ~splitter ~scorers
-          ~seed pipeline dataset
+      let settings =
+        settings ~return_train_score ~failure_policy ~scorer_names ~policy
       in
-      search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
-        ~metadata ~policy ~seed grid dataset
+      Search_checkpoint.with_run checkpoint ~algorithm:"grid-search:Regression"
+        ~settings ~seed ~metadata ~target:Search_checkpoint.regression ~splitter
+        dataset (fun splitter ->
+          let cross_validate ~metadata ~return_train_score ~failure_policy
+              ~fit_seed pipeline dataset =
+            Cross_validation.Regression.cross_validate ~return_train_score
+              ~failure_policy ~fit_seed ~execution ~metadata ~splitter ~scorers
+              ~seed pipeline dataset
+          in
+          search ?checkpoint ~return_train_score ~failure_policy ~cross_validate
+            ~scorer_names ~metadata ~policy ~seed grid dataset)
 
-    let search ?return_train_score ?failure_policy ?execution ?metadata ~grid
-        ~splitter ~scorers ~refit ~seed dataset =
+    let search ?return_train_score ?failure_policy ?execution ?metadata
+        ?checkpoint ~grid ~splitter ~scorers ~refit ~seed dataset =
       search_with_policy ?return_train_score ?failure_policy ?execution
-        ?metadata ~grid ~splitter ~scorers ~policy:(Best_score refit) ~seed
-        dataset
+        ?metadata ?checkpoint ~grid ~splitter ~scorers
+        ~policy:(Best_score refit) ~seed dataset
   end
 
   module Binary_classification = struct
@@ -1311,28 +1854,35 @@ module Grid_search = struct
 
     let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ?metadata ~grid ~splitter ~scorers
-        ~policy ~seed dataset =
+        ?(execution = Execution.sequential) ?metadata ?checkpoint ~grid
+        ~splitter ~scorers ~policy ~seed dataset =
       let metadata =
         match metadata with
         | Some metadata -> metadata
         | None -> Metadata.of_dataset dataset
       in
       let scorer_names = Array.map Binary_classification_scorer.name scorers in
-      let cross_validate ~metadata ~return_train_score ~failure_policy ~fit_seed
-          pipeline dataset =
-        Cross_validation.Binary_classification.cross_validate
-          ~return_train_score ~failure_policy ~fit_seed ~execution ~metadata
-          ~splitter ~scorers ~seed pipeline dataset
+      let settings =
+        settings ~return_train_score ~failure_policy ~scorer_names ~policy
       in
-      search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
-        ~metadata ~policy ~seed grid dataset
+      Search_checkpoint.with_run checkpoint
+        ~algorithm:"grid-search:Binary_classification" ~settings ~seed ~metadata
+        ~target:Search_checkpoint.classification ~splitter dataset
+        (fun splitter ->
+          let cross_validate ~metadata ~return_train_score ~failure_policy
+              ~fit_seed pipeline dataset =
+            Cross_validation.Binary_classification.cross_validate
+              ~return_train_score ~failure_policy ~fit_seed ~execution ~metadata
+              ~splitter ~scorers ~seed pipeline dataset
+          in
+          search ?checkpoint ~return_train_score ~failure_policy ~cross_validate
+            ~scorer_names ~metadata ~policy ~seed grid dataset)
 
-    let search ?return_train_score ?failure_policy ?execution ?metadata ~grid
-        ~splitter ~scorers ~refit ~seed dataset =
+    let search ?return_train_score ?failure_policy ?execution ?metadata
+        ?checkpoint ~grid ~splitter ~scorers ~refit ~seed dataset =
       search_with_policy ?return_train_score ?failure_policy ?execution
-        ?metadata ~grid ~splitter ~scorers ~policy:(Best_score refit) ~seed
-        dataset
+        ?metadata ?checkpoint ~grid ~splitter ~scorers
+        ~policy:(Best_score refit) ~seed dataset
   end
 
   module Multiclass_classification = struct
@@ -1340,8 +1890,8 @@ module Grid_search = struct
 
     let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ?metadata ~grid ~splitter ~scorers
-        ~policy ~seed dataset =
+        ?(execution = Execution.sequential) ?metadata ?checkpoint ~grid
+        ~splitter ~scorers ~policy ~seed dataset =
       let metadata =
         match metadata with
         | Some metadata -> metadata
@@ -1350,20 +1900,27 @@ module Grid_search = struct
       let scorer_names =
         Array.map Multiclass_classification_scorer.name scorers
       in
-      let cross_validate ~metadata ~return_train_score ~failure_policy ~fit_seed
-          pipeline dataset =
-        Cross_validation.Multiclass_classification.cross_validate
-          ~return_train_score ~failure_policy ~fit_seed ~execution ~metadata
-          ~splitter ~scorers ~seed pipeline dataset
+      let settings =
+        settings ~return_train_score ~failure_policy ~scorer_names ~policy
       in
-      search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
-        ~metadata ~policy ~seed grid dataset
+      Search_checkpoint.with_run checkpoint
+        ~algorithm:"grid-search:Multiclass_classification" ~settings ~seed
+        ~metadata ~target:Search_checkpoint.classification ~splitter dataset
+        (fun splitter ->
+          let cross_validate ~metadata ~return_train_score ~failure_policy
+              ~fit_seed pipeline dataset =
+            Cross_validation.Multiclass_classification.cross_validate
+              ~return_train_score ~failure_policy ~fit_seed ~execution ~metadata
+              ~splitter ~scorers ~seed pipeline dataset
+          in
+          search ?checkpoint ~return_train_score ~failure_policy ~cross_validate
+            ~scorer_names ~metadata ~policy ~seed grid dataset)
 
-    let search ?return_train_score ?failure_policy ?execution ?metadata ~grid
-        ~splitter ~scorers ~refit ~seed dataset =
+    let search ?return_train_score ?failure_policy ?execution ?metadata
+        ?checkpoint ~grid ~splitter ~scorers ~refit ~seed dataset =
       search_with_policy ?return_train_score ?failure_policy ?execution
-        ?metadata ~grid ~splitter ~scorers ~policy:(Best_score refit) ~seed
-        dataset
+        ?metadata ?checkpoint ~grid ~splitter ~scorers
+        ~policy:(Best_score refit) ~seed dataset
   end
 end
 
@@ -1667,28 +2224,35 @@ module Randomized_search = struct
 
     let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ?metadata ~space ~splitter ~scorers
-        ~policy ~seed dataset =
+        ?(execution = Execution.sequential) ?metadata ?checkpoint ~space
+        ~splitter ~scorers ~policy ~seed dataset =
       let metadata =
         Option.value metadata ~default:(Metadata.of_dataset dataset)
       in
       let scorer_names = Array.map Regression_scorer.name scorers in
-      let cross_validate ~metadata ~return_train_score ~failure_policy ~fit_seed
-          pipeline dataset =
-        Cross_validation.Regression.cross_validate ~metadata ~return_train_score
-          ~failure_policy ~fit_seed ~execution ~splitter ~scorers ~seed pipeline
-          dataset
+      let settings =
+        Grid_search.settings ~return_train_score ~failure_policy ~scorer_names
+          ~policy
       in
-      Grid_search.search_candidates ~return_train_score ~failure_policy
-        ~cross_validate ~scorer_names ~metadata ~policy ~seed
-        ~operation:"randomized-search"
-        ~prepare:(fun () -> prepare ~seed space)
-        ~build:space.sample_build dataset
+      Search_checkpoint.with_run checkpoint
+        ~algorithm:"randomized-search:Regression" ~settings ~seed ~metadata
+        ~target:Search_checkpoint.regression ~splitter dataset (fun splitter ->
+          let cross_validate ~metadata ~return_train_score ~failure_policy
+              ~fit_seed pipeline dataset =
+            Cross_validation.Regression.cross_validate ~metadata
+              ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
+              ~scorers ~seed pipeline dataset
+          in
+          Grid_search.search_candidates ?checkpoint ~return_train_score
+            ~failure_policy ~cross_validate ~scorer_names ~metadata ~policy
+            ~seed ~operation:"randomized-search"
+            ~prepare:(fun () -> prepare ~seed space)
+            ~build:space.sample_build dataset)
 
-    let search ?return_train_score ?failure_policy ?execution ?metadata ~space
-        ~splitter ~scorers ~refit ~seed dataset =
+    let search ?return_train_score ?failure_policy ?execution ?metadata
+        ?checkpoint ~space ~splitter ~scorers ~refit ~seed dataset =
       search_with_policy ?return_train_score ?failure_policy ?execution
-        ?metadata ~space ~splitter ~scorers
+        ?metadata ?checkpoint ~space ~splitter ~scorers
         ~policy:(Grid_search.Best_score refit) ~seed dataset
   end
 
@@ -1697,28 +2261,36 @@ module Randomized_search = struct
 
     let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ?metadata ~space ~splitter ~scorers
-        ~policy ~seed dataset =
+        ?(execution = Execution.sequential) ?metadata ?checkpoint ~space
+        ~splitter ~scorers ~policy ~seed dataset =
       let metadata =
         Option.value metadata ~default:(Metadata.of_dataset dataset)
       in
       let scorer_names = Array.map Binary_classification_scorer.name scorers in
-      let cross_validate ~metadata ~return_train_score ~failure_policy ~fit_seed
-          pipeline dataset =
-        Cross_validation.Binary_classification.cross_validate ~metadata
-          ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
-          ~scorers ~seed pipeline dataset
+      let settings =
+        Grid_search.settings ~return_train_score ~failure_policy ~scorer_names
+          ~policy
       in
-      Grid_search.search_candidates ~return_train_score ~failure_policy
-        ~cross_validate ~scorer_names ~metadata ~policy ~seed
-        ~operation:"randomized-search"
-        ~prepare:(fun () -> prepare ~seed space)
-        ~build:space.sample_build dataset
+      Search_checkpoint.with_run checkpoint
+        ~algorithm:"randomized-search:Binary_classification" ~settings ~seed
+        ~metadata ~target:Search_checkpoint.classification ~splitter dataset
+        (fun splitter ->
+          let cross_validate ~metadata ~return_train_score ~failure_policy
+              ~fit_seed pipeline dataset =
+            Cross_validation.Binary_classification.cross_validate ~metadata
+              ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
+              ~scorers ~seed pipeline dataset
+          in
+          Grid_search.search_candidates ?checkpoint ~return_train_score
+            ~failure_policy ~cross_validate ~scorer_names ~metadata ~policy
+            ~seed ~operation:"randomized-search"
+            ~prepare:(fun () -> prepare ~seed space)
+            ~build:space.sample_build dataset)
 
-    let search ?return_train_score ?failure_policy ?execution ?metadata ~space
-        ~splitter ~scorers ~refit ~seed dataset =
+    let search ?return_train_score ?failure_policy ?execution ?metadata
+        ?checkpoint ~space ~splitter ~scorers ~refit ~seed dataset =
       search_with_policy ?return_train_score ?failure_policy ?execution
-        ?metadata ~space ~splitter ~scorers
+        ?metadata ?checkpoint ~space ~splitter ~scorers
         ~policy:(Grid_search.Best_score refit) ~seed dataset
   end
 
@@ -1727,30 +2299,38 @@ module Randomized_search = struct
 
     let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ?metadata ~space ~splitter ~scorers
-        ~policy ~seed dataset =
+        ?(execution = Execution.sequential) ?metadata ?checkpoint ~space
+        ~splitter ~scorers ~policy ~seed dataset =
       let metadata =
         Option.value metadata ~default:(Metadata.of_dataset dataset)
       in
       let scorer_names =
         Array.map Multiclass_classification_scorer.name scorers
       in
-      let cross_validate ~metadata ~return_train_score ~failure_policy ~fit_seed
-          pipeline dataset =
-        Cross_validation.Multiclass_classification.cross_validate ~metadata
-          ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
-          ~scorers ~seed pipeline dataset
+      let settings =
+        Grid_search.settings ~return_train_score ~failure_policy ~scorer_names
+          ~policy
       in
-      Grid_search.search_candidates ~return_train_score ~failure_policy
-        ~cross_validate ~scorer_names ~metadata ~policy ~seed
-        ~operation:"randomized-search"
-        ~prepare:(fun () -> prepare ~seed space)
-        ~build:space.sample_build dataset
+      Search_checkpoint.with_run checkpoint
+        ~algorithm:"randomized-search:Multiclass_classification" ~settings ~seed
+        ~metadata ~target:Search_checkpoint.classification ~splitter dataset
+        (fun splitter ->
+          let cross_validate ~metadata ~return_train_score ~failure_policy
+              ~fit_seed pipeline dataset =
+            Cross_validation.Multiclass_classification.cross_validate ~metadata
+              ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
+              ~scorers ~seed pipeline dataset
+          in
+          Grid_search.search_candidates ?checkpoint ~return_train_score
+            ~failure_policy ~cross_validate ~scorer_names ~metadata ~policy
+            ~seed ~operation:"randomized-search"
+            ~prepare:(fun () -> prepare ~seed space)
+            ~build:space.sample_build dataset)
 
-    let search ?return_train_score ?failure_policy ?execution ?metadata ~space
-        ~splitter ~scorers ~refit ~seed dataset =
+    let search ?return_train_score ?failure_policy ?execution ?metadata
+        ?checkpoint ~space ~splitter ~scorers ~refit ~seed dataset =
       search_with_policy ?return_train_score ?failure_policy ?execution
-        ?metadata ~space ~splitter ~scorers
+        ?metadata ?checkpoint ~space ~splitter ~scorers
         ~policy:(Grid_search.Best_score refit) ~seed dataset
   end
 end
@@ -1975,7 +2555,7 @@ module Successive_halving = struct
     in
     prepare 0 []
 
-  let run ~return_train_score ~failure_policy ~metadata ~budget
+  let run ?checkpoint ~return_train_score ~failure_policy ~metadata ~budget
       ~candidates:source ~splitter ~scorer_names ~cross_validate ~labels
       ~promotion_score ~policy ~seed dataset =
     let ( let* ) = Result.bind in
@@ -2028,8 +2608,10 @@ module Successive_halving = struct
               metadata
           in
           let* report =
-            Grid_search.search_candidates ~candidate_id:(Array.get active)
-              ~search_callback:false ~return_train_score ~failure_policy
+            Grid_search.search_candidates ?checkpoint
+              ~checkpoint_stage:(string_of_int index)
+              ~candidate_id:(Array.get active) ~search_callback:false
+              ~return_train_score ~failure_policy
               ~cross_validate:(cross_validate splitter) ~scorer_names ~metadata
               ~policy:(if final then policy else Grid_search.No_refit)
               ~seed ~operation:"halving-search"
@@ -2116,28 +2698,47 @@ module Successive_halving = struct
 
     let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ?metadata ~budget ~candidates
-        ~splitter ~scorers ~promotion_score ~policy ~seed dataset =
+        ?(execution = Execution.sequential) ?metadata ?checkpoint ~budget
+        ~candidates ~splitter ~scorers ~promotion_score ~policy ~seed dataset =
       let labels = None in
       let metadata =
         Option.value metadata ~default:(Metadata.of_dataset dataset)
       in
       let scorer_names = Array.map Regression_scorer.name scorers in
-      let cross_validate splitter ~metadata ~return_train_score ~failure_policy
-          ~fit_seed pipeline dataset =
-        Cross_validation.Regression.cross_validate ~return_indices:true
-          ~metadata ~return_train_score ~failure_policy ~fit_seed ~execution
-          ~splitter ~scorers ~seed pipeline dataset
+      let settings =
+        Modelkit_checkpoint_codec.encode
+          (fun emit () ->
+            Modelkit_checkpoint_codec.token emit
+              (Grid_search.settings ~return_train_score ~failure_policy
+                 ~scorer_names ~policy);
+            Modelkit_checkpoint_codec.token emit promotion_score;
+            Modelkit_checkpoint_codec.array Modelkit_checkpoint_codec.int emit
+              budget.schedule;
+            Modelkit_checkpoint_codec.int emit budget.factor;
+            Modelkit_checkpoint_codec.option Modelkit_checkpoint_codec.int emit
+              budget.max_fits)
+          ()
       in
-      run ~return_train_score ~failure_policy ~metadata ~budget ~candidates
-        ~splitter ~scorer_names ~cross_validate ~labels ~promotion_score ~policy
-        ~seed dataset
+      Search_checkpoint.with_run checkpoint
+        ~algorithm:"halving-search:Regression" ~settings ~seed ~metadata
+        ~target:Search_checkpoint.regression ~splitter dataset (fun splitter ->
+          let cross_validate splitter ~metadata ~return_train_score
+              ~failure_policy ~fit_seed pipeline dataset =
+            Cross_validation.Regression.cross_validate ~return_indices:true
+              ~metadata ~return_train_score ~failure_policy ~fit_seed ~execution
+              ~splitter ~scorers ~seed pipeline dataset
+          in
+          run ?checkpoint ~return_train_score ~failure_policy ~metadata ~budget
+            ~candidates ~splitter ~scorer_names ~cross_validate ~labels
+            ~promotion_score ~policy ~seed dataset)
 
-    let search ?return_train_score ?failure_policy ?execution ?metadata ~budget
-        ~candidates ~splitter ~scorers ~refit ~seed dataset =
+    let search ?return_train_score ?failure_policy ?execution ?metadata
+        ?checkpoint ~budget ~candidates ~splitter ~scorers ~refit ~seed dataset
+        =
       search_with_policy ?return_train_score ?failure_policy ?execution
-        ?metadata ~budget ~candidates ~splitter ~scorers ~promotion_score:refit
-        ~policy:(Grid_search.Best_score refit) ~seed dataset
+        ?metadata ?checkpoint ~budget ~candidates ~splitter ~scorers
+        ~promotion_score:refit ~policy:(Grid_search.Best_score refit) ~seed
+        dataset
   end
 
   module Binary_classification = struct
@@ -2145,8 +2746,8 @@ module Successive_halving = struct
 
     let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ?metadata ~budget ~candidates
-        ~splitter ~scorers ~promotion_score ~policy ~seed dataset =
+        ?(execution = Execution.sequential) ?metadata ?checkpoint ~budget
+        ~candidates ~splitter ~scorers ~promotion_score ~policy ~seed dataset =
       let ( let* ) = Result.bind in
       let values = Target.classification_values (Dataset.target dataset) in
       let classes =
@@ -2162,21 +2763,41 @@ module Successive_halving = struct
         Option.value metadata ~default:(Metadata.of_dataset dataset)
       in
       let scorer_names = Array.map Binary_classification_scorer.name scorers in
-      let cross_validate splitter ~metadata ~return_train_score ~failure_policy
-          ~fit_seed pipeline dataset =
-        Cross_validation.Binary_classification.cross_validate
-          ~return_indices:true ~metadata ~return_train_score ~failure_policy
-          ~fit_seed ~execution ~splitter ~scorers ~seed pipeline dataset
+      let settings =
+        Modelkit_checkpoint_codec.encode
+          (fun emit () ->
+            Modelkit_checkpoint_codec.token emit
+              (Grid_search.settings ~return_train_score ~failure_policy
+                 ~scorer_names ~policy);
+            Modelkit_checkpoint_codec.token emit promotion_score;
+            Modelkit_checkpoint_codec.array Modelkit_checkpoint_codec.int emit
+              budget.schedule;
+            Modelkit_checkpoint_codec.int emit budget.factor;
+            Modelkit_checkpoint_codec.option Modelkit_checkpoint_codec.int emit
+              budget.max_fits)
+          ()
       in
-      run ~return_train_score ~failure_policy ~metadata ~budget ~candidates
-        ~splitter ~scorer_names ~cross_validate ~labels ~promotion_score ~policy
-        ~seed dataset
+      Search_checkpoint.with_run checkpoint
+        ~algorithm:"halving-search:Binary_classification" ~settings ~seed
+        ~metadata ~target:Search_checkpoint.classification ~splitter dataset
+        (fun splitter ->
+          let cross_validate splitter ~metadata ~return_train_score
+              ~failure_policy ~fit_seed pipeline dataset =
+            Cross_validation.Binary_classification.cross_validate
+              ~return_indices:true ~metadata ~return_train_score ~failure_policy
+              ~fit_seed ~execution ~splitter ~scorers ~seed pipeline dataset
+          in
+          run ?checkpoint ~return_train_score ~failure_policy ~metadata ~budget
+            ~candidates ~splitter ~scorer_names ~cross_validate ~labels
+            ~promotion_score ~policy ~seed dataset)
 
-    let search ?return_train_score ?failure_policy ?execution ?metadata ~budget
-        ~candidates ~splitter ~scorers ~refit ~seed dataset =
+    let search ?return_train_score ?failure_policy ?execution ?metadata
+        ?checkpoint ~budget ~candidates ~splitter ~scorers ~refit ~seed dataset
+        =
       search_with_policy ?return_train_score ?failure_policy ?execution
-        ?metadata ~budget ~candidates ~splitter ~scorers ~promotion_score:refit
-        ~policy:(Grid_search.Best_score refit) ~seed dataset
+        ?metadata ?checkpoint ~budget ~candidates ~splitter ~scorers
+        ~promotion_score:refit ~policy:(Grid_search.Best_score refit) ~seed
+        dataset
   end
 
   module Multiclass_classification = struct
@@ -2184,8 +2805,8 @@ module Successive_halving = struct
 
     let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ?metadata ~budget ~candidates
-        ~splitter ~scorers ~promotion_score ~policy ~seed dataset =
+        ?(execution = Execution.sequential) ?metadata ?checkpoint ~budget
+        ~candidates ~splitter ~scorers ~promotion_score ~policy ~seed dataset =
       let ( let* ) = Result.bind in
       let values = Target.classification_values (Dataset.target dataset) in
       let classes =
@@ -2203,20 +2824,40 @@ module Successive_halving = struct
       let scorer_names =
         Array.map Multiclass_classification_scorer.name scorers
       in
-      let cross_validate splitter ~metadata ~return_train_score ~failure_policy
-          ~fit_seed pipeline dataset =
-        Cross_validation.Multiclass_classification.cross_validate
-          ~return_indices:true ~metadata ~return_train_score ~failure_policy
-          ~fit_seed ~execution ~splitter ~scorers ~seed pipeline dataset
+      let settings =
+        Modelkit_checkpoint_codec.encode
+          (fun emit () ->
+            Modelkit_checkpoint_codec.token emit
+              (Grid_search.settings ~return_train_score ~failure_policy
+                 ~scorer_names ~policy);
+            Modelkit_checkpoint_codec.token emit promotion_score;
+            Modelkit_checkpoint_codec.array Modelkit_checkpoint_codec.int emit
+              budget.schedule;
+            Modelkit_checkpoint_codec.int emit budget.factor;
+            Modelkit_checkpoint_codec.option Modelkit_checkpoint_codec.int emit
+              budget.max_fits)
+          ()
       in
-      run ~return_train_score ~failure_policy ~metadata ~budget ~candidates
-        ~splitter ~scorer_names ~cross_validate ~labels ~promotion_score ~policy
-        ~seed dataset
+      Search_checkpoint.with_run checkpoint
+        ~algorithm:"halving-search:Multiclass_classification" ~settings ~seed
+        ~metadata ~target:Search_checkpoint.classification ~splitter dataset
+        (fun splitter ->
+          let cross_validate splitter ~metadata ~return_train_score
+              ~failure_policy ~fit_seed pipeline dataset =
+            Cross_validation.Multiclass_classification.cross_validate
+              ~return_indices:true ~metadata ~return_train_score ~failure_policy
+              ~fit_seed ~execution ~splitter ~scorers ~seed pipeline dataset
+          in
+          run ?checkpoint ~return_train_score ~failure_policy ~metadata ~budget
+            ~candidates ~splitter ~scorer_names ~cross_validate ~labels
+            ~promotion_score ~policy ~seed dataset)
 
-    let search ?return_train_score ?failure_policy ?execution ?metadata ~budget
-        ~candidates ~splitter ~scorers ~refit ~seed dataset =
+    let search ?return_train_score ?failure_policy ?execution ?metadata
+        ?checkpoint ~budget ~candidates ~splitter ~scorers ~refit ~seed dataset
+        =
       search_with_policy ?return_train_score ?failure_policy ?execution
-        ?metadata ~budget ~candidates ~splitter ~scorers ~promotion_score:refit
-        ~policy:(Grid_search.Best_score refit) ~seed dataset
+        ?metadata ?checkpoint ~budget ~candidates ~splitter ~scorers
+        ~promotion_score:refit ~policy:(Grid_search.Best_score refit) ~seed
+        dataset
   end
 end

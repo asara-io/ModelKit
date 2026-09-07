@@ -9,7 +9,8 @@
   resampling_support
   partitioning_support
   randomized_search_support
-  halving_support)
+  halving_support
+  checkpoint_support)
  (libraries modelkit alcotest))
 
 (test
@@ -472,3 +473,15 @@
  (modules halving_test)
  (package modelkit)
  (libraries modelkit modelkit_test_support alcotest))
+
+(test
+ (name checkpoint_test)
+ (modules checkpoint_test)
+ (package modelkit)
+ (libraries modelkit modelkit_test_support alcotest))
+
+(test
+ (name checkpoint_process_test)
+ (modules checkpoint_process_test)
+ (package modelkit)
+ (libraries modelkit modelkit_test_support alcotest unix))

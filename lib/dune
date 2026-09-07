@@ -2,6 +2,7 @@
  (name modelkit)
  (public_name modelkit)
  (private_modules
+  modelkit_checkpoint_codec
   modelkit_artifact
   modelkit_composition
   modelkit_class_weight
