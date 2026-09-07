@@ -1278,6 +1278,376 @@ module Cross_validation = struct
   end
 end
 
+module Learning_curve = struct
+  type training_size = Count of int | Fraction of float
+
+  type schedule = {
+    lc_requested_sizes : training_size array;
+    lc_shuffle : bool;
+    lc_max_fits : int option;
+  }
+
+  let invalid reason =
+    Error
+      (Error.make
+         ~remediation:
+           "provide a non-empty, strictly increasing schedule within every \
+            training fold"
+         (Error.Validation { name = "learning-curve schedule"; reason }))
+
+  let schedule ?(shuffle = false) ?max_fits sizes =
+    let rec validate index =
+      if index = Array.length sizes then Ok ()
+      else
+        match sizes.(index) with
+        | Count count when count > 0 -> validate (index + 1)
+        | Count _ -> invalid "training row counts must be positive"
+        | Fraction fraction
+          when Float.is_finite fraction && fraction > 0.0 && fraction <= 1.0 ->
+            validate (index + 1)
+        | Fraction _ ->
+            invalid "training fractions must be finite and in (0, 1]"
+    in
+    if Array.length sizes = 0 then invalid "at least one size is required"
+    else if Option.fold ~none:false ~some:(fun value -> value < 1) max_fits then
+      invalid "max_fits must be positive"
+    else
+      Result.map
+        (fun () ->
+          {
+            lc_requested_sizes = Array.copy sizes;
+            lc_shuffle = shuffle;
+            lc_max_fits = max_fits;
+          })
+        (validate 0)
+
+  let requested_sizes schedule = Array.copy schedule.lc_requested_sizes
+  let shuffle schedule = schedule.lc_shuffle
+  let max_fits schedule = schedule.lc_max_fits
+
+  type 'model point = {
+    training_samples : int;
+    evaluation : 'model Cross_validation.report;
+  }
+
+  type 'model report = { learning_points : 'model point array }
+
+  let points report = Array.copy report.learning_points
+
+  let data result =
+    Result.map_error
+      (fun error ->
+        Error.of_data_error
+          ~remediation:"supply aligned rows with positive total sample weight"
+          error)
+      result
+
+  let validate_view dataset metadata view =
+    let ( let* ) = Result.bind in
+    let* _ = Metadata.select metadata view in
+    match Dataset.sample_weight dataset with
+    | None -> Ok ()
+    | Some weight ->
+        Result.map (fun _ -> ()) (data (Sample_weight.select weight view))
+
+  let resolve_sizes schedule capacity =
+    let resolved =
+      Array.map
+        (function
+          | Count count -> count
+          | Fraction fraction ->
+              int_of_float (floor (fraction *. float_of_int capacity)))
+        schedule.lc_requested_sizes
+    in
+    let rec validate index previous =
+      if index = Array.length resolved then Ok resolved
+      else
+        let current = resolved.(index) in
+        if current < 1 then invalid "a training fraction resolves to zero rows"
+        else if current > capacity then
+          invalid
+            (Format.sprintf
+               "training size %d exceeds the smallest base fold size %d" current
+               capacity)
+        else if current <= previous then
+          invalid
+            "sizes must resolve to a strictly increasing sequence of row counts"
+        else validate (index + 1) current
+    in
+    validate 0 0
+
+  let fit_bound schedule ~sizes ~folds =
+    if sizes > max_int / folds then
+      invalid "planned fit count exceeds the integer limit"
+    else
+      let fits = sizes * folds in
+      match schedule.lc_max_fits with
+      | Some maximum when fits > maximum ->
+          invalid
+            (Format.sprintf "planned fit count %d exceeds max_fits %d" fits
+               maximum)
+      | None | Some _ -> Ok ()
+
+  let distinct_labels values =
+    let labels = Array.copy values in
+    Array.sort Int.compare labels;
+    if Array.length labels = 0 then [||]
+    else
+      let reversed = ref [ labels.(0) ] in
+      for index = 1 to Array.length labels - 1 do
+        if labels.(index) <> labels.(index - 1) then
+          reversed := labels.(index) :: !reversed
+      done;
+      Array.of_list (List.rev !reversed)
+
+  type prepared_fold = {
+    prepared_order : int array;
+    prepared_test : Row_view.t;
+  }
+
+  type prepared = {
+    prepared_sizes : int array;
+    prepared_folds : prepared_fold array;
+  }
+
+  let prepare ~schedule ~splitter ~seed ~metadata dataset =
+    let ( let* ) = Result.bind in
+    let rows = Dataset.sample_count dataset in
+    let* () = Metadata.validate ~rows metadata in
+    let splitter_rng =
+      Seed.derive seed ~operation:"cross-validation-splitter" ~index:0
+      |> Rng.create
+    in
+    let* base_pairs =
+      splitter.Cross_validation.run_splitter ~rng:splitter_rng
+        ~groups:(Dataset.groups dataset) ~x:(Dataset.features dataset)
+        ~y:(Dataset.target dataset)
+    in
+    let folds = Array.length base_pairs in
+    let* () =
+      if folds = 0 then invalid "at least one validation fold is required"
+      else Ok ()
+    in
+    let capacity =
+      Array.fold_left
+        (fun minimum (train, _) -> min minimum (Row_view.length train))
+        max_int base_pairs
+    in
+    let* sizes = resolve_sizes schedule capacity in
+    let* () = fit_bound schedule ~sizes:(Array.length sizes) ~folds in
+    let rec prepare_fold fold_index reversed =
+      if fold_index = folds then Ok (Array.of_list (List.rev reversed))
+      else
+        let train, test = base_pairs.(fold_index) in
+        let checked =
+          let* _ = Split.of_views ~train ~test in
+          let* () =
+            if
+              Row_view.source_size train <> rows
+              || Row_view.source_size test <> rows
+            then invalid "fold source size differs from the dataset"
+            else Ok ()
+          in
+          let* () = validate_view dataset metadata test in
+          let order = Row_view.indices train in
+          (if schedule.lc_shuffle then
+             let rng =
+               Seed.derive seed ~operation:"learning-curve-training-rows"
+                 ~index:fold_index
+               |> Rng.create
+             in
+             Splitter_internal.shuffle rng order);
+          let rec validate_sizes size_index =
+            if size_index = Array.length sizes then Ok ()
+            else
+              let* selected =
+                data
+                  (Row_view.create ~source_size:rows
+                     (Array.sub order 0 sizes.(size_index)))
+              in
+              let* () = validate_view dataset metadata selected in
+              validate_sizes (size_index + 1)
+          in
+          let* () = validate_sizes 0 in
+          Ok { prepared_order = order; prepared_test = test }
+        in
+        let* prepared =
+          Result.map_error (Error.with_context (Error.Fold fold_index)) checked
+        in
+        prepare_fold (fold_index + 1) (prepared :: reversed)
+    in
+    let* prepared_folds = prepare_fold 0 [] in
+    Ok { prepared_sizes = sizes; prepared_folds }
+
+  let pairs_for_size prepared ~size_index =
+    let rows = Row_view.source_size prepared.prepared_folds.(0).prepared_test in
+    let samples = prepared.prepared_sizes.(size_index) in
+    let rec create fold_index reversed =
+      if fold_index = Array.length prepared.prepared_folds then
+        Ok (Array.of_list (List.rev reversed))
+      else
+        let fold = prepared.prepared_folds.(fold_index) in
+        match
+          data
+            (Row_view.create ~source_size:rows
+               (Array.sub fold.prepared_order 0 samples))
+        with
+        | Ok train ->
+            create (fold_index + 1) ((train, fold.prepared_test) :: reversed)
+        | Error error ->
+            Error (Error.with_context (Error.Fold fold_index) error)
+    in
+    create 0 []
+
+  let evaluate ?(return_indices = false)
+      ?(failure_policy = Cross_validation.Record)
+      ?(execution = Execution.sequential) ?metadata ~schedule ~splitter
+      ~scorer_names ~scorers ~seed ~cross_validate pipeline dataset =
+    let ( let* ) = Result.bind in
+    let metadata =
+      Option.value metadata ~default:(Metadata.of_dataset dataset)
+    in
+    let* () = Cross_validation.validate_scorers scorer_names in
+    let* prepared = prepare ~schedule ~splitter ~seed ~metadata dataset in
+    let rec run size_index reversed =
+      if size_index = Array.length prepared.prepared_sizes then
+        Ok { learning_points = Array.of_list (List.rev reversed) }
+      else
+        let training_samples = prepared.prepared_sizes.(size_index) in
+        let* pairs = pairs_for_size prepared ~size_index in
+        let fixed_splitter =
+          {
+            Cross_validation.run_splitter =
+              (fun ~rng:_ ~groups:_ ~x:_ ~y:_ -> Ok pairs);
+          }
+        in
+        let stage =
+          Error.Stage
+            (Format.sprintf "learning curve with %d training rows"
+               training_samples)
+        in
+        let scoped_metadata = Metadata.scope stage metadata in
+        let fit_seed =
+          Seed.derive seed ~operation:"learning-curve-size" ~index:size_index
+        in
+        let* evaluation =
+          cross_validate ~return_train_score:true ~return_models:false
+            ~return_indices ~failure_policy ~fit_seed ~execution
+            ~metadata:scoped_metadata ~splitter:fixed_splitter ~scorers ~seed
+            pipeline dataset
+          |> Result.map_error (Error.with_context stage)
+        in
+        run (size_index + 1) ({ training_samples; evaluation } :: reversed)
+    in
+    run 0 []
+
+  let validate_class_count ~binary labels =
+    let count = Array.length (distinct_labels labels) in
+    if (binary && count = 2) || ((not binary) && count >= 2) then Ok ()
+    else
+      invalid
+        (if binary then
+           Format.sprintf "binary data contains %d distinct classes" count
+         else
+           Format.sprintf "classification data contains %d distinct classes"
+             count)
+
+  module Regression = struct
+    type model = Cross_validation.Regression.model
+
+    let evaluate ?return_indices ?failure_policy ?execution ?metadata ~schedule
+        ~splitter ~scorers ~seed pipeline dataset =
+      evaluate ?return_indices ?failure_policy ?execution ?metadata ~schedule
+        ~splitter
+        ~scorer_names:(Array.map Regression_scorer.name scorers)
+        ~scorers ~seed
+        ~cross_validate:(fun
+            ~return_train_score
+            ~return_models
+            ~return_indices
+            ~failure_policy
+            ~fit_seed
+            ~execution
+            ~metadata
+            ~splitter
+            ~scorers
+            ~seed
+            pipeline
+            dataset
+          ->
+          Cross_validation.Regression.cross_validate ~return_train_score
+            ~return_models ~return_indices ~failure_policy ~fit_seed ~execution
+            ~metadata ~splitter ~scorers ~seed pipeline dataset)
+        pipeline dataset
+  end
+
+  module Binary_classification = struct
+    type model = Cross_validation.Binary_classification.model
+
+    let evaluate ?return_indices ?failure_policy ?execution ?metadata ~schedule
+        ~splitter ~scorers ~seed pipeline dataset =
+      let ( let* ) = Result.bind in
+      let labels = Target.classification_values (Dataset.target dataset) in
+      let* () = validate_class_count ~binary:true labels in
+      evaluate ?return_indices ?failure_policy ?execution ?metadata ~schedule
+        ~splitter
+        ~scorer_names:(Array.map Binary_classification_scorer.name scorers)
+        ~scorers ~seed
+        ~cross_validate:(fun
+            ~return_train_score
+            ~return_models
+            ~return_indices
+            ~failure_policy
+            ~fit_seed
+            ~execution
+            ~metadata
+            ~splitter
+            ~scorers
+            ~seed
+            pipeline
+            dataset
+          ->
+          Cross_validation.Binary_classification.cross_validate
+            ~return_train_score ~return_models ~return_indices ~failure_policy
+            ~fit_seed ~execution ~metadata ~splitter ~scorers ~seed pipeline
+            dataset)
+        pipeline dataset
+  end
+
+  module Multiclass_classification = struct
+    type model = Cross_validation.Multiclass_classification.model
+
+    let evaluate ?return_indices ?failure_policy ?execution ?metadata ~schedule
+        ~splitter ~scorers ~seed pipeline dataset =
+      let ( let* ) = Result.bind in
+      let labels = Target.classification_values (Dataset.target dataset) in
+      let* () = validate_class_count ~binary:false labels in
+      evaluate ?return_indices ?failure_policy ?execution ?metadata ~schedule
+        ~splitter
+        ~scorer_names:(Array.map Multiclass_classification_scorer.name scorers)
+        ~scorers ~seed
+        ~cross_validate:(fun
+            ~return_train_score
+            ~return_models
+            ~return_indices
+            ~failure_policy
+            ~fit_seed
+            ~execution
+            ~metadata
+            ~splitter
+            ~scorers
+            ~seed
+            pipeline
+            dataset
+          ->
+          Cross_validation.Multiclass_classification.cross_validate
+            ~return_train_score ~return_models ~return_indices ~failure_policy
+            ~fit_seed ~execution ~metadata ~splitter ~scorers ~seed pipeline
+            dataset)
+        pipeline dataset
+  end
+end
+
 module Search_checkpoint = struct
   module Wire = Modelkit_checkpoint_codec
 

@@ -42,11 +42,12 @@ expanding-window time-series splitters produce validated source-row views;
 test selections into aligned datasets. Weighted regression and binary
 classification metrics expose higher-is-better scorer specifications, stable
 fold-score aggregation, explicit undefined-result handling, and residual, ROC,
-and precision-recall data without a plotting dependency. Cross-validation and
-finite grid search retain stable logical ordering and structured failures;
-optional bounded Domainslib fold execution is supplied by the separate
-[modelkit-parallel] package. Versioned data-only artifacts reconstruct fitted
-built-in pipelines under explicit reader limits and task-specific loaders.
+and precision-recall data without a plotting dependency. Cross-validation,
+learning curves, and search retain stable logical ordering and structured
+failures; optional bounded Domainslib fold execution is supplied by the
+separate [modelkit-parallel] package. Versioned data-only artifacts reconstruct
+fitted built-in pipelines under explicit reader limits and task-specific
+loaders.
 Portable tests consume committed scikit-learn reference data without requiring
 Python during a normal build or test run.
 
@@ -985,6 +986,60 @@ value is unavailable if any fold failed, but successful fold responses remain
 available through {!Modelkit.Cross_validation.prediction_folds}. Metadata,
 callbacks, deterministic child seeds, and bounded execution follow ordinary
 cross-validation semantics.
+
+{1 Learning curves}
+
+{!Modelkit.Learning_curve} evaluates the same pipeline and scorers as ordinary
+cross-validation over progressively larger training subsets. The splitter runs
+once. Each point keeps every validation fold unchanged and uses a nested prefix
+of its corresponding base training fold, so score changes reflect training-set
+size rather than changing validation membership. Pipeline cloning keeps all
+preprocessing and supervised feature selection inside the selected training
+rows.
+
+A schedule accepts positive absolute row counts or finite fractions greater
+than zero and at most one. Fractions are applied to the smallest base training
+fold and rounded down, giving every fold the same resolved training-row count.
+Resolved sizes must be strictly increasing and fit every base fold. An optional
+[max_fits] limit checks [points * folds] before fitting begins. Schedule values
+and returned point arrays are defensively copied.
+
+{@ocaml[
+# let curve_schedule = Learning_curve.schedule ~shuffle:true ~max_fits:6
+    [|Learning_curve.Fraction 0.5; Learning_curve.Fraction 1.0|]
+    |> Result.get_ok;;
+val curve_schedule : Learning_curve.schedule = <abstr>
+# let curve_report = Learning_curve.Regression.evaluate
+    ~return_indices:true ~schedule:curve_schedule ~splitter:oof_splitter
+    ~scorers:[|Regression_scorer.neg_mean_absolute_error;
+               Regression_scorer.r2 ()|]
+    ~seed:(Seed.of_int 42) oof_pipeline oof_data |> Result.get_ok;;
+...
+# Array.map
+    (fun point ->
+      (point.Learning_curve.training_samples,
+       Cross_validation.successful_fold_count point.Learning_curve.evaluation))
+    (Learning_curve.points curve_report);;
+- : (int * int) array = [|(3, 3); (6, 3)|]
+]}
+
+Without schedule shuffling, each subset preserves the splitter's training-row
+order. With shuffling, each base training fold is shuffled once from the fixed
+seed and logical fold index; larger points remain supersets of smaller points,
+and results do not depend on domain scheduling. Curve points run sequentially,
+while folds within each point use the supplied {!Modelkit.Execution.t}. The
+optional Domainslib backend therefore bounds concurrency without changing
+indices or scores.
+
+Every point contains a normal cross-validation report with train scores enabled
+and fitted fold models omitted. Multiple scorers, train/test timings, optional
+indices, row-aligned weights and metadata, and callback buffering retain their
+ordinary CV behavior. Classification entry points first validate the complete
+dataset's class count; a smaller training subset that an estimator cannot fit
+is represented by its typed fold failure. [Record] is the default and continues
+to later sizes. [Abort] stops at the first failing fold and adds the resolved
+training size to the error context. Timings remain observational and are not a
+reproducibility guarantee.
 
 {1 Randomized search and selection policies}
 

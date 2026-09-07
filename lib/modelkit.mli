@@ -3675,6 +3675,117 @@ module Cross_validation : sig
   end
 end
 
+(** Leakage-safe learning curves over nested training-fold prefixes.
+
+    A learning curve measures how train and validation scores change as each
+    fold receives more training rows. The splitter runs once. Every requested
+    size then uses a prefix of each base training fold while leaving its
+    validation fold unchanged, so points are directly comparable and no
+    preprocessing or supervised selection is fitted outside a training subset.
+
+    By default, prefixes preserve splitter order. With [shuffle=true], each base
+    training fold is shuffled once from its logical fold identity and the
+    supplied seed; every size still uses a nested prefix, independently of
+    execution scheduling. Curve points run in schedule order. Folds within one
+    point use the supplied bounded {!Execution.t}.
+
+    Each point contains an ordinary {!Cross_validation.report} with training
+    scores enabled, fitted models omitted, and row indices included only when
+    requested. Multiple scorers, weights, metadata routing, callbacks, timings,
+    and typed fold failures retain their cross-validation semantics. [Record] is
+    the default failure policy so later sizes can still be evaluated; [Abort]
+    returns the first error with the current training size in its context. *)
+module Learning_curve : sig
+  type training_size =
+    | Count of int  (** An absolute training-row count in every fold. *)
+    | Fraction of float
+        (** A fraction of the smallest base training fold, rounded down. *)
+
+  type schedule
+
+  val schedule :
+    ?shuffle:bool ->
+    ?max_fits:int ->
+    training_size array ->
+    (schedule, Error.t) result
+  (** Builds an immutable schedule. Sizes must be nonempty. Counts are positive;
+      fractions are finite, greater than zero, and at most one. Once base folds
+      are known, sizes must resolve to a strictly increasing sequence within the
+      smallest training fold. [max_fits], when supplied, bounds [sizes * folds]
+      before any pipeline is fitted. *)
+
+  val requested_sizes : schedule -> training_size array
+  val shuffle : schedule -> bool
+  val max_fits : schedule -> int option
+
+  type 'model point = {
+    training_samples : int;
+        (** The resolved row count used by every training fold. *)
+    evaluation : 'model Cross_validation.report;
+        (** Per-fold train/test scores, timings, indices, and failures. *)
+  }
+
+  type 'model report
+
+  val points : 'model report -> 'model point array
+  (** Returns curve points in requested schedule order as a defensive copy. *)
+
+  module Regression : sig
+    type model = Cross_validation.Regression.model
+
+    val evaluate :
+      ?return_indices:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      schedule:schedule ->
+      splitter:Target.regression Target.t Cross_validation.splitter ->
+      scorers:Regression_scorer.t array ->
+      seed:Seed.t ->
+      (Target.regression Target.t, Target.regression Target.t) Pipeline.t ->
+      Target.regression Dataset.t ->
+      (model report, Error.t) result
+  end
+
+  module Binary_classification : sig
+    type model = Cross_validation.Binary_classification.model
+
+    val evaluate :
+      ?return_indices:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      schedule:schedule ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Binary_classification_scorer.t array ->
+      seed:Seed.t ->
+      ( Target.classification Target.t,
+        Target.classification Target.t )
+      Pipeline.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+  end
+
+  module Multiclass_classification : sig
+    type model = Cross_validation.Multiclass_classification.model
+
+    val evaluate :
+      ?return_indices:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      schedule:schedule ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Multiclass_classification_scorer.t array ->
+      seed:Seed.t ->
+      ( Target.classification Target.t,
+        Target.classification Target.t )
+      Pipeline.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+  end
+end
+
 (** Candidate-boundary search checkpoints and partial evaluation reports.
     Checkpoints contain data-only reports, including typed failures and timings;
     they contain no fitted models, configurations, functions, or callbacks. *)

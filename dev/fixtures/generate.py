@@ -2239,6 +2239,61 @@ def generate_cross_val_prediction_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_learning_curve_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.linear_model import LinearRegression
+    from sklearn.model_selection import KFold, learning_curve
+
+    x = np.arange(12.0)[:, None]
+    y = np.array(
+        [1.0, 3.2, 4.8, 7.1, 8.9, 11.2, 12.8, 15.1, 16.9, 19.2, 20.8, 23.1]
+    )
+    train_sizes, train_scores, test_scores = learning_curve(
+        LinearRegression(),
+        x,
+        y,
+        cv=KFold(n_splits=3, shuffle=False),
+        scoring="neg_mean_absolute_error",
+        train_sizes=np.array([0.25, 0.5, 1.0]),
+        shuffle=False,
+    )
+    rows = ["# ModelKit sklearn learning-curve fixture v1"]
+    rows.append("x\t" + float_values(x[:, 0]))
+    rows.append("y\t" + float_values(y))
+    rows.append("training_sizes\t" + comma_separated(train_sizes))
+    for point, scores in enumerate(train_scores):
+        rows.append(f"train_scores_{point}\t{float_values(scores)}")
+    for point, scores in enumerate(test_scores):
+        rows.append(f"test_scores_{point}\t{float_values(scores)}")
+    (fixture_dir / "learning_curve_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {
+            "folds": 3,
+            "scoring": "neg_mean_absolute_error",
+            "shuffle": False,
+            "train_sizes": [0.25, 0.5, 1.0],
+            "absolute_tolerance": 1e-9,
+        },
+        "comparison": "Resolved training sizes and per-fold train/test scores over identical KFold partitions and nested training prefixes.",
+        "environment": environment.metadata(),
+        "fixture": "learning_curve_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "schema_version": 1,
+        "references": [
+            "sklearn.model_selection.learning_curve",
+            "sklearn.linear_model.LinearRegression",
+        ],
+    }
+    (fixture_dir / "learning_curve_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
@@ -2249,6 +2304,7 @@ def main() -> None:
     generate_partitioning_fixture(fixture_dir)
     generate_randomized_search_fixture(fixture_dir)
     generate_cross_val_prediction_fixture(fixture_dir)
+    generate_learning_curve_fixture(fixture_dir)
     generate_metrics_fixture(fixture_dir)
     generate_preprocessing_fixture(fixture_dir)
     generate_transform_fixture(fixture_dir)
