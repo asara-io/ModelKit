@@ -5,7 +5,8 @@
   backend_conformance
   adapter_conformance
   evaluation_metadata_support
-  transformed_target_support)
+  transformed_target_support
+  resampling_support)
  (libraries modelkit alcotest))
 
 (test
@@ -407,4 +408,22 @@
   (setenv
    MODELKIT_TARGET_FIXTURE
    %{dep:fixtures/sklearn/transformed_target_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name resampling_test)
+ (modules resampling_test)
+ (package modelkit)
+ (libraries modelkit modelkit_test_support alcotest))
+
+(test
+ (name resampling_fixture_test)
+ (modules resampling_fixture_test)
+ (package modelkit)
+ (libraries modelkit modelkit_test_support alcotest)
+ (deps fixtures/sklearn/resampling_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_RESAMPLING_FIXTURE
+   %{dep:fixtures/sklearn/resampling_v1.tsv}
    (run %{test}))))

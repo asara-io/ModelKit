@@ -1,0 +1,34 @@
+{
+  "comparison": "Exact unshuffled rows, partition sizes and untied class allocations; random row identities intentionally differ between RNG implementations.",
+  "configuration": {
+    "folds": 4,
+    "random_state": 1729,
+    "repeats": 2,
+    "shuffle_test_fraction": 0.3,
+    "stratified_test_count": 10,
+    "stratified_train_count": 20
+  },
+  "environment": {
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "fixture": "resampling_v1",
+  "generator": "dev/fixtures/generate.py",
+  "license": "Apache-2.0",
+  "references": [
+    "sklearn.model_selection.train_test_split",
+    "sklearn.model_selection.ShuffleSplit",
+    "sklearn.model_selection.StratifiedShuffleSplit",
+    "sklearn.model_selection.RepeatedKFold",
+    "sklearn.model_selection.RepeatedStratifiedKFold"
+  ],
+  "schema_version": 1
+}

@@ -4,6 +4,8 @@
   and nested preprocessing chains with fold-local fitting.
 - Route requested weights, groups, and callbacks through nested consumers,
   cross-validation, search, and full-data refit with bounded cancellation.
+- Add shuffle, stratified-shuffle, holdout, and repeated K-fold splitters, plus
+  aligned train/test dataset splitting with explicit counts and fractional sizes.
 - Add transformed-target regression with fold-local target fitting, metadata
   requests, checked inverse transforms, and original-space predictions.
 - Record producer version 0.5.0-dev in newly written artifacts while retaining

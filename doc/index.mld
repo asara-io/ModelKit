@@ -925,6 +925,71 @@ ordinary failure. Events contain logical identities and nested stage paths,
 not timestamps, training observations, or fitted models. Reports retain the
 existing fit/score timing and failure details.
 
+{1 Resampling and aligned train/test data}
+
+{!Modelkit.Shuffle_split} draws independent random train/test partitions;
+{!Modelkit.Stratified_shuffle_split} apportions class counts before sampling.
+Their defaults are ten splits and a 10% test fraction. Different splits can
+reuse test rows, so they do not provide exhaustive out-of-fold coverage.
+{!Modelkit.Holdout} emits a single split with a 25% test fraction by default.
+
+{!Modelkit.Repeated_k_fold} and {!Modelkit.Repeated_stratified_k_fold} default
+to five folds and ten repetitions, always shuffling within each repetition.
+They emit folds in repetition-major order, and every row appears in exactly
+one test fold per repetition. Increasing the repetition count preserves the
+earlier splits. The stratified variant uses {!Modelkit.Stratified_k_fold}'s
+allocation rules. All splitters return eager arrays of row views, so storing
+repeated folds takes space proportional to rows times total fold count.
+
+Sizes use {!Modelkit.Split_size}: [Count n] for rows or [Fraction f] for a
+fraction strictly between zero and one. Training fractions round down; test
+fractions round up. One explicit size determines the other by subtraction.
+With both sizes supplied, unused rows are allowed, but partitions must remain
+nonempty and disjoint. Shuffle and stratified-shuffle views retain randomized
+row order; repeated K-fold views retain source row order.
+
+Use {!Modelkit.Train_test_split.split} to copy an immutable dataset into two
+aligned datasets. This example uses the classification dataset from above:
+
+{@ocaml[
+# let train_data, test_data =
+    Train_test_split.split ~test_size:(Split_size.Fraction 0.25)
+      ~rng:(Rng.create (Seed.of_int 1729)) dataset () |> Result.get_ok;;
+...
+# Dataset.sample_count train_data + Dataset.sample_count test_data
+    = Dataset.sample_count dataset;;
+- : bool = true
+# Feature_schema.equal (Dataset.feature_schema train_data)
+    (Dataset.feature_schema dataset);;
+- : bool = true
+]}
+
+Optional [~stratify:(Dataset.target dataset)] enables classification-label
+stratification. Separate aligned classification labels may also stratify a
+regression dataset. Stratification requires shuffling, at least two examples
+per class, and at least as many rows in each partition as there are classes.
+Class allocation uses proportional largest remainders, with seeded tie
+breaking, assigning training rows first and test rows from the remainder.
+These feasibility rules do not guarantee every rare class appears in both
+partitions under extreme imbalance. Use the resulting labels to check any
+class-coverage requirements of your estimator or scorer.
+
+The helper selects features, targets, weights, and groups in exactly the same
+row order, preserving schemas and feature-finiteness policies. With
+[shuffle=false], training takes the first rows and test takes the next rows;
+the RNG is ignored. A partition with zero total sample weight is rejected at
+materialization. Group labels are carried with rows but do not constrain
+membership: these splitters do not provide group exclusion.
+
+Use {!Modelkit.Cross_validation.target_independent_splitter} to package
+shuffle, holdout, or repeated K-fold specifications for CV and search. Package
+stratified specifications with
+{!Modelkit.Cross_validation.target_aware_splitter}. Logical split and repetition
+indices derive deterministic child random streams. Results are reproducible
+across execution backends, but NumPy's random row identities are not a
+compatibility promise. Reference fixtures compare partition sizes, class
+allocations without ties, and exact unshuffled holdout rows.
+
 {1 Artifact safety and compatibility}
 
 {!Modelkit.Artifact} stores canonical big-endian integers and IEEE-754 binary64

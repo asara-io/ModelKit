@@ -2003,12 +2003,72 @@ def generate_transformed_target_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_resampling_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.model_selection import (
+        RepeatedKFold, RepeatedStratifiedKFold, ShuffleSplit,
+        StratifiedShuffleSplit, train_test_split,
+    )
+
+    labels = np.repeat([0, 1, 2], [20, 12, 8])
+    x = np.arange(len(labels))[:, None]
+    rows = ["# ModelKit sklearn resampling semantics fixture v1"]
+
+    def add(name, values):
+        rows.append(f"{name}\t{comma_separated(values)}")
+
+    add("labels", labels)
+    train, test = train_test_split(np.arange(11), test_size=0.3, shuffle=False)
+    add("holdout_train", train)
+    add("holdout_test", test)
+    for index, (train, test) in enumerate(
+        ShuffleSplit(n_splits=3, test_size=0.3, random_state=1729).split(x)
+    ):
+        add(f"shuffle_sizes_{index}", [len(train), len(test)])
+    for index, (train, test) in enumerate(
+        StratifiedShuffleSplit(n_splits=3, train_size=20, test_size=10,
+                               random_state=1729).split(x, labels)
+    ):
+        add(f"stratified_train_{index}", np.bincount(labels[train], minlength=3))
+        add(f"stratified_test_{index}", np.bincount(labels[test], minlength=3))
+    for index, (train, test) in enumerate(
+        RepeatedKFold(n_splits=4, n_repeats=2, random_state=1729).split(x)
+    ):
+        add(f"repeated_sizes_{index}", [len(train), len(test)])
+    for index, (_, test) in enumerate(
+        RepeatedStratifiedKFold(n_splits=4, n_repeats=2,
+                                random_state=1729).split(x, labels)
+    ):
+        add(f"repeated_stratified_test_{index}", np.bincount(labels[test], minlength=3))
+    (fixture_dir / "resampling_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {"random_state": 1729, "folds": 4, "repeats": 2,
+                          "shuffle_test_fraction": 0.3,
+                          "stratified_train_count": 20, "stratified_test_count": 10},
+        "comparison": "Exact unshuffled rows, partition sizes and untied class allocations; random row identities intentionally differ between RNG implementations.",
+        "environment": environment.metadata(), "fixture": "resampling_v1",
+        "generator": "dev/fixtures/generate.py", "license": "Apache-2.0",
+        "schema_version": 1,
+        "references": ["sklearn.model_selection.train_test_split",
+                       "sklearn.model_selection.ShuffleSplit",
+                       "sklearn.model_selection.StratifiedShuffleSplit",
+                       "sklearn.model_selection.RepeatedKFold",
+                       "sklearn.model_selection.RepeatedStratifiedKFold"],
+    }
+    (fixture_dir / "resampling_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
     fixture_dir.mkdir(parents=True, exist_ok=True)
     generate_split_fixture(fixture_dir)
     generate_splitter_fixture(fixture_dir)
+    generate_resampling_fixture(fixture_dir)
     generate_metrics_fixture(fixture_dir)
     generate_preprocessing_fixture(fixture_dir)
     generate_transform_fixture(fixture_dir)

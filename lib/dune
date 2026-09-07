@@ -18,6 +18,7 @@
   modelkit_protocols
   modelkit_regularized_linear
   modelkit_sgd
+  modelkit_resampling
   modelkit_splitting
   modelkit_target
   modelkit_transforms))

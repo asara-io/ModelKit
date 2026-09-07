@@ -110,3 +110,14 @@ module Artifact = Modelkit_artifact.Artifact
 
 module Transformed_target_regressor =
   Modelkit_target.Transformed_target_regressor
+
+module Split_size = Modelkit_resampling.Split_size
+module Shuffle_split = Modelkit_resampling.Shuffle_split
+module Stratified_shuffle_split = Modelkit_resampling.Stratified_shuffle_split
+module Holdout = Modelkit_resampling.Holdout
+module Repeated_k_fold = Modelkit_resampling.Repeated_k_fold
+
+module Repeated_stratified_k_fold =
+  Modelkit_resampling.Repeated_stratified_k_fold
+
+module Train_test_split = Modelkit_resampling.Train_test_split

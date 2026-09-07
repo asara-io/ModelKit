@@ -21,3 +21,9 @@
  (modules transformed_target_parallel_test)
  (package modelkit-parallel)
  (libraries modelkit modelkit-parallel modelkit_test_support alcotest))
+
+(test
+ (name resampling_parallel_test)
+ (modules resampling_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel modelkit_test_support alcotest))
