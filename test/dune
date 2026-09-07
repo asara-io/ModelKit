@@ -170,6 +170,24 @@
    (run %{test}))))
 
 (test
+ (name validation_curve_test)
+ (modules validation_curve_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name validation_curve_fixture_test)
+ (modules validation_curve_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/validation_curve_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_VALIDATION_CURVE_FIXTURE
+   %{dep:fixtures/sklearn/validation_curve_v1.tsv}
+   (run %{test}))))
+
+(test
  (name cross_val_prediction_fixture_test)
  (modules cross_val_prediction_fixture_test)
  (package modelkit)

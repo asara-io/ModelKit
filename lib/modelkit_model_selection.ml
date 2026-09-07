@@ -2677,15 +2677,16 @@ module Grid_search = struct
                                    });
                           })))
 
-  let search ?checkpoint ~return_train_score ~failure_policy ~cross_validate
-      ~scorer_names ~metadata ~policy ~seed grid dataset =
+  let search ?checkpoint ?(operation = "grid-search") ~return_train_score
+      ~failure_policy ~cross_validate ~scorer_names ~metadata ~policy ~seed grid
+      dataset =
     let prepare () =
       let partials = expand grid in
       (Array.length partials, Array.get partials)
     in
     search_candidates ?checkpoint ~return_train_score ~failure_policy
-      ~cross_validate ~scorer_names ~metadata ~policy ~seed
-      ~operation:"grid-search" ~prepare ~build:grid.build dataset
+      ~cross_validate ~scorer_names ~metadata ~policy ~seed ~operation ~prepare
+      ~build:grid.build dataset
 
   module Regression = struct
     type model = Cross_validation.Regression.model
@@ -2794,6 +2795,273 @@ module Grid_search = struct
       search_with_policy ?return_train_score ?failure_policy ?execution
         ?metadata ?checkpoint ~grid ~splitter ~scorers
         ~policy:(Best_score refit) ~seed dataset
+  end
+end
+
+module Validation_curve = struct
+  type ('configuration, 'value, 'target, 'prediction) t = {
+    vc_name : string;
+    vc_values : 'value array;
+    vc_grid : ('configuration, 'target, 'prediction) Grid_search.grid;
+    vc_max_fits : int option;
+  }
+
+  let invalid reason =
+    Error
+      (Error.make
+         ~remediation:
+           "provide a nonempty typed parameter sequence and a positive fit \
+            ceiling"
+         (Error.Validation { name = "validation-curve specification"; reason }))
+
+  let create ?max_fits ~name ~base ~values ~encode ~set ~build () =
+    let ( let* ) = Result.bind in
+    if String.trim name = "" then invalid "parameter name must not be blank"
+    else if Array.length values = 0 then
+      invalid "at least one parameter value is required"
+    else if Option.fold ~none:false ~some:(fun value -> value < 1) max_fits then
+      invalid "max_fits must be positive"
+    else
+      let* axis = Grid_search.axis ~name ~values ~encode ~set in
+      let* grid = Grid_search.create ~base ~build [| axis |] in
+      Ok
+        {
+          vc_name = name;
+          vc_values = Array.copy values;
+          vc_grid = grid;
+          vc_max_fits = max_fits;
+        }
+
+  let parameter_name specification = specification.vc_name
+  let parameter_values specification = Array.copy specification.vc_values
+  let max_fits specification = specification.vc_max_fits
+
+  type ('value, 'model) point = {
+    point_index : int;
+    parameter_value : 'value;
+    parameter : Grid_search.parameter;
+    mean_fit_time : float;
+    mean_score_time : float;
+    scores : Grid_search.score_summary array;
+    evaluation : 'model Cross_validation.report option;
+    build_error : Error.t option;
+  }
+
+  type ('value, 'model) report = {
+    validation_points : ('value, 'model) point array;
+  }
+
+  let copy_point point = { point with scores = Array.copy point.scores }
+  let points report = Array.map copy_point report.validation_points
+
+  let data result =
+    Result.map_error
+      (fun error ->
+        Error.of_data_error
+          ~remediation:"supply aligned rows with positive total sample weight"
+          error)
+      result
+
+  let validate_view dataset metadata view =
+    let ( let* ) = Result.bind in
+    let* _ = Metadata.select metadata view in
+    match Dataset.sample_weight dataset with
+    | None -> Ok ()
+    | Some weight ->
+        Result.map (fun _ -> ()) (data (Sample_weight.select weight view))
+
+  let fit_bound specification folds =
+    let values = Array.length specification.vc_values in
+    if values > max_int / folds then
+      invalid "planned fit count exceeds the integer limit"
+    else
+      let fits = values * folds in
+      match specification.vc_max_fits with
+      | Some maximum when fits > maximum ->
+          invalid
+            (Format.sprintf "planned fit count %d exceeds max_fits %d" fits
+               maximum)
+      | None | Some _ -> Ok ()
+
+  let freeze_splitter ~specification ~splitter ~seed ~metadata dataset =
+    let ( let* ) = Result.bind in
+    let rows = Dataset.sample_count dataset in
+    let* () = Metadata.validate ~rows metadata in
+    let rng =
+      Seed.derive seed ~operation:"cross-validation-splitter" ~index:0
+      |> Rng.create
+    in
+    let* pairs =
+      splitter.Cross_validation.run_splitter ~rng
+        ~groups:(Dataset.groups dataset) ~x:(Dataset.features dataset)
+        ~y:(Dataset.target dataset)
+    in
+    let folds = Array.length pairs in
+    let* () =
+      if folds = 0 then invalid "at least one validation fold is required"
+      else Ok ()
+    in
+    let* () = fit_bound specification folds in
+    let rec validate fold_index =
+      if fold_index = folds then Ok ()
+      else
+        let train, test = pairs.(fold_index) in
+        let checked =
+          let* _ = Split.of_views ~train ~test in
+          let* () =
+            if
+              Row_view.source_size train <> rows
+              || Row_view.source_size test <> rows
+            then invalid "fold source size differs from the dataset"
+            else Ok ()
+          in
+          let* () = validate_view dataset metadata train in
+          validate_view dataset metadata test
+        in
+        let* () =
+          Result.map_error (Error.with_context (Error.Fold fold_index)) checked
+        in
+        validate (fold_index + 1)
+    in
+    let* () = validate 0 in
+    Ok
+      {
+        Cross_validation.run_splitter =
+          (fun ~rng:_ ~groups:_ ~x:_ ~y:_ -> Ok pairs);
+      }
+
+  let of_candidate specification candidate =
+    let parameter = candidate.Grid_search.parameters.(0) in
+    {
+      point_index = candidate.Grid_search.candidate_index;
+      parameter_value =
+        specification.vc_values.(candidate.Grid_search.candidate_index);
+      parameter;
+      mean_fit_time = candidate.Grid_search.mean_fit_time;
+      mean_score_time = candidate.Grid_search.mean_score_time;
+      scores = Array.copy candidate.Grid_search.scores;
+      evaluation = candidate.Grid_search.evaluation;
+      build_error = candidate.Grid_search.build_error;
+    }
+
+  let evaluate ?(return_indices = false)
+      ?(failure_policy = Cross_validation.Record)
+      ?(execution = Execution.sequential) ?metadata ~specification ~splitter
+      ~scorer_names ~scorers ~seed ~cross_validate dataset =
+    let ( let* ) = Result.bind in
+    let metadata =
+      Option.value metadata ~default:(Metadata.of_dataset dataset)
+    in
+    let* () = Cross_validation.validate_scorers scorer_names in
+    let* splitter =
+      freeze_splitter ~specification ~splitter ~seed ~metadata dataset
+    in
+    let cross_validate_candidate ~metadata ~return_train_score ~failure_policy
+        ~fit_seed pipeline dataset =
+      cross_validate ~return_train_score ~return_models:false ~return_indices
+        ~failure_policy ~fit_seed ~execution ~metadata ~splitter ~scorers ~seed
+        pipeline dataset
+    in
+    let* report =
+      Grid_search.search ~operation:"validation-curve" ~return_train_score:true
+        ~failure_policy ~cross_validate:cross_validate_candidate ~scorer_names
+        ~metadata ~policy:Grid_search.No_refit ~seed specification.vc_grid
+        dataset
+    in
+    Ok
+      {
+        validation_points =
+          Grid_search.candidates report
+          |> Array.map (of_candidate specification);
+      }
+
+  module Regression = struct
+    type model = Cross_validation.Regression.model
+
+    let evaluate ?return_indices ?failure_policy ?execution ?metadata
+        ~specification ~splitter ~scorers ~seed dataset =
+      evaluate ?return_indices ?failure_policy ?execution ?metadata
+        ~specification ~splitter
+        ~scorer_names:(Array.map Regression_scorer.name scorers)
+        ~scorers ~seed
+        ~cross_validate:(fun
+            ~return_train_score
+            ~return_models
+            ~return_indices
+            ~failure_policy
+            ~fit_seed
+            ~execution
+            ~metadata
+            ~splitter
+            ~scorers
+            ~seed
+            pipeline
+            dataset
+          ->
+          Cross_validation.Regression.cross_validate ~return_train_score
+            ~return_models ~return_indices ~failure_policy ~fit_seed ~execution
+            ~metadata ~splitter ~scorers ~seed pipeline dataset)
+        dataset
+  end
+
+  module Binary_classification = struct
+    type model = Cross_validation.Binary_classification.model
+
+    let evaluate ?return_indices ?failure_policy ?execution ?metadata
+        ~specification ~splitter ~scorers ~seed dataset =
+      evaluate ?return_indices ?failure_policy ?execution ?metadata
+        ~specification ~splitter
+        ~scorer_names:(Array.map Binary_classification_scorer.name scorers)
+        ~scorers ~seed
+        ~cross_validate:(fun
+            ~return_train_score
+            ~return_models
+            ~return_indices
+            ~failure_policy
+            ~fit_seed
+            ~execution
+            ~metadata
+            ~splitter
+            ~scorers
+            ~seed
+            pipeline
+            dataset
+          ->
+          Cross_validation.Binary_classification.cross_validate
+            ~return_train_score ~return_models ~return_indices ~failure_policy
+            ~fit_seed ~execution ~metadata ~splitter ~scorers ~seed pipeline
+            dataset)
+        dataset
+  end
+
+  module Multiclass_classification = struct
+    type model = Cross_validation.Multiclass_classification.model
+
+    let evaluate ?return_indices ?failure_policy ?execution ?metadata
+        ~specification ~splitter ~scorers ~seed dataset =
+      evaluate ?return_indices ?failure_policy ?execution ?metadata
+        ~specification ~splitter
+        ~scorer_names:(Array.map Multiclass_classification_scorer.name scorers)
+        ~scorers ~seed
+        ~cross_validate:(fun
+            ~return_train_score
+            ~return_models
+            ~return_indices
+            ~failure_policy
+            ~fit_seed
+            ~execution
+            ~metadata
+            ~splitter
+            ~scorers
+            ~seed
+            pipeline
+            dataset
+          ->
+          Cross_validation.Multiclass_classification.cross_validate
+            ~return_train_score ~return_models ~return_indices ~failure_policy
+            ~fit_seed ~execution ~metadata ~splitter ~scorers ~seed pipeline
+            dataset)
+        dataset
   end
 end
 

@@ -58,6 +58,6 @@ val warning_to_string : warning -> string
 
 val execution : t -> Modelkit.Execution.t
 (** [execution configuration] packages this backend for cross-validation,
-    learning-curve, and search calls. *)
+    learning-curve, validation-curve, and search calls. *)
 
 include Modelkit.EXECUTION with type t := t

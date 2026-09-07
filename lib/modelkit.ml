@@ -108,6 +108,7 @@ module Cross_validation = Modelkit_model_selection.Cross_validation
 module Learning_curve = Modelkit_model_selection.Learning_curve
 module Search_checkpoint = Modelkit_model_selection.Search_checkpoint
 module Grid_search = Modelkit_model_selection.Grid_search
+module Validation_curve = Modelkit_model_selection.Validation_curve
 module Artifact = Modelkit_artifact.Artifact
 
 module Transformed_target_regressor =

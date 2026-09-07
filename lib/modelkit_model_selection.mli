@@ -628,6 +628,135 @@ module Grid_search : sig
   end
 end
 
+(** Leakage-safe validation curves over one typed immutable parameter axis.
+
+    A specification retains a base configuration and an ordered, nonempty copy
+    of the caller's typed values. Its setter returns a new configuration for
+    each value, and its builder packages that configuration as a pipeline. The
+    splitter runs exactly once per evaluation; every value is therefore scored
+    on identical folds, with preprocessing and supervised selection fitted only
+    on that value's training partition.
+
+    Values are evaluated sequentially in declaration order. Folds for one value
+    use the supplied bounded {!Execution.t}. Each point retains its original
+    typed value, stable encoded parameter, aggregate scores, timings, and
+    ordinary cross-validation report. Models are not retained or refitted.
+    [Record] is the default failure policy and preserves setter, builder, fold,
+    prediction, and scorer failures; [Abort] returns the first error in value
+    and fold order. *)
+module Validation_curve : sig
+  type ('configuration, 'value, 'target, 'prediction) t
+
+  val create :
+    ?max_fits:int ->
+    name:string ->
+    base:'configuration ->
+    values:'value array ->
+    encode:('value -> Grid_search.parameter_value) ->
+    set:('configuration -> 'value -> ('configuration, Error.t) result) ->
+    build:
+      ('configuration -> (('target, 'prediction) Pipeline.t, Error.t) result) ->
+    unit ->
+    (('configuration, 'value, 'target, 'prediction) t, Error.t) result
+  (** Creates a one-parameter curve specification. [name] must not be blank and
+      [values] must not be empty. Values and configurations must be immutable;
+      [set] must not mutate the supplied base. The values array is copied.
+      [max_fits], when supplied, must be positive and bounds [values * folds]
+      before any setter, builder, or fit runs. *)
+
+  val parameter_name :
+    ('configuration, 'value, 'target, 'prediction) t -> string
+
+  val parameter_values :
+    ('configuration, 'value, 'target, 'prediction) t -> 'value array
+  (** Returns a defensive copy in evaluation order. *)
+
+  val max_fits : ('configuration, 'value, 'target, 'prediction) t -> int option
+
+  type ('value, 'model) point = {
+    point_index : int;
+    parameter_value : 'value;
+    parameter : Grid_search.parameter;
+    mean_fit_time : float;
+    mean_score_time : float;
+    scores : Grid_search.score_summary array;
+    evaluation : 'model Cross_validation.report option;
+    build_error : Error.t option;
+  }
+  (** [evaluation] is absent only when the setter or builder failed. Fold and
+      scorer failures remain inside a present evaluation and its score
+      summaries. Training scores are always requested. Report timings are
+      observational rather than reproducibility guarantees. *)
+
+  type ('value, 'model) report
+
+  val points : ('value, 'model) report -> ('value, 'model) point array
+  (** Returns points and their score arrays as defensive copies. *)
+
+  module Regression : sig
+    type model = Cross_validation.Regression.model
+
+    val evaluate :
+      ?return_indices:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      specification:
+        ( 'configuration,
+          'value,
+          Target.regression Target.t,
+          Target.regression Target.t )
+        t ->
+      splitter:Target.regression Target.t Cross_validation.splitter ->
+      scorers:Regression_scorer.t array ->
+      seed:Seed.t ->
+      Target.regression Dataset.t ->
+      (('value, model) report, Error.t) result
+  end
+
+  module Binary_classification : sig
+    type model = Cross_validation.Binary_classification.model
+
+    val evaluate :
+      ?return_indices:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      specification:
+        ( 'configuration,
+          'value,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        t ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Binary_classification_scorer.t array ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (('value, model) report, Error.t) result
+  end
+
+  module Multiclass_classification : sig
+    type model = Cross_validation.Multiclass_classification.model
+
+    val evaluate :
+      ?return_indices:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      specification:
+        ( 'configuration,
+          'value,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        t ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Multiclass_classification_scorer.t array ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (('value, model) report, Error.t) result
+  end
+end
+
 (** Typed immutable parameter distributions with explicit random streams. *)
 module Parameter_distribution : sig
   type 'a t

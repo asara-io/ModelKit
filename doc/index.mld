@@ -43,11 +43,11 @@ test selections into aligned datasets. Weighted regression and binary
 classification metrics expose higher-is-better scorer specifications, stable
 fold-score aggregation, explicit undefined-result handling, and residual, ROC,
 and precision-recall data without a plotting dependency. Cross-validation,
-learning curves, and search retain stable logical ordering and structured
-failures; optional bounded Domainslib fold execution is supplied by the
-separate [modelkit-parallel] package. Versioned data-only artifacts reconstruct
-fitted built-in pipelines under explicit reader limits and task-specific
-loaders.
+learning and validation curves, and search retain stable logical ordering and
+structured failures; optional bounded Domainslib fold execution is supplied by
+the separate [modelkit-parallel] package. Versioned data-only artifacts
+reconstruct fitted built-in pipelines under explicit reader limits and
+task-specific loaders.
 Portable tests consume committed scikit-learn reference data without requiring
 Python during a normal build or test run.
 
@@ -870,13 +870,14 @@ code. This wrapper has no artifact codec; attempted persistence fails explicitly
 
 {2 Evaluation metadata and callbacks}
 
-CV and grid search default to {!Modelkit.Metadata.of_dataset}: dataset weights
-and groups follow the same row selections as features and targets for fitting
-and prediction. Full-data refit receives the complete metadata carrier. An
-explicit [~metadata] replaces this default without merging fields. This allows
-consumer weights or groups to differ from scoring weights or splitter groups:
-scorers and splitters continue using the dataset's own fields. Every supplied
-row-aligned field is validated against the full dataset before evaluation.
+CV, learning and validation curves, and search default to
+{!Modelkit.Metadata.of_dataset}: dataset weights and groups follow the same row
+selections as features and targets for fitting and prediction. Full-data refit
+receives the complete metadata carrier. An explicit [~metadata] replaces this
+default without merging fields. This allows consumer weights or groups to
+differ from scoring weights or splitter groups: scorers and splitters continue
+using the dataset's own fields. Every supplied row-aligned field is validated
+against the full dataset before evaluation.
 
 Add a {!Modelkit.Callback.t} with [Metadata.of_dataset ~callback dataset] to
 observe evaluation, candidates, folds, and refit. Metadata-aware consumers opt
@@ -1040,6 +1041,63 @@ is represented by its typed fold failure. [Record] is the default and continues
 to later sizes. [Abort] stops at the first failing fold and adds the resolved
 training size to the error context. Timings remain observational and are not a
 reproducibility guarantee.
+
+{1 Validation curves}
+
+{!Modelkit.Validation_curve} measures how one parameter changes train and
+validation scores. Its specification copies an ordered, nonempty typed value
+array and retains an immutable base configuration. A pure encoder supplies the
+stable {!type:Modelkit.Grid_search.parameter_value} used in reports; a setter
+returns a new configuration for each original typed value, and a builder
+packages that configuration as a pipeline. Values themselves must be immutable.
+
+The splitter runs once, and every value uses the exact same train/test row
+views. Pipeline construction and fold fitting remain independent for each
+value, so all preprocessing and supervised selection is learned only from the
+corresponding training fold. Unlike grid search, a validation curve neither
+ranks values nor selects or refits a winner.
+
+{@ocaml[
+# let validation_specification = Validation_curve.create ~max_fits:6
+      ~name:"fit_intercept" ~base:true ~values:[|true; false|]
+      ~encode:(fun value -> Grid_search.Bool value)
+      ~set:(fun _ value -> Ok value)
+      ~build:(fun fit_intercept ->
+        match Pipeline.estimator ~name:"linear" (module Linear_regression)
+                (Linear_regression.create ~fit_intercept ()) with
+        | Error error -> Error error
+        | Ok estimator -> Pipeline.set_estimator Pipeline.empty estimator) ()
+      |> Result.get_ok in
+  let validation_report = Validation_curve.Regression.evaluate
+      ~return_indices:true ~specification:validation_specification
+      ~splitter:oof_splitter
+      ~scorers:[|Regression_scorer.neg_mean_absolute_error;
+                 Regression_scorer.r2 ()|]
+      ~seed:(Seed.of_int 42) oof_data |> Result.get_ok in
+  Array.map
+      (fun point ->
+        (point.Validation_curve.parameter_value,
+         Option.map Cross_validation.successful_fold_count
+           point.Validation_curve.evaluation))
+      (Validation_curve.points validation_report);;
+- : (bool * int option) array = [|(true, Some 3); (false, Some 3)|]
+]}
+
+Each point retains its original typed value, encoded parameter, mean fit and
+score times, aggregate results for every scorer, and an ordinary CV report with
+train scores enabled. Optional indices make shared fold membership auditable;
+fitted fold models are always omitted. The point and score arrays returned by
+accessors are defensive copies. An optional [max_fits] bounds [values * folds]
+before any setter, builder, or fit runs.
+
+Values run sequentially in declaration order, while folds within one value use
+the supplied bounded {!Modelkit.Execution.t}. [Record] retains setter and builder
+errors as points without evaluations and retains fitting, prediction, and
+scoring failures inside present CV reports. [Abort] returns the first failure in
+value and fold order. Callback events use the existing search, candidate, and
+cross-validation lifecycle with candidate indices equal to point indices.
+Metadata routing, weights, deterministic logical seeds, cancellation, and
+callback bounds otherwise retain their existing CV/search contracts.
 
 {1 Randomized search and selection policies}
 

@@ -2294,6 +2294,91 @@ def generate_learning_curve_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_validation_curve_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.linear_model import Ridge
+    from sklearn.model_selection import KFold, validation_curve
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    raw = np.arange(-4.0, 11.0)
+    x = np.column_stack((raw, raw * raw))
+    y = np.array(
+        [
+            15.2,
+            9.1,
+            5.4,
+            2.8,
+            1.2,
+            0.7,
+            1.5,
+            3.4,
+            6.8,
+            11.1,
+            16.9,
+            23.7,
+            31.8,
+            41.0,
+            51.6,
+        ]
+    )
+    alphas = np.array([0.0, 0.5, 5.0])
+    estimator = Pipeline(
+        [
+            ("scale", StandardScaler()),
+            ("ridge", Ridge(fit_intercept=True, solver="svd")),
+        ]
+    )
+    train_scores, test_scores = validation_curve(
+        estimator,
+        x,
+        y,
+        param_name="ridge__alpha",
+        param_range=alphas,
+        cv=KFold(n_splits=3, shuffle=False),
+        scoring="neg_mean_squared_error",
+    )
+    rows = ["# ModelKit sklearn validation-curve fixture v1"]
+    rows.append("feature_0\t" + float_values(x[:, 0]))
+    rows.append("feature_1\t" + float_values(x[:, 1]))
+    rows.append("target\t" + float_values(y))
+    rows.append("alphas\t" + float_values(alphas))
+    for point, scores in enumerate(train_scores):
+        rows.append(f"train_scores_{point}\t{float_values(scores)}")
+    for point, scores in enumerate(test_scores):
+        rows.append(f"test_scores_{point}\t{float_values(scores)}")
+    (fixture_dir / "validation_curve_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {
+            "absolute_tolerance": 1e-7,
+            "alphas": alphas.tolist(),
+            "folds": 3,
+            "ridge_solver": "svd",
+            "scoring": "neg_mean_squared_error",
+            "shuffle": False,
+            "standard_scaling": True,
+        },
+        "comparison": "Per-alpha, per-fold train/test scores over one shared KFold partition with fold-local standard scaling.",
+        "environment": environment.metadata(),
+        "fixture": "validation_curve_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "schema_version": 1,
+        "references": [
+            "sklearn.model_selection.validation_curve",
+            "sklearn.linear_model.Ridge",
+            "sklearn.preprocessing.StandardScaler",
+        ],
+    }
+    (fixture_dir / "validation_curve_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
@@ -2305,6 +2390,7 @@ def main() -> None:
     generate_randomized_search_fixture(fixture_dir)
     generate_cross_val_prediction_fixture(fixture_dir)
     generate_learning_curve_fixture(fixture_dir)
+    generate_validation_curve_fixture(fixture_dir)
     generate_metrics_fixture(fixture_dir)
     generate_preprocessing_fixture(fixture_dir)
     generate_transform_fixture(fixture_dir)
