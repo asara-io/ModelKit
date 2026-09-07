@@ -1,0 +1,14 @@
+# ModelKit sklearn randomized search reference fixture v1
+x	1,2,3,4,5,6,7,8,9,10,11,12
+y	3,6,6,10,11,14,14,18,19,22,22,26
+test_x	0,13
+no_intercept_train_neg_mean_squared_error	-0.93946492575524809
+no_intercept_test_neg_mean_squared_error	-1.411665544319922
+no_intercept_train_neg_mean_absolute_error	-0.82804960693955021
+no_intercept_test_neg_mean_absolute_error	-1.0209903316165174
+intercept_train_neg_mean_squared_error	-0.6852139406487231
+intercept_test_neg_mean_squared_error	-0.69702761381805456
+intercept_train_neg_mean_absolute_error	-0.74085576259489283
+intercept_test_neg_mean_absolute_error	-0.74085576259489283
+selected_intercept	1
+prediction	1.1818181818181888,27.318181818181813

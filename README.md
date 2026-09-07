@@ -27,7 +27,7 @@ The full documentation is available via: [https://ocaml.org/p/modelkit/latest/do
 - Deterministic K-fold, stratified and repeated K-fold, shuffle and stratified-shuffle, holdout, group and stratified-group K-fold, predefined, leave-one-out/group-out, and expanding-window time-series splitters produce validated row views; train/test helpers materialize aligned features, targets, weights, and groups.
 - Weighted regression, binary, multiclass, and ranking metrics provide immutable higher-is-better scorers, plotting-neutral residual, ROC, and precision–recall data, stable score aggregation, and an explicit undefined-result policy.
 - Cross-validation fits pipelines within deterministic folds and reports ordered train/test scores, CPU timings, optional fitted models and indices, and typed failures; the optional `modelkit-parallel` package adds bounded Domainslib fold execution.
-- Typed finite grid search evaluates immutable pipeline configurations on shared deterministic splits, ranks candidates by a named scorer, records candidate failures, and refits the selected model on all training data.
+- Typed grid and randomized search evaluate immutable configurations on shared deterministic splits, support named-score or custom multi-metric selection and optional refitting, and retain candidate failures.
 - Versioned data-only artifacts save and load fitted built-in regression and binary-classification pipelines with feature-schema identity, bounded readers, and corruption detection.
 
 ## Motivation and Future Work

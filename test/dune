@@ -7,7 +7,8 @@
   evaluation_metadata_support
   transformed_target_support
   resampling_support
-  partitioning_support)
+  partitioning_support
+  randomized_search_support)
  (libraries modelkit alcotest))
 
 (test
@@ -445,4 +446,22 @@
   (setenv
    MODELKIT_PARTITIONING_FIXTURE
    %{dep:fixtures/sklearn/partitioning_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name randomized_search_test)
+ (modules randomized_search_test)
+ (package modelkit)
+ (libraries modelkit modelkit_test_support alcotest))
+
+(test
+ (name randomized_search_fixture_test)
+ (modules randomized_search_fixture_test)
+ (package modelkit)
+ (libraries modelkit modelkit_test_support alcotest)
+ (deps fixtures/sklearn/randomized_search_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_RANDOMIZED_FIXTURE
+   %{dep:fixtures/sklearn/randomized_search_v1.tsv}
    (run %{test}))))

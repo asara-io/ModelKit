@@ -925,6 +925,92 @@ ordinary failure. Events contain logical identities and nested stage paths,
 not timestamps, training observations, or fitted models. Reports retain the
 existing fit/score timing and failure details.
 
+{1 Randomized search and selection policies}
+
+{!Modelkit.Parameter_distribution} supplies typed finite choices, uniform,
+log-uniform, and integer-uniform draws, plus custom samplers receiving explicit
+RNG state. Bounds are lower-inclusive and upper-exclusive. Float bounds must
+be finite, and log-uniform bounds must be positive. Specifications, values,
+setters, encoders, and custom samplers follow the library's immutability and
+explicit-random-state contracts.
+
+{!Modelkit.Randomized_search} shares grid search's fold evaluation, metadata
+routing, callback delivery, failure policies, and full-data refitting. Each
+candidate uses identical split membership. Sampling and fitting derive
+separate deterministic streams from logical identities. The candidate order
+and sampled prefix remain reproducible across execution backends; NumPy's
+random sequence is not a compatibility contract.
+
+Choice-only spaces sample Cartesian positions without replacement and cap
+iterations at the available product size. Duplicate values can still yield
+equal configurations. If any axis uses a distribution, all axes sample with
+replacement. Finite products must fit an OCaml integer, but sampling avoids
+expanding that product: storage grows with the requested sample count. The
+default is ten iterations, and an empty axis list evaluates the base once.
+
+{@ocaml[
+# let intercept_axis = Randomized_search.axis ~name:"fit_intercept"
+    ~distribution:(Parameter_distribution.choice [|false; true|] |> Result.get_ok)
+    ~encode:(fun value -> Grid_search.Bool value)
+    ~set:(fun _ value -> Ok value) |> Result.get_ok;;
+val intercept_axis : bool Randomized_search.axis = <abstr>
+# let random_space = Randomized_search.create ~iterations:10 ~base:true
+    ~build:(fun fit_intercept ->
+      match Pipeline.estimator ~name:"linear" (module Linear_regression)
+              (Linear_regression.create ~fit_intercept ()) with
+      | Error error -> Error error
+      | Ok estimator -> Pipeline.set_estimator Pipeline.empty estimator)
+    [|intercept_axis|] |> Result.get_ok;;
+...
+# Randomized_search.candidate_count random_space;;
+- : int = 2
+# let preview = Randomized_search.sample ~seed:(Seed.of_int 1729) random_space;;
+...
+# Array.length preview = 2
+    && Array.for_all (fun candidate ->
+      Result.is_ok candidate.Randomized_search.sampled_configuration) preview;;
+- : bool = true
+]}
+
+[Randomized_search.sample] previews encoded parameters and typed configurations
+without building or fitting pipelines. Ordinary sampler/setter errors retain
+candidate and axis context and become candidate build failures under [Record].
+Failed draws omit the corresponding encoded parameter. User exceptions
+propagate. During search, sampling happens inside candidate callbacks, so
+cancellation prevents later candidates from drawing or fitting; a control
+error also stops remaining draws within the current candidate.
+
+The existing [search ~refit:"scorer_name"] entry points retain their behavior.
+Both search modules also expose [search_with_policy ~policy] for each task
+family, with policies from {!Modelkit.Grid_search.refit_policy}:
+
+- [Best_score name] ranks by that scorer and refits the winner, preserving
+  lowest-index tie breaking.
+- [No_refit] returns candidate reports without selecting or fitting a winner.
+  Ranks remain unset, and [refit_result report] returns [Ok None]. With [Record],
+  inspect candidate failures even when no refit was requested: all candidates
+  may have failed. A completed no-refit report is a successful search callback
+  outcome; candidate events still report their own failures.
+- [Custom select] passes copied candidate arrays to a selector returning an
+  array index. The selector can combine metrics, enforce score constraints,
+  and inspect parameters. The chosen candidate must have built and have at
+  least one successful test-score aggregate; the selector is responsible for
+  any additional metric requirements. Ranks remain unset. Avoid timing-based
+  choices when execution-independent reproducibility matters.
+
+For example, [Grid_search.Custom (fun candidates -> ...)] can select the least
+complex configuration among candidates satisfying a validation-score threshold.
+Selectors run once on the calling domain after candidate evaluation. Their
+returned errors follow [Record] or [Abort], while control errors always abort;
+exceptions propagate. Invalid indices or ineligible candidates produce typed
+selection failures. The selected pipeline fits once on the complete dataset
+with the original aligned metadata.
+
+[refit_result] distinguishes [Ok None] from [Ok (Some selected)] and [Error e].
+The existing [selection] accessor returns a fitted winner, or a typed error
+when refitting was disabled or selection/refitting failed. Sampler and selector
+failures remain reviewable without silently substituting a different winner.
+
 {1 Resampling and aligned train/test data}
 
 {!Modelkit.Shuffle_split} draws independent random train/test partitions;

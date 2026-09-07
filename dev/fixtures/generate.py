@@ -2113,6 +2113,53 @@ def generate_partitioning_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_randomized_search_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.linear_model import LinearRegression
+    from sklearn.model_selection import KFold, RandomizedSearchCV
+
+    x = np.arange(1., 13.)[:, None]
+    y = np.array([3., 6., 6., 10., 11., 14., 14., 18., 19., 22., 22., 26.])
+    model = RandomizedSearchCV(
+        LinearRegression(), {"fit_intercept": [False, True]}, n_iter=2,
+        cv=KFold(n_splits=3), random_state=19,
+        scoring=["neg_mean_squared_error", "neg_mean_absolute_error"],
+        refit="neg_mean_squared_error", return_train_score=True,
+    ).fit(x, y)
+    rows = ["# ModelKit sklearn randomized search reference fixture v1"]
+
+    def add(name, values):
+        rows.append(f"{name}\t{float_values(values)}")
+
+    add("x", x[:, 0])
+    add("y", y)
+    add("test_x", [0., 13.])
+    for index, parameters in enumerate(model.cv_results_["params"]):
+        label = "intercept" if parameters["fit_intercept"] else "no_intercept"
+        for metric in ["neg_mean_squared_error", "neg_mean_absolute_error"]:
+            for partition in ["train", "test"]:
+                add(f"{label}_{partition}_{metric}",
+                    [model.cv_results_[f"mean_{partition}_{metric}"][index]])
+    add("selected_intercept", [int(model.best_params_["fit_intercept"])])
+    add("prediction", model.predict(np.array([[0.], [13.]])))
+    (fixture_dir / "randomized_search_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {"random_state": 19, "folds": 3, "iterations": 2,
+                          "fit_intercept": [False, True], "absolute_tolerance": 1e-10},
+        "comparison": "Complete finite candidate set compared by parameter value, train/test means, named selection and full-data refit predictions; candidate order is RNG-specific.",
+        "environment": environment.metadata(), "fixture": "randomized_search_v1",
+        "generator": "dev/fixtures/generate.py", "license": "Apache-2.0",
+        "schema_version": 1,
+        "references": ["sklearn.model_selection.RandomizedSearchCV",
+                       "sklearn.linear_model.LinearRegression"],
+    }
+    (fixture_dir / "randomized_search_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
@@ -2121,6 +2168,7 @@ def main() -> None:
     generate_splitter_fixture(fixture_dir)
     generate_resampling_fixture(fixture_dir)
     generate_partitioning_fixture(fixture_dir)
+    generate_randomized_search_fixture(fixture_dir)
     generate_metrics_fixture(fixture_dir)
     generate_preprocessing_fixture(fixture_dir)
     generate_transform_fixture(fixture_dir)

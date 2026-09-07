@@ -821,6 +821,11 @@ module Grid_search = struct
     build_error : Error.t option;
   }
 
+  type 'model refit_policy =
+    | No_refit
+    | Best_score of string
+    | Custom of ('model candidate array -> (int, Error.t) result)
+
   type 'model selected = {
     selected_candidate_index : int;
     selected_model : 'model;
@@ -828,7 +833,7 @@ module Grid_search = struct
 
   type 'model report = {
     report_candidates : 'model candidate array;
-    report_selection : ('model selected, Error.t) result;
+    report_selection : ('model selected option, Error.t) result;
   }
 
   type 'configuration partial = {
@@ -888,7 +893,16 @@ module Grid_search = struct
     }
 
   let candidates report = Array.map copy_candidate report.report_candidates
-  let selection report = report.report_selection
+  let refit_result report = report.report_selection
+
+  let selection report =
+    match report.report_selection with
+    | Ok (Some selected) -> Ok selected
+    | Error error -> Error error
+    | Ok None ->
+        Error
+          (validation ~name:"search selection" ~reason:"refitting was disabled"
+             ~remediation:"inspect candidate reports or run with a refit policy")
 
   let expand_axis partial (Axis axis) =
     Array.to_list axis.values
@@ -921,7 +935,7 @@ module Grid_search = struct
     | _ -> Error.with_context (Error.Candidate candidate) error
 
   let missing_score candidate scorer partition =
-    validation ~name:"grid-search score"
+    validation ~name:"search score"
       ~reason:(Format.sprintf "%s score %S is unavailable" partition scorer)
       ~remediation:"inspect the candidate's fold failures"
     |> with_candidate candidate
@@ -988,7 +1002,7 @@ module Grid_search = struct
     let rec find index =
       if index = Array.length scorer_names then
         Error
-          (validation ~name:"grid-search refit scorer"
+          (validation ~name:"search refit scorer"
              ~reason:(Format.sprintf "scorer %S was not provided" refit)
              ~remediation:"choose one of the configured scorer names")
       else if String.equal scorer_names.(index) refit then Ok index
@@ -1032,10 +1046,18 @@ module Grid_search = struct
         candidates,
       if Array.length eligible = 0 then None else Some (fst eligible.(0)) )
 
-  let search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
-      ~metadata ~refit ~seed grid dataset =
+  let search_candidates ~return_train_score ~failure_policy ~cross_validate
+      ~scorer_names ~metadata ~policy ~seed ~operation ~prepare ~build dataset =
     let ( let* ) = Result.bind in
-    let* primary = validate_refit scorer_names refit in
+    let* primary =
+      match policy with
+      | Best_score refit ->
+          Result.map Option.some (validate_refit scorer_names refit)
+      | No_refit | Custom _ ->
+          Result.map
+            (fun () -> None)
+            (Cross_validation.validate_scorers scorer_names)
+    in
     let* () = Metadata.validate ~rows:(Dataset.sample_count dataset) metadata in
     Callback.run
       ~outcome:(fun report ->
@@ -1045,8 +1067,8 @@ module Grid_search = struct
       (Metadata.callback metadata)
       ~operation:Callback.Search
       (fun () ->
-        let partials = expand grid in
-        let pipelines = Array.make grid.candidate_count None in
+        let count, partial_at = prepare () in
+        let pipelines = Array.make count None in
         let evaluate_candidate candidate_index =
           let candidate_metadata =
             Metadata.scope (Error.Candidate candidate_index) metadata
@@ -1068,14 +1090,14 @@ module Grid_search = struct
             (Metadata.callback candidate_metadata)
             ~operation:Callback.Candidate
             (fun () ->
-              let partial = partials.(candidate_index) in
+              let partial = partial_at candidate_index in
               let parameters =
                 partial.reversed_parameters |> List.rev |> Array.of_list
               in
               let built =
                 match partial.configuration with
                 | Error error -> Error error
-                | Ok configuration -> grid.build configuration
+                | Ok configuration -> build configuration
               in
               match built with
               | Error error ->
@@ -1103,7 +1125,7 @@ module Grid_search = struct
               | Ok pipeline ->
                   pipelines.(candidate_index) <- Some pipeline;
                   let fit_seed =
-                    Seed.derive seed ~operation:"grid-search-candidate"
+                    Seed.derive seed ~operation:(operation ^ "-candidate")
                       ~index:candidate_index
                   in
                   let* evaluation =
@@ -1136,78 +1158,119 @@ module Grid_search = struct
           |> Result.map_error (with_candidate candidate_index)
         in
         let rec evaluate candidate_index reversed =
-          if candidate_index = Array.length partials then
-            Ok (Array.of_list (List.rev reversed))
+          if candidate_index = count then Ok (Array.of_list (List.rev reversed))
           else
             let* candidate = evaluate_candidate candidate_index in
             evaluate (candidate_index + 1) (candidate :: reversed)
         in
         let* evaluated = evaluate 0 [] in
-        let ranked, best = rank_candidates primary evaluated in
-        let unavailable () =
-          validation ~name:"grid-search selection"
-            ~reason:"no candidate produced an aggregatable primary test score"
-            ~remediation:"inspect candidate build, fold, and scorer failures"
+        let ranked, best =
+          match primary with
+          | Some primary -> rank_candidates primary evaluated
+          | None -> (evaluated, None)
         in
-        match best with
-        | None ->
-            Ok
-              {
-                report_candidates = ranked;
-                report_selection = Error (unavailable ());
-              }
-        | Some candidate_index -> (
-            match pipelines.(candidate_index) with
-            | None -> assert false
-            | Some pipeline -> (
-                let refit_seed =
-                  Seed.derive seed ~operation:"grid-search-refit"
-                    ~index:candidate_index
-                  |> Rng.create
-                in
-                let refit_metadata =
-                  Metadata.scope (Error.Candidate candidate_index) metadata
-                in
-                let refitted =
-                  Callback.run (Metadata.callback refit_metadata)
-                    ~operation:Callback.Refit (fun () ->
-                      Pipeline.fit_with_metadata (Pipeline.clone pipeline)
-                        ~metadata:refit_metadata ~rng:refit_seed
-                        ~feature_schema:(Dataset.feature_schema dataset)
-                        ~x:(Dataset.features dataset)
-                        ~y:(Dataset.target dataset) ())
-                  |> Result.map_error (with_candidate candidate_index)
-                in
-                match (failure_policy, refitted) with
-                | _, Error error when Callback.is_control_error error ->
-                    Error error
-                | Cross_validation.Abort, Error error -> Error error
-                | (Cross_validation.Abort | Cross_validation.Record), Ok model
-                  ->
-                    Ok
-                      {
-                        report_candidates = ranked;
-                        report_selection =
-                          Ok
-                            {
-                              selected_candidate_index = candidate_index;
-                              selected_model = model;
-                            };
-                      }
-                | Cross_validation.Record, Error error ->
-                    Ok
-                      {
-                        report_candidates = ranked;
-                        report_selection = Error error;
-                      })))
+        let failure error =
+          if
+            failure_policy = Cross_validation.Abort
+            || Callback.is_control_error error
+          then Error error
+          else Ok { report_candidates = ranked; report_selection = Error error }
+        in
+        let invalid reason =
+          validation ~name:"search selection" ~reason
+            ~remediation:
+              "choose a built candidate with at least one successful \
+               test-score aggregate"
+        in
+        let chosen =
+          match policy with
+          | No_refit -> Ok None
+          | Best_score _ -> (
+              match best with
+              | Some index -> Ok (Some index)
+              | None ->
+                  Error
+                    (invalid
+                       "no candidate produced an aggregatable primary test \
+                        score"))
+          | Custom select ->
+              Result.map Option.some (select (Array.map copy_candidate ranked))
+        in
+        match chosen with
+        | Error error -> failure error
+        | Ok None ->
+            Ok { report_candidates = ranked; report_selection = Ok None }
+        | Ok (Some candidate_index) -> (
+            if candidate_index < 0 || candidate_index >= count then
+              failure
+                (invalid "selector returned an out-of-range candidate index")
+            else if
+              not
+                (Array.exists
+                   (fun score -> Result.is_ok score.test)
+                   ranked.(candidate_index).scores)
+            then
+              failure
+                (invalid
+                   "selected candidate has no successful test-score aggregate"
+                |> with_candidate candidate_index)
+            else
+              match pipelines.(candidate_index) with
+              | None ->
+                  failure
+                    (invalid "selected candidate did not build"
+                    |> with_candidate candidate_index)
+              | Some pipeline -> (
+                  let refit_seed =
+                    Seed.derive seed ~operation:(operation ^ "-refit")
+                      ~index:candidate_index
+                    |> Rng.create
+                  in
+                  let refit_metadata =
+                    Metadata.scope (Error.Candidate candidate_index) metadata
+                  in
+                  let refitted =
+                    Callback.run (Metadata.callback refit_metadata)
+                      ~operation:Callback.Refit (fun () ->
+                        Pipeline.fit_with_metadata (Pipeline.clone pipeline)
+                          ~metadata:refit_metadata ~rng:refit_seed
+                          ~feature_schema:(Dataset.feature_schema dataset)
+                          ~x:(Dataset.features dataset)
+                          ~y:(Dataset.target dataset) ())
+                    |> Result.map_error (with_candidate candidate_index)
+                  in
+                  match refitted with
+                  | Error error -> failure error
+                  | Ok model ->
+                      Ok
+                        {
+                          report_candidates = ranked;
+                          report_selection =
+                            Ok
+                              (Some
+                                 {
+                                   selected_candidate_index = candidate_index;
+                                   selected_model = model;
+                                 });
+                        })))
+
+  let search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
+      ~metadata ~policy ~seed grid dataset =
+    let prepare () =
+      let partials = expand grid in
+      (Array.length partials, Array.get partials)
+    in
+    search_candidates ~return_train_score ~failure_policy ~cross_validate
+      ~scorer_names ~metadata ~policy ~seed ~operation:"grid-search" ~prepare
+      ~build:grid.build dataset
 
   module Regression = struct
     type model = Cross_validation.Regression.model
 
-    let search ?(return_train_score = false)
+    let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
         ?(execution = Execution.sequential) ?metadata ~grid ~splitter ~scorers
-        ~refit ~seed dataset =
+        ~policy ~seed dataset =
       let metadata =
         match metadata with
         | Some metadata -> metadata
@@ -1221,16 +1284,22 @@ module Grid_search = struct
           ~seed pipeline dataset
       in
       search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
-        ~metadata ~refit ~seed grid dataset
+        ~metadata ~policy ~seed grid dataset
+
+    let search ?return_train_score ?failure_policy ?execution ?metadata ~grid
+        ~splitter ~scorers ~refit ~seed dataset =
+      search_with_policy ?return_train_score ?failure_policy ?execution
+        ?metadata ~grid ~splitter ~scorers ~policy:(Best_score refit) ~seed
+        dataset
   end
 
   module Binary_classification = struct
     type model = Cross_validation.Binary_classification.model
 
-    let search ?(return_train_score = false)
+    let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
         ?(execution = Execution.sequential) ?metadata ~grid ~splitter ~scorers
-        ~refit ~seed dataset =
+        ~policy ~seed dataset =
       let metadata =
         match metadata with
         | Some metadata -> metadata
@@ -1244,16 +1313,22 @@ module Grid_search = struct
           ~splitter ~scorers ~seed pipeline dataset
       in
       search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
-        ~metadata ~refit ~seed grid dataset
+        ~metadata ~policy ~seed grid dataset
+
+    let search ?return_train_score ?failure_policy ?execution ?metadata ~grid
+        ~splitter ~scorers ~refit ~seed dataset =
+      search_with_policy ?return_train_score ?failure_policy ?execution
+        ?metadata ~grid ~splitter ~scorers ~policy:(Best_score refit) ~seed
+        dataset
   end
 
   module Multiclass_classification = struct
     type model = Cross_validation.Multiclass_classification.model
 
-    let search ?(return_train_score = false)
+    let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
         ?(execution = Execution.sequential) ?metadata ~grid ~splitter ~scorers
-        ~refit ~seed dataset =
+        ~policy ~seed dataset =
       let metadata =
         match metadata with
         | Some metadata -> metadata
@@ -1269,6 +1344,400 @@ module Grid_search = struct
           ~splitter ~scorers ~seed pipeline dataset
       in
       search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
-        ~metadata ~refit ~seed grid dataset
+        ~metadata ~policy ~seed grid dataset
+
+    let search ?return_train_score ?failure_policy ?execution ?metadata ~grid
+        ~splitter ~scorers ~refit ~seed dataset =
+      search_with_policy ?return_train_score ?failure_policy ?execution
+        ?metadata ~grid ~splitter ~scorers ~policy:(Best_score refit) ~seed
+        dataset
+  end
+end
+
+module Parameter_distribution = struct
+  type 'a t = Choices of 'a array | Sample of (Rng.t -> ('a, Error.t) result)
+
+  let invalid reason =
+    Error
+      (Error.make
+         (Error.Validation { name = "parameter distribution"; reason })
+         ~remediation:
+           "supply nonempty immutable choices or finite ordered distribution \
+            bounds")
+
+  let choice values =
+    if Array.length values = 0 then invalid "choices must not be empty"
+    else Ok (Choices (Array.copy values))
+
+  let custom sampler = Sample sampler
+
+  let rec bounded rng bound =
+    let bits, next = Rng.next_int64 rng in
+    let draw = Int64.shift_right_logical bits 1 in
+    let limit = Int64.sub Int64.max_int (Int64.rem Int64.max_int bound) in
+    if draw >= limit then bounded next bound else (Int64.rem draw bound, next)
+
+  let sample ~rng = function
+    | Choices values ->
+        let index, _ = bounded rng (Int64.of_int (Array.length values)) in
+        Ok values.(Int64.to_int index)
+    | Sample draw -> draw rng
+
+  let uniform ~low ~high () =
+    if not (Float.is_finite low && Float.is_finite high && low < high) then
+      invalid "uniform bounds must be finite with low < high"
+    else
+      Ok
+        (Sample
+           (fun rng ->
+             let u, _ = Rng.next_float rng in
+             let value = ((1. -. u) *. low) +. (u *. high) in
+             Ok (max low (min (Float.next_after high neg_infinity) value))))
+
+  let log_uniform ~low ~high () =
+    if
+      not (Float.is_finite low && Float.is_finite high && low > 0. && low < high)
+    then
+      invalid "log-uniform bounds must be positive and finite with low < high"
+    else
+      Ok
+        (Sample
+           (fun rng ->
+             let u, _ = Rng.next_float rng in
+             let value = exp (((1. -. u) *. log low) +. (u *. log high)) in
+             Ok (max low (min (Float.next_after high neg_infinity) value))))
+
+  let int_uniform ~low ~high () =
+    if low >= high then invalid "integer bounds require low < high"
+    else
+      Ok
+        (Sample
+           (fun rng ->
+             let lower = Int64.of_int low in
+             let width = Int64.sub (Int64.of_int high) lower in
+             let offset, _ = bounded rng width in
+             Ok (Int64.to_int (Int64.add lower offset))))
+end
+
+module Randomized_search = struct
+  type 'configuration axis =
+    | Axis : {
+        sample_name : string;
+        distribution : 'value Parameter_distribution.t;
+        sample_encode : 'value -> Grid_search.parameter_value;
+        sample_set :
+          'configuration -> 'value -> ('configuration, Error.t) result;
+      }
+        -> 'configuration axis
+
+  type ('configuration, 'target, 'prediction) space = {
+    sample_base : 'configuration;
+    sample_build :
+      'configuration -> (('target, 'prediction) Pipeline.t, Error.t) result;
+    sample_axes : 'configuration axis array;
+    sample_count : int;
+    finite_count : int option;
+  }
+
+  type 'configuration sampled_candidate = {
+    sampled_parameters : Grid_search.parameter array;
+    sampled_configuration : ('configuration, Error.t) result;
+  }
+
+  type 'model report = 'model Grid_search.report
+
+  let candidates = Grid_search.candidates
+  let selection = Grid_search.selection
+  let refit_result = Grid_search.refit_result
+
+  let invalid reason =
+    Error
+      (Error.make
+         (Error.Validation { name = "randomized search"; reason })
+         ~remediation:
+           "use unique parameter names, positive iterations, and a finite \
+            choice product that fits an OCaml integer")
+
+  let axis ~name ~distribution ~encode ~set =
+    if String.trim name = "" then invalid "parameter names must not be blank"
+    else
+      Ok
+        (Axis
+           {
+             sample_name = name;
+             distribution;
+             sample_encode = encode;
+             sample_set = set;
+           })
+
+  let create ?(iterations = 10) ~base ~build axes =
+    let ( let* ) = Result.bind in
+    let* () =
+      if iterations > 0 && iterations <= Sys.max_array_length then Ok ()
+      else invalid "iteration count must be positive and fit an array"
+    in
+    let seen = Hashtbl.create (Array.length axes) in
+    let rec names i =
+      if i = Array.length axes then Ok ()
+      else
+        let (Axis axis) = axes.(i) in
+        if Hashtbl.mem seen axis.sample_name then
+          invalid ("duplicate parameter name: " ^ axis.sample_name)
+        else (
+          Hashtbl.add seen axis.sample_name ();
+          names (i + 1))
+    in
+    let* () = names 0 in
+    let finite =
+      Array.for_all
+        (fun (Axis axis) ->
+          match axis.distribution with
+          | Parameter_distribution.Choices _ -> true
+          | Parameter_distribution.Sample _ -> false)
+        axes
+    in
+    let* finite_count =
+      if not finite then Ok None
+      else
+        Array.fold_left
+          (fun result (Axis axis) ->
+            let* count = result in
+            match axis.distribution with
+            | Parameter_distribution.Sample _ -> assert false
+            | Parameter_distribution.Choices values ->
+                if count > max_int / Array.length values then
+                  invalid "finite choice product exceeds the integer limit"
+                else Ok (count * Array.length values))
+          (Ok 1) axes
+        |> Result.map Option.some
+    in
+    let sample_count =
+      Option.fold ~none:iterations ~some:(min iterations) finite_count
+    in
+    Ok
+      {
+        sample_base = base;
+        sample_build = build;
+        sample_axes = Array.copy axes;
+        sample_count;
+        finite_count;
+      }
+
+  let candidate_count space = space.sample_count
+
+  let prepare ~seed space =
+    let index_at =
+      Option.map
+        (fun total ->
+          let swaps = Hashtbl.create space.sample_count in
+          let indices = Array.make space.sample_count 0 in
+          let generated = ref 0 in
+          let rng =
+            ref
+              (Rng.create
+                 (Seed.derive seed ~operation:"randomized-search-choices"
+                    ~index:0))
+          in
+          fun index ->
+            while !generated <= index do
+              let remaining = total - !generated in
+              let value, next =
+                Parameter_distribution.bounded !rng (Int64.of_int remaining)
+              in
+              rng := next;
+              let position = Int64.to_int value in
+              let at index =
+                Option.value (Hashtbl.find_opt swaps index) ~default:index
+              in
+              let selected = at position in
+              let last = at (remaining - 1) in
+              Hashtbl.remove swaps (remaining - 1);
+              if position <> remaining - 1 then
+                Hashtbl.replace swaps position last;
+              indices.(!generated) <- selected;
+              incr generated
+            done;
+            indices.(index))
+        space.finite_count
+    in
+    let partial_at candidate_index =
+      let remaining =
+        ref (Option.fold ~none:0 ~some:(fun at -> at candidate_index) index_at)
+      in
+      let coordinates = Array.make (Array.length space.sample_axes) 0 in
+      (match index_at with
+      | None -> ()
+      | Some _ ->
+          for i = Array.length space.sample_axes - 1 downto 0 do
+            let (Axis axis) = space.sample_axes.(i) in
+            match axis.distribution with
+            | Parameter_distribution.Sample _ -> assert false
+            | Parameter_distribution.Choices values ->
+                coordinates.(i) <- !remaining mod Array.length values;
+                remaining := !remaining / Array.length values
+          done);
+      Array.fold_left
+        (fun (i, partial) (Axis axis) ->
+          match partial.Grid_search.configuration with
+          | Error error when Callback.is_control_error error -> (i + 1, partial)
+          | Ok _ | Error _ ->
+              let draw =
+                match (axis.distribution, index_at) with
+                | Parameter_distribution.Choices values, Some _ ->
+                    Ok values.(coordinates.(i))
+                | ( ( Parameter_distribution.Choices _
+                    | Parameter_distribution.Sample _ ),
+                    None )
+                | Parameter_distribution.Sample _, Some _ ->
+                    let rng =
+                      Seed.derive seed
+                        ~operation:
+                          ("randomized-search-parameter:" ^ axis.sample_name)
+                        ~index:candidate_index
+                      |> Rng.create
+                    in
+                    Parameter_distribution.sample ~rng axis.distribution
+              in
+              let contextual error =
+                error
+                |> Error.with_context (Error.Stage axis.sample_name)
+                |> Grid_search.with_candidate candidate_index
+              in
+              let configuration, reversed_parameters =
+                match draw with
+                | Error error ->
+                    ( (if Callback.is_control_error error then
+                         Error (contextual error)
+                       else
+                         match partial.Grid_search.configuration with
+                         | Error _ as error -> error
+                         | Ok _ -> Error (contextual error)),
+                      partial.Grid_search.reversed_parameters )
+                | Ok value ->
+                    let configuration =
+                      match partial.Grid_search.configuration with
+                      | Error _ as error -> error
+                      | Ok configuration ->
+                          axis.sample_set configuration value
+                          |> Result.map_error contextual
+                    in
+                    ( configuration,
+                      {
+                        Grid_search.parameter_name = axis.sample_name;
+                        parameter_value = axis.sample_encode value;
+                      }
+                      :: partial.Grid_search.reversed_parameters )
+              in
+              (i + 1, { Grid_search.configuration; reversed_parameters }))
+        ( 0,
+          {
+            Grid_search.configuration = Ok space.sample_base;
+            reversed_parameters = [];
+          } )
+        space.sample_axes
+      |> snd
+    in
+    (space.sample_count, partial_at)
+
+  let sample ~seed space =
+    let count, partial_at = prepare ~seed space in
+    Array.init count (fun index ->
+        let partial = partial_at index in
+        {
+          sampled_parameters =
+            List.rev partial.Grid_search.reversed_parameters |> Array.of_list;
+          sampled_configuration = partial.Grid_search.configuration;
+        })
+
+  module Regression = struct
+    type model = Cross_validation.Regression.model
+
+    let search_with_policy ?(return_train_score = false)
+        ?(failure_policy = Cross_validation.Record)
+        ?(execution = Execution.sequential) ?metadata ~space ~splitter ~scorers
+        ~policy ~seed dataset =
+      let metadata =
+        Option.value metadata ~default:(Metadata.of_dataset dataset)
+      in
+      let scorer_names = Array.map Regression_scorer.name scorers in
+      let cross_validate ~metadata ~return_train_score ~failure_policy ~fit_seed
+          pipeline dataset =
+        Cross_validation.Regression.cross_validate ~metadata ~return_train_score
+          ~failure_policy ~fit_seed ~execution ~splitter ~scorers ~seed pipeline
+          dataset
+      in
+      Grid_search.search_candidates ~return_train_score ~failure_policy
+        ~cross_validate ~scorer_names ~metadata ~policy ~seed
+        ~operation:"randomized-search"
+        ~prepare:(fun () -> prepare ~seed space)
+        ~build:space.sample_build dataset
+
+    let search ?return_train_score ?failure_policy ?execution ?metadata ~space
+        ~splitter ~scorers ~refit ~seed dataset =
+      search_with_policy ?return_train_score ?failure_policy ?execution
+        ?metadata ~space ~splitter ~scorers
+        ~policy:(Grid_search.Best_score refit) ~seed dataset
+  end
+
+  module Binary_classification = struct
+    type model = Cross_validation.Binary_classification.model
+
+    let search_with_policy ?(return_train_score = false)
+        ?(failure_policy = Cross_validation.Record)
+        ?(execution = Execution.sequential) ?metadata ~space ~splitter ~scorers
+        ~policy ~seed dataset =
+      let metadata =
+        Option.value metadata ~default:(Metadata.of_dataset dataset)
+      in
+      let scorer_names = Array.map Binary_classification_scorer.name scorers in
+      let cross_validate ~metadata ~return_train_score ~failure_policy ~fit_seed
+          pipeline dataset =
+        Cross_validation.Binary_classification.cross_validate ~metadata
+          ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
+          ~scorers ~seed pipeline dataset
+      in
+      Grid_search.search_candidates ~return_train_score ~failure_policy
+        ~cross_validate ~scorer_names ~metadata ~policy ~seed
+        ~operation:"randomized-search"
+        ~prepare:(fun () -> prepare ~seed space)
+        ~build:space.sample_build dataset
+
+    let search ?return_train_score ?failure_policy ?execution ?metadata ~space
+        ~splitter ~scorers ~refit ~seed dataset =
+      search_with_policy ?return_train_score ?failure_policy ?execution
+        ?metadata ~space ~splitter ~scorers
+        ~policy:(Grid_search.Best_score refit) ~seed dataset
+  end
+
+  module Multiclass_classification = struct
+    type model = Cross_validation.Multiclass_classification.model
+
+    let search_with_policy ?(return_train_score = false)
+        ?(failure_policy = Cross_validation.Record)
+        ?(execution = Execution.sequential) ?metadata ~space ~splitter ~scorers
+        ~policy ~seed dataset =
+      let metadata =
+        Option.value metadata ~default:(Metadata.of_dataset dataset)
+      in
+      let scorer_names =
+        Array.map Multiclass_classification_scorer.name scorers
+      in
+      let cross_validate ~metadata ~return_train_score ~failure_policy ~fit_seed
+          pipeline dataset =
+        Cross_validation.Multiclass_classification.cross_validate ~metadata
+          ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
+          ~scorers ~seed pipeline dataset
+      in
+      Grid_search.search_candidates ~return_train_score ~failure_policy
+        ~cross_validate ~scorer_names ~metadata ~policy ~seed
+        ~operation:"randomized-search"
+        ~prepare:(fun () -> prepare ~seed space)
+        ~build:space.sample_build dataset
+
+    let search ?return_train_score ?failure_policy ?execution ?metadata ~space
+        ~splitter ~scorers ~refit ~seed dataset =
+      search_with_policy ?return_train_score ?failure_policy ?execution
+        ?metadata ~space ~splitter ~scorers
+        ~policy:(Grid_search.Best_score refit) ~seed dataset
   end
 end

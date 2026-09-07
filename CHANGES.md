@@ -1,5 +1,9 @@
 # 0.5.0-dev (unreleased)
 
+- Add typed randomized parameter distributions and search with finite sampling
+  without replacement, distribution sampling, and deterministic candidate streams.
+- Share named-score, no-refit, and custom multi-metric selection policies across
+  grid and randomized search while preserving existing named-refit entry points.
 - Add typed supervised pipelines, dense column transformation, feature unions,
   and nested preprocessing chains with fold-local fitting.
 - Route requested weights, groups, and callbacks through nested consumers,
