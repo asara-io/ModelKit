@@ -152,6 +152,18 @@
  (libraries modelkit alcotest))
 
 (test
+ (name cross_val_prediction_fixture_test)
+ (modules cross_val_prediction_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/cross_val_prediction_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_CROSS_VAL_PREDICTION_FIXTURE
+   %{dep:fixtures/sklearn/cross_val_prediction_v1.tsv}
+   (run %{test}))))
+
+(test
  (name grid_search_test)
  (modules grid_search_test)
  (package modelkit)

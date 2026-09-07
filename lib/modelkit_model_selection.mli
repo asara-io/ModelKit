@@ -5,7 +5,14 @@ open Modelkit_pipeline
 open Modelkit_metrics
 
 module Cross_validation : sig
-  (** [metadata] defaults to {!Metadata.of_dataset}: dataset weights and groups
+  (** Out-of-fold prediction requires test folds to contain every source row
+      exactly once. It restores successful predictions to source row order and
+      rejects incomplete or repeated coverage before fitting. Classification
+      probabilities use the complete dataset's ascending class order; missing
+      fitted-fold classes receive zero columns, while unknown or duplicate
+      classes are typed compatibility failures.
+
+      [metadata] defaults to {!Metadata.of_dataset}: dataset weights and groups
       are selected with each fold's exact training/test row views, including
       inference. An explicit carrier replaces that default without merging; its
       fields must match the complete dataset's row count. Splitters still use
@@ -47,6 +54,17 @@ module Cross_validation : sig
   }
 
   type 'model report
+  type classification_response = Labels | Probabilities
+
+  type 'prediction prediction_fold = {
+    prediction_fold_index : int;
+    prediction_fit_time : float;
+    predict_time : float;
+    prediction_test_indices : int array;
+    prediction_result : ('prediction, failure) result;
+  }
+
+  type 'prediction prediction_report
   type 'target splitter
 
   val target_independent_splitter :
@@ -70,6 +88,17 @@ module Cross_validation : sig
   val folds : 'model report -> 'model fold array
   val successful_fold_count : 'model report -> int
 
+  val prediction_folds :
+    'prediction prediction_report -> 'prediction prediction_fold array
+
+  val successful_prediction_fold_count : 'prediction prediction_report -> int
+
+  val out_of_fold_predictions :
+    'prediction prediction_report -> ('prediction, failure array) result
+  (** Returns predictions restored to source row order. Under [Record], any
+      failed folds make the assembled value unavailable; their successful peers
+      remain inspectable through {!prediction_folds}. *)
+
   module Regression : sig
     type model =
       (Target.regression Target.t, Target.regression Target.t) Pipeline.fitted
@@ -88,6 +117,18 @@ module Cross_validation : sig
       (Target.regression Target.t, Target.regression Target.t) Pipeline.t ->
       Target.regression Dataset.t ->
       (model report, Error.t) result
+
+    val cross_val_predict :
+      ?failure_policy:failure_policy ->
+      ?fit_seed:Seed.t ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      splitter:Target.regression Target.t splitter ->
+      seed:Seed.t ->
+      (Target.regression Target.t, Target.regression Target.t) Pipeline.t ->
+      Target.regression Dataset.t ->
+      (Target.regression Target.t prediction_report, Error.t) result
+    (** Fits on every training fold and predicts its test fold. *)
   end
 
   module Binary_classification : sig
@@ -112,6 +153,21 @@ module Cross_validation : sig
       Pipeline.t ->
       Target.classification Dataset.t ->
       (model report, Error.t) result
+
+    val cross_val_predict :
+      ?failure_policy:failure_policy ->
+      ?fit_seed:Seed.t ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      response:classification_response ->
+      splitter:Target.classification Target.t splitter ->
+      seed:Seed.t ->
+      ( Target.classification Target.t,
+        Target.classification Target.t )
+      Pipeline.t ->
+      Target.classification Dataset.t ->
+      (Multiclass_prediction.t prediction_report, Error.t) result
+    (** Produces labels or globally aligned probabilities for binary data. *)
   end
 
   module Multiclass_classification : sig
@@ -136,6 +192,22 @@ module Cross_validation : sig
       Pipeline.t ->
       Target.classification Dataset.t ->
       (model report, Error.t) result
+
+    val cross_val_predict :
+      ?failure_policy:failure_policy ->
+      ?fit_seed:Seed.t ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      response:classification_response ->
+      splitter:Target.classification Target.t splitter ->
+      seed:Seed.t ->
+      ( Target.classification Target.t,
+        Target.classification Target.t )
+      Pipeline.t ->
+      Target.classification Dataset.t ->
+      (Multiclass_prediction.t prediction_report, Error.t) result
+    (** Produces labels or globally aligned probabilities for multiclass data.
+    *)
   end
 end
 

@@ -1,0 +1,28 @@
+{
+  "comparison": "Regression predictions and globally aligned probability columns in original source-row order; the classifier deliberately omits one dataset class from every training fold.",
+  "configuration": {
+    "absolute_tolerance": 1e-09,
+    "folds": 3,
+    "shuffle": false
+  },
+  "environment": {
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "fixture": "cross_val_prediction_v1",
+  "generator": "dev/fixtures/generate.py",
+  "license": "Apache-2.0",
+  "references": [
+    "sklearn.model_selection.cross_val_predict",
+    "sklearn.linear_model.LinearRegression"
+  ],
+  "schema_version": 1
+}

@@ -927,6 +927,65 @@ ordinary failure. Events contain logical identities and nested stage paths,
 not timestamps, training observations, or fitted models. Reports retain the
 existing fit/score timing and failure details.
 
+{1 Out-of-fold prediction}
+
+The [cross_val_predict] functions fit one cloned pipeline per fold and place
+each test prediction back at its source row. Test folds must form an exact
+partition: every source row occurs once. Holdout, shuffle, repeated, and
+expanding-window splitters are rejected when they omit or repeat test rows.
+This check completes before fitting begins.
+
+{@ocaml[
+# let oof_x = Matrix.init ~rows:9 ~columns:1
+    (fun row _ -> Float.of_int row) |> Result.get_ok;;
+val oof_x : Matrix.t = <abstr>
+# let oof_y = Target.regression
+    (Vector.of_array (Array.init 9 (fun row -> (2. *. Float.of_int row) +. 1.)))
+    |> Result.get_ok;;
+val oof_y : Target.regression Target.t = <abstr>
+# let oof_data = Dataset.create ~finiteness:Dataset.Require_finite
+    ~x:oof_x ~y:oof_y () |> Result.get_ok;;
+val oof_data : Target.regression Dataset.t = <abstr>
+# let oof_pipeline = Pipeline.estimator ~name:"linear"
+    (module Linear_regression) (Linear_regression.create ())
+    |> Result.get_ok |> Pipeline.set_estimator Pipeline.empty |> Result.get_ok;;
+val oof_pipeline :
+  (Linear_regression.target, Linear_regression.prediction) Pipeline.t =
+  <abstr>
+# let oof_splitter : Target.regression Target.t Cross_validation.splitter =
+    K_fold.create ~folds:3 ~shuffle:true () |> Result.get_ok
+    |> Cross_validation.target_independent_splitter (module K_fold);;
+val oof_splitter : Target.regression Target.t Cross_validation.splitter =
+  <abstr>
+# let oof_report = Cross_validation.Regression.cross_val_predict
+    ~splitter:oof_splitter ~seed:(Seed.of_int 42) oof_pipeline oof_data
+    |> Result.get_ok;;
+val oof_report :
+  Target.regression Target.t Cross_validation.prediction_report = <abstr>
+# Cross_validation.out_of_fold_predictions oof_report |> Result.get_ok
+    |> Target.regression_values |> fun values ->
+    Array.for_all
+      (fun row ->
+        Float.abs (Vector.get values row -. ((2. *. Float.of_int row) +. 1.))
+        < 1e-12)
+      (Array.init 9 Fun.id);;
+- : bool = true
+]}
+
+Binary and multiclass prediction accept [~response:Labels] or
+[~response:Probabilities]. Probability reports declare the complete dataset's
+ascending class order. If a fitted fold declares only a subset, its columns are
+mapped by class label and absent classes receive zero, matching the committed
+scikit-learn parity fixture. Unknown or duplicate fitted classes fail rather
+than being assigned positionally.
+
+[Abort] returns the lowest-index fitting or prediction error. [Record] retains
+one result, test-index array, and fit/predict timing per fold. The assembled
+value is unavailable if any fold failed, but successful fold responses remain
+available through {!Modelkit.Cross_validation.prediction_folds}. Metadata,
+callbacks, deterministic child seeds, and bounded execution follow ordinary
+cross-validation semantics.
+
 {1 Randomized search and selection policies}
 
 {!Modelkit.Parameter_distribution} supplies typed finite choices, uniform,

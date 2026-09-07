@@ -2160,6 +2160,85 @@ def generate_randomized_search_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_cross_val_prediction_fixture(fixture_dir: Path) -> None:
+    import warnings
+
+    import numpy as np
+    from sklearn.base import BaseEstimator, ClassifierMixin
+    from sklearn.linear_model import LinearRegression
+    from sklearn.model_selection import KFold, cross_val_predict
+
+    class FirstClassClassifier(ClassifierMixin, BaseEstimator):
+        def fit(self, x, y):
+            self.classes_ = np.unique(y)
+            return self
+
+        def predict(self, x):
+            return np.full(len(x), self.classes_[0])
+
+        def predict_proba(self, x):
+            probabilities = np.zeros((len(x), len(self.classes_)))
+            probabilities[:, 0] = 1.0
+            return probabilities
+
+    regression_x = np.arange(12.0)[:, None]
+    regression_y = np.array(
+        [1.0, 3.2, 4.8, 7.1, 8.9, 11.2, 12.8, 15.1, 16.9, 19.2, 20.8, 23.1]
+    )
+    folds = KFold(n_splits=3, shuffle=False)
+    regression_prediction = cross_val_predict(
+        LinearRegression(), regression_x, regression_y, cv=folds
+    )
+    classification_x = np.arange(9.0)[:, None]
+    classification_y = np.repeat([10, 20, 30], 3)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        class_probabilities = cross_val_predict(
+            FirstClassClassifier(),
+            classification_x,
+            classification_y,
+            cv=KFold(n_splits=3, shuffle=False),
+            method="predict_proba",
+        )
+    rows = ["# ModelKit sklearn cross-validation prediction fixture v1"]
+
+    def add(name, values):
+        rows.append(f"{name}\t{float_values(values)}")
+
+    add("regression_x", regression_x[:, 0])
+    add("regression_y", regression_y)
+    add("regression_prediction", regression_prediction)
+    rows.append("classification_y\t" + comma_separated(classification_y))
+    rows.append("classification_classes\t10,20,30")
+    for row, probabilities in enumerate(class_probabilities):
+        add(f"classification_probability_{row}", probabilities)
+    (fixture_dir / "cross_val_prediction_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {
+            "folds": 3,
+            "shuffle": False,
+            "absolute_tolerance": 1e-9,
+        },
+        "comparison": "Regression predictions and globally aligned probability columns in original source-row order; the classifier deliberately omits one dataset class from every training fold.",
+        "environment": environment.metadata(),
+        "fixture": "cross_val_prediction_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "schema_version": 1,
+        "references": [
+            "sklearn.model_selection.cross_val_predict",
+            "sklearn.linear_model.LinearRegression",
+        ],
+    }
+    (fixture_dir / "cross_val_prediction_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
@@ -2169,6 +2248,7 @@ def main() -> None:
     generate_resampling_fixture(fixture_dir)
     generate_partitioning_fixture(fixture_dir)
     generate_randomized_search_fixture(fixture_dir)
+    generate_cross_val_prediction_fixture(fixture_dir)
     generate_metrics_fixture(fixture_dir)
     generate_preprocessing_fixture(fixture_dir)
     generate_transform_fixture(fixture_dir)

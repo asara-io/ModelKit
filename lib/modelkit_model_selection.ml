@@ -36,6 +36,20 @@ module Cross_validation = struct
   }
 
   type 'model report = { report_folds : 'model fold array }
+  type classification_response = Labels | Probabilities
+
+  type 'prediction prediction_fold = {
+    prediction_fold_index : int;
+    prediction_fit_time : float;
+    predict_time : float;
+    prediction_test_indices : int array;
+    prediction_result : ('prediction, failure) result;
+  }
+
+  type 'prediction prediction_report = {
+    prediction_report_folds : 'prediction prediction_fold array;
+    assembled_predictions : ('prediction, failure array) result;
+  }
 
   type 'target splitter = {
     run_splitter :
@@ -94,6 +108,24 @@ module Cross_validation = struct
         else count)
       0 report.report_folds
 
+  let copy_prediction_fold fold =
+    {
+      fold with
+      prediction_test_indices = Array.copy fold.prediction_test_indices;
+    }
+
+  let prediction_folds report =
+    Array.map copy_prediction_fold report.prediction_report_folds
+
+  let successful_prediction_fold_count report =
+    Array.fold_left
+      (fun count fold ->
+        match fold.prediction_result with Ok _ -> count + 1 | Error _ -> count)
+      0 report.prediction_report_folds
+
+  let out_of_fold_predictions report =
+    Result.map_error Array.copy report.assembled_predictions
+
   let[@warning "-4"] contextualize fold error =
     match Error.context error with
     | Error.Fold index :: _ when index = fold -> error
@@ -151,6 +183,195 @@ module Cross_validation = struct
     let started = Sys.time () in
     let result = operation () in
     (Sys.time () -. started, result)
+
+  let validate_prediction_coverage ~rows splits =
+    if Array.length splits = 0 then
+      Error
+        (validation ~name:"out-of-fold test coverage"
+           ~reason:"the splitter produced no folds"
+           ~remediation:
+             "use a splitter whose test folds partition every source row")
+    else
+      let counts = Array.make rows 0 in
+      Array.iter
+        (fun split ->
+          Array.iter
+            (fun row -> counts.(row) <- counts.(row) + 1)
+            (Row_view.indices (Split.test split)))
+        splits;
+      let rec check row =
+        if row = rows then Ok ()
+        else
+          match counts.(row) with
+          | 1 -> check (row + 1)
+          | 0 ->
+              Error
+                (validation ~name:"out-of-fold test coverage"
+                   ~reason:(Format.sprintf "source row %d is never tested" row)
+                   ~remediation:
+                     "use a splitter whose test folds partition every source \
+                      row")
+          | count ->
+              Error
+                (validation ~name:"out-of-fold test coverage"
+                   ~reason:
+                     (Format.sprintf "source row %d is tested %d times" row
+                        count)
+                   ~remediation:
+                     "use a non-repeated splitter with disjoint test folds")
+      in
+      check 0
+
+  let run_prediction ~failure_policy ~fit_seed ~execution ~metadata ~splitter
+      ~seed ~predict_fold ~assemble pipeline dataset =
+    let ( let* ) = Result.bind in
+    let rows = Dataset.sample_count dataset in
+    let* () = Metadata.validate ~rows metadata in
+    Callback.run
+      ~outcome:(fun report ->
+        match report.assembled_predictions with
+        | Ok _ -> Callback.Succeeded
+        | Error failures -> Callback.Failed failures.(0).error)
+      (Metadata.callback metadata)
+      ~operation:Callback.Cross_validation
+      (fun () ->
+        let splitter_rng =
+          Seed.derive seed ~operation:"cross-val-predict-splitter" ~index:0
+          |> Rng.create
+        in
+        let* view_pairs =
+          splitter.run_splitter ~rng:splitter_rng
+            ~groups:(Dataset.groups dataset) ~x:(Dataset.features dataset)
+            ~y:(Dataset.target dataset)
+        in
+        let* splits =
+          let rec validate index reversed =
+            if index = Array.length view_pairs then
+              Ok (Array.of_list (List.rev reversed))
+            else
+              let train, test = view_pairs.(index) in
+              match Split.of_views ~train ~test with
+              | Ok split -> validate (index + 1) (split :: reversed)
+              | Error error -> Error (contextualize index error)
+          in
+          validate 0 []
+        in
+        let* () = validate_prediction_coverage ~rows splits in
+        let failed ~fold_index ~fit_time ~predict_time ~test_indices phase error
+            =
+          let error = contextualize fold_index error in
+          if failure_policy = Abort || Callback.is_control_error error then
+            Error error
+          else
+            Ok
+              {
+                prediction_fold_index = fold_index;
+                prediction_fit_time = fit_time;
+                predict_time;
+                prediction_test_indices = test_indices;
+                prediction_result = Error { phase; error };
+              }
+        in
+        let evaluate metadata ~index:fold_index split =
+          let test_indices = Row_view.indices (Split.test split) in
+          let materialized =
+            let* train, test = Split.materialize dataset split in
+            let* train_metadata =
+              Metadata.select metadata (Split.train split)
+            in
+            let* test_metadata = Metadata.select metadata (Split.test split) in
+            Ok (train, test, train_metadata, test_metadata)
+          in
+          match materialized with
+          | Error error ->
+              failed ~fold_index ~fit_time:0.0 ~predict_time:0.0 ~test_indices
+                Materialization error
+          | Ok (train, test, train_metadata, test_metadata) -> (
+              let fold_rng =
+                Seed.derive fit_seed ~operation:"cross-val-predict-fold"
+                  ~index:fold_index
+                |> Rng.create
+              in
+              let fit_time, fitted =
+                timed (fun () ->
+                    Pipeline.fit_with_metadata (Pipeline.clone pipeline)
+                      ~metadata:train_metadata ~rng:fold_rng
+                      ~feature_schema:(Dataset.feature_schema train)
+                      ~x:(Dataset.features train) ~y:(Dataset.target train) ())
+              in
+              match fitted with
+              | Error error ->
+                  failed ~fold_index ~fit_time ~predict_time:0.0 ~test_indices
+                    Fitting error
+              | Ok fitted -> (
+                  let predict_time, prediction =
+                    timed (fun () ->
+                        predict_fold ~fold_index ~metadata:test_metadata fitted
+                          test)
+                  in
+                  match prediction with
+                  | Error error ->
+                      failed ~fold_index ~fit_time ~predict_time ~test_indices
+                        (Prediction Test) error
+                  | Ok prediction ->
+                      Ok
+                        {
+                          prediction_fold_index = fold_index;
+                          prediction_fit_time = fit_time;
+                          predict_time;
+                          prediction_test_indices = test_indices;
+                          prediction_result = Ok prediction;
+                        }))
+        in
+        let run_fold metadata ~index split =
+          let metadata = Metadata.scope (Error.Fold index) metadata in
+          Callback.run
+            ~outcome:(fun fold ->
+              match fold.prediction_result with
+              | Ok _ -> Callback.Succeeded
+              | Error failure -> Callback.Failed failure.error)
+            (Metadata.callback metadata)
+            ~operation:Callback.Fold
+            (fun () -> evaluate metadata ~index split)
+          |> Result.map_error (contextualize index)
+        in
+        let* prediction_report_folds =
+          match Metadata.callback metadata with
+          | None -> Execution.map execution ~f:(run_fold metadata) splits
+          | Some callback ->
+              let batch_size = max 1 (Execution.concurrency execution) in
+              let rec batches offset reversed =
+                if offset = Array.length splits then
+                  Ok (Array.of_list (List.rev reversed))
+                else
+                  let count = min batch_size (Array.length splits - offset) in
+                  let batch = Array.sub splits offset count in
+                  let* outcomes =
+                    Execution.map execution batch ~f:(fun ~index split ->
+                        let buffered, flush = Callback.buffer callback in
+                        let scoped =
+                          Metadata.with_callback metadata (Some buffered)
+                        in
+                        let result =
+                          run_fold scoped ~index:(offset + index) split
+                        in
+                        Ok (result, flush))
+                  in
+                  let* reversed =
+                    Array.fold_left
+                      (fun accumulated (result, flush) ->
+                        let* accumulated = accumulated in
+                        let* () = flush () in
+                        let* fold = result in
+                        Ok (fold :: accumulated))
+                      (Ok reversed) outcomes
+                  in
+                  batches (offset + count) reversed
+              in
+              batches 0 []
+        in
+        let assembled_predictions = assemble prediction_report_folds in
+        Ok { prediction_report_folds; assembled_predictions })
 
   let run ~return_train_score ~return_models ~return_indices ~failure_policy
       ~fit_seed ~execution ~metadata ~splitter ~scorer_names ~seed ~score_model
@@ -334,6 +555,44 @@ module Cross_validation = struct
         | Abort, first :: _ -> Error first.error
         | (Abort | Record), _ -> Ok (scores, Array.of_list failures))
 
+  let prediction_length_error ~name ~expected ~observed =
+    Error.make
+      ~remediation:"return exactly one prediction for every selected test row"
+      (Error.Shape_mismatch
+         { name; expected = [ expected ]; observed = [ observed ] })
+
+  let collected_prediction_failures folds =
+    Array.fold_left
+      (fun reversed fold ->
+        match fold.prediction_result with
+        | Ok _ -> reversed
+        | Error failure -> failure :: reversed)
+      [] folds
+    |> List.rev |> Array.of_list
+
+  let successful_predictions folds =
+    let failures = collected_prediction_failures folds in
+    if Array.length failures = 0 then Ok () else Error failures
+
+  let assemble_regression ~rows folds =
+    let ( let* ) = Result.bind in
+    let* () = successful_predictions folds in
+    let values = Array.make rows 0.0 in
+    Array.iter
+      (fun fold ->
+        match fold.prediction_result with
+        | Error _ -> assert false
+        | Ok prediction ->
+            let predicted = Target.regression_values prediction in
+            Array.iteri
+              (fun position row ->
+                values.(row) <- Vector.get predicted position)
+              fold.prediction_test_indices)
+      folds;
+    match Target.regression (Vector.of_array values) with
+    | Ok prediction -> Ok prediction
+    | Error _ -> assert false
+
   module Regression = struct
     type model =
       (Target.regression Target.t, Target.regression Target.t) Pipeline.fitted
@@ -453,6 +712,35 @@ module Cross_validation = struct
       run ~return_train_score ~return_models ~return_indices ~failure_policy
         ~fit_seed ~execution ~metadata ~splitter ~scorer_names ~seed
         ~score_model:(score_model scorers) pipeline dataset
+
+    let cross_val_predict ?(failure_policy = Abort) ?fit_seed
+        ?(execution = Execution.sequential) ?metadata ~splitter ~seed pipeline
+        dataset =
+      let metadata =
+        match metadata with
+        | Some metadata -> metadata
+        | None -> Metadata.of_dataset dataset
+      in
+      let fit_seed = Option.value fit_seed ~default:seed in
+      let predict_fold ~fold_index:_ ~metadata fitted test =
+        let ( let* ) = Result.bind in
+        let expected = Dataset.sample_count test in
+        let* prediction =
+          Pipeline.predict_with_metadata fitted ~metadata
+            ~feature_schema:(Dataset.feature_schema test)
+            ~x:(Dataset.features test)
+        in
+        let observed = Target.length prediction in
+        if observed = expected then Ok prediction
+        else
+          Error
+            (prediction_length_error ~name:"out-of-fold regression prediction"
+               ~expected ~observed)
+      in
+      run_prediction ~failure_policy ~fit_seed ~execution ~metadata ~splitter
+        ~seed ~predict_fold
+        ~assemble:(assemble_regression ~rows:(Dataset.sample_count dataset))
+        pipeline dataset
   end
 
   (* Classification evaluation shared by the binary and multiclass variants:
@@ -769,10 +1057,225 @@ module Cross_validation = struct
     let score = Multiclass_classification_scorer.score
   end
 
-  module Binary_classification = Classification_evaluation (Binary_scoring)
+  let sorted_unique_labels target =
+    let values = Target.classification_values target in
+    Array.sort Int.compare values;
+    if Array.length values = 0 then [||]
+    else
+      let reversed = ref [ values.(0) ] in
+      for index = 1 to Array.length values - 1 do
+        if values.(index) <> values.(index - 1) then
+          reversed := values.(index) :: !reversed
+      done;
+      Array.of_list (List.rev !reversed)
 
-  module Multiclass_classification =
-    Classification_evaluation (Multiclass_scoring)
+  let validate_prediction_classes ~binary classes =
+    let count = Array.length classes in
+    if (binary && count = 2) || ((not binary) && count >= 2) then Ok ()
+    else
+      Error
+        (validation ~name:"out-of-fold classification classes"
+           ~reason:
+             (if binary then
+                Format.sprintf "binary data contains %d distinct classes" count
+              else
+                Format.sprintf
+                  "classification data contains %d distinct classes" count)
+           ~remediation:
+             (if binary then "provide targets containing exactly two classes"
+              else "provide targets containing at least two classes"))
+
+  let class_index classes =
+    let index = Hashtbl.create (Array.length classes) in
+    Array.iteri (fun column label -> Hashtbl.add index label column) classes;
+    index
+
+  let validate_predicted_labels ~classes prediction =
+    let index = class_index classes in
+    let labels = Target.classification_values prediction in
+    let rec check row =
+      if row = Array.length labels then Ok ()
+      else if Hashtbl.mem index labels.(row) then check (row + 1)
+      else
+        Error
+          (compatibility ~component:"out-of-fold classifier labels"
+             ~reason:
+               (Format.sprintf
+                  "predicted label %d at row %d is absent from the dataset"
+                  labels.(row) row)
+             ~remediation:
+               "return labels drawn from the complete dataset class set")
+    in
+    check 0
+
+  let align_probability_columns ~classes ~fold_classes probabilities =
+    let ( let* ) = Result.bind in
+    let rows = Matrix.rows probabilities in
+    let* () = validate_probability_columns fold_classes probabilities in
+    let global = class_index classes in
+    let destinations = Array.make (Array.length fold_classes) 0 in
+    let seen = Hashtbl.create (Array.length fold_classes) in
+    let rec map_columns column =
+      if column = Array.length fold_classes then Ok ()
+      else
+        let label = fold_classes.(column) in
+        if Hashtbl.mem seen label then
+          Error
+            (compatibility ~component:"out-of-fold probability class order"
+               ~reason:
+                 (Format.sprintf "class label %d is declared more than once"
+                    label)
+               ~remediation:"declare each fitted class exactly once")
+        else
+          match Hashtbl.find_opt global label with
+          | None ->
+              Error
+                (compatibility ~component:"out-of-fold probability class order"
+                   ~reason:
+                     (Format.sprintf
+                        "fitted class label %d is absent from the dataset" label)
+                   ~remediation:
+                     "declare only classes present in the complete dataset")
+          | Some destination ->
+              Hashtbl.add seen label ();
+              destinations.(column) <- destination;
+              map_columns (column + 1)
+    in
+    let* () = map_columns 0 in
+    let sources = Array.make (Array.length classes) (-1) in
+    Array.iteri
+      (fun source destination -> sources.(destination) <- source)
+      destinations;
+    Matrix.init ~rows ~columns:(Array.length classes) (fun row column ->
+        let source = sources.(column) in
+        if source < 0 then 0.0 else Matrix.get probabilities row source)
+    |> Result.map_error (fun error ->
+        Error.of_data_error
+          ~remediation:"return a valid classifier probability matrix" error)
+
+  let assemble_classification ~response ~classes ~rows folds =
+    let ( let* ) = Result.bind in
+    let* () = successful_predictions folds in
+    match response with
+    | Labels -> (
+        let labels = Array.make rows 0 in
+        Array.iter
+          (fun fold ->
+            match fold.prediction_result with
+            | Error _ -> assert false
+            | Ok prediction ->
+                let predicted =
+                  Multiclass_prediction.labels prediction
+                  |> Option.get |> Target.classification_values
+                in
+                Array.iteri
+                  (fun position row -> labels.(row) <- predicted.(position))
+                  fold.prediction_test_indices)
+          folds;
+        Multiclass_prediction.create ~labels:(Target.classification labels) ()
+        |> function
+        | Ok prediction -> Ok prediction
+        | Error _ -> assert false)
+    | Probabilities -> (
+        let row_predictions = Array.make rows None in
+        let row_positions = Array.make rows 0 in
+        Array.iter
+          (fun fold ->
+            match fold.prediction_result with
+            | Error _ -> assert false
+            | Ok prediction ->
+                let predicted =
+                  Multiclass_prediction.probabilities prediction |> Option.get
+                in
+                Array.iteri
+                  (fun position row ->
+                    row_predictions.(row) <- Some predicted;
+                    row_positions.(row) <- position)
+                  fold.prediction_test_indices)
+          folds;
+        let probabilities =
+          match
+            Matrix.init ~rows ~columns:(Array.length classes) (fun row column ->
+                Matrix.get
+                  (Option.get row_predictions.(row))
+                  row_positions.(row) column)
+          with
+          | Ok probabilities -> probabilities
+          | Error _ -> assert false
+        in
+        Multiclass_prediction.create ~classes ~probabilities () |> function
+        | Ok prediction -> Ok prediction
+        | Error _ -> assert false)
+
+  let classification_cross_val_predict ~binary ?(failure_policy = Abort)
+      ?fit_seed ?(execution = Execution.sequential) ?metadata ~response
+      ~splitter ~seed pipeline dataset =
+    let ( let* ) = Result.bind in
+    let classes = sorted_unique_labels (Dataset.target dataset) in
+    let* () = validate_prediction_classes ~binary classes in
+    let metadata =
+      match metadata with
+      | Some metadata -> metadata
+      | None -> Metadata.of_dataset dataset
+    in
+    let fit_seed = Option.value fit_seed ~default:seed in
+    let predict_fold ~fold_index:_ ~metadata fitted test =
+      let expected = Dataset.sample_count test in
+      match response with
+      | Labels ->
+          let* labels =
+            Pipeline.predict_with_metadata fitted ~metadata
+              ~feature_schema:(Dataset.feature_schema test)
+              ~x:(Dataset.features test)
+          in
+          let observed = Target.length labels in
+          let* () =
+            if observed = expected then Ok ()
+            else
+              Error
+                (prediction_length_error
+                   ~name:"out-of-fold classification labels" ~expected ~observed)
+          in
+          let* () = validate_predicted_labels ~classes labels in
+          Multiclass_prediction.create ~labels ()
+      | Probabilities ->
+          let* fold_classes = Pipeline.classes fitted in
+          let* probabilities =
+            Pipeline.predict_proba_with_metadata fitted ~metadata
+              ~feature_schema:(Dataset.feature_schema test)
+              ~x:(Dataset.features test)
+          in
+          let observed = Matrix.rows probabilities in
+          let* () =
+            if observed = expected then Ok ()
+            else
+              Error
+                (prediction_length_error ~name:"out-of-fold class probabilities"
+                   ~expected ~observed)
+          in
+          let* probabilities =
+            align_probability_columns ~classes ~fold_classes probabilities
+          in
+          Multiclass_prediction.create ~classes ~probabilities ()
+    in
+    run_prediction ~failure_policy ~fit_seed ~execution ~metadata ~splitter
+      ~seed ~predict_fold
+      ~assemble:
+        (assemble_classification ~response ~classes
+           ~rows:(Dataset.sample_count dataset))
+      pipeline dataset
+
+  module Binary_classification = struct
+    include Classification_evaluation (Binary_scoring)
+
+    let cross_val_predict = classification_cross_val_predict ~binary:true
+  end
+
+  module Multiclass_classification = struct
+    include Classification_evaluation (Multiclass_scoring)
+
+    let cross_val_predict = classification_cross_val_predict ~binary:false
+  end
 end
 
 module Search_checkpoint = struct

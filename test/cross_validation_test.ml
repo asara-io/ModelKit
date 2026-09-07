@@ -54,6 +54,88 @@ let logistic_pipeline_without_classes () =
   in
   Pipeline.set_estimator Pipeline.empty terminal |> get
 
+module Fold_classifier = struct
+  type t = unit
+  type params = unit
+  type fitted = { schema : Feature_schema.t; classes : int array }
+  type target = Target.classification Target.t
+  type prediction = Target.classification Target.t
+  type rng = Rng.t
+
+  let clone = Fun.id
+  let params () = ()
+
+  let fit () ?sample_weight:_ ~rng:_ ~feature_schema ~x:_ ~y () =
+    let labels = Target.classification_values y in
+    Array.sort Int.compare labels;
+    let classes =
+      Array.to_list labels |> List.sort_uniq Int.compare |> Array.of_list
+    in
+    Ok { schema = feature_schema; classes }
+
+  let predict fitted ~feature_schema:_ ~x =
+    Ok (Target.classification (Array.make (Matrix.rows x) fitted.classes.(0)))
+
+  let predict_proba fitted ~feature_schema:_ ~x =
+    Matrix.init ~rows:(Matrix.rows x) ~columns:(Array.length fitted.classes)
+      (fun _ column -> if column = 0 then 1.0 else 0.0)
+    |> Result.map_error (fun error ->
+        Error.of_data_error ~remediation:"provide valid test features" error)
+
+  let classes fitted = Array.copy fitted.classes
+  let fitted_params _ = ()
+  let feature_schema fitted = fitted.schema
+end
+
+let fold_classifier_pipeline () =
+  let terminal =
+    Pipeline.estimator ~name:"fold-classifier"
+      (module Fold_classifier)
+      ~predict_proba:Fold_classifier.predict_proba
+      ~classes:Fold_classifier.classes ()
+    |> get
+  in
+  Pipeline.set_estimator Pipeline.empty terminal |> get
+
+module Sometimes_failing_regressor = struct
+  type t = unit
+  type params = unit
+  type fitted = Feature_schema.t
+  type target = Target.regression Target.t
+  type prediction = Target.regression Target.t
+  type rng = Rng.t
+
+  let clone = Fun.id
+  let params () = ()
+
+  let fit () ?sample_weight:_ ~rng:_ ~feature_schema ~x ~y:_ () =
+    if Matrix.get x 0 0 > 0.0 then
+      Error
+        (Error.make ~remediation:"exercise recorded fold failures"
+           (Error.Validation
+              { name = "test estimator"; reason = "selected fold failure" }))
+    else Ok feature_schema
+
+  let predict _ ~feature_schema:_ ~x =
+    Target.regression
+      (Vector.of_array
+         (Array.init (Matrix.rows x) (fun row -> Matrix.get x row 0)))
+    |> Result.map_error (fun error ->
+        Error.of_data_error ~remediation:"provide finite test features" error)
+
+  let fitted_params _ = ()
+  let feature_schema fitted = fitted
+end
+
+let sometimes_failing_pipeline () =
+  let terminal =
+    Pipeline.estimator ~name:"sometimes-failing"
+      (module Sometimes_failing_regressor)
+      ()
+    |> get
+  in
+  Pipeline.set_estimator Pipeline.empty terminal |> get
+
 let k_fold folds =
   K_fold.create ~folds () |> get
   |> Cross_validation.target_independent_splitter (module K_fold)
@@ -296,6 +378,176 @@ let test_probability_class_contract () =
         "class-order failure has fold and stage context" true
         (Error.context error = [ Error.Fold 0; Error.Stage "logistic" ])
 
+let test_regression_out_of_fold_order () =
+  let dataset =
+    regression_dataset
+      (Array.init 15 (fun row -> [| Float.of_int row |]))
+      (Array.init 15 (fun row -> (2.0 *. Float.of_int row) +. 1.0))
+  in
+  let splitter =
+    K_fold.create ~folds:5 ~shuffle:true ()
+    |> get
+    |> Cross_validation.target_independent_splitter (module K_fold)
+  in
+  let report =
+    Cross_validation.Regression.cross_val_predict ~splitter
+      ~seed:(Seed.of_int 31) (linear_pipeline ()) dataset
+    |> get
+  in
+  let folds = Cross_validation.prediction_folds report in
+  Alcotest.(check int) "prediction fold count" 5 (Array.length folds);
+  Alcotest.(check int)
+    "successful prediction folds" 5
+    (Cross_validation.successful_prediction_fold_count report);
+  Array.iteri
+    (fun index (fold : _ Cross_validation.prediction_fold) ->
+      Alcotest.(check int) "logical fold index" index fold.prediction_fold_index;
+      check_nonnegative "fit time" fold.prediction_fit_time;
+      check_nonnegative "predict time" fold.predict_time;
+      match fold.prediction_result with
+      | Ok prediction ->
+          Alcotest.(check int)
+            "fold prediction length"
+            (Array.length fold.prediction_test_indices)
+            (Target.length prediction)
+      | Error failure -> Alcotest.fail (Error.to_string failure.error))
+    folds;
+  let predictions =
+    Cross_validation.out_of_fold_predictions report
+    |> Result.get_ok |> Target.regression_values
+  in
+  Array.iteri
+    (fun row expected ->
+      Alcotest.check (Alcotest.float 1e-9) "restored source row order" expected
+        (Vector.get predictions row))
+    (Target.regression_values (Dataset.target dataset) |> Vector.to_array)
+
+let test_classification_out_of_fold_responses () =
+  let binary =
+    classification_dataset
+      (Array.init 12 (fun row -> [| Float.of_int (row - 6) |]))
+      [| 0; 0; 0; 0; 0; 0; 1; 1; 1; 1; 1; 1 |]
+  in
+  let binary_report =
+    Cross_validation.Binary_classification.cross_val_predict
+      ~response:Cross_validation.Labels ~splitter:(stratified_k_fold 3)
+      ~seed:(Seed.of_int 19) (logistic_pipeline ()) binary
+    |> get
+  in
+  let binary_labels =
+    Cross_validation.out_of_fold_predictions binary_report
+    |> Result.get_ok |> Multiclass_prediction.labels |> Option.get
+  in
+  Alcotest.(check int) "binary label rows" 12 (Target.length binary_labels);
+  let multiclass =
+    classification_dataset
+      (Array.init 9 (fun row -> [| Float.of_int row |]))
+      [| 10; 10; 10; 20; 20; 20; 30; 30; 30 |]
+  in
+  let report =
+    Cross_validation.Multiclass_classification.cross_val_predict
+      ~response:Cross_validation.Probabilities ~splitter:(k_fold 3)
+      ~seed:(Seed.of_int 23)
+      (fold_classifier_pipeline ())
+      multiclass
+    |> get
+  in
+  let prediction =
+    Cross_validation.out_of_fold_predictions report |> Result.get_ok
+  in
+  Alcotest.(check (array int))
+    "global class order" [| 10; 20; 30 |]
+    (Multiclass_prediction.classes prediction |> Option.get);
+  let probabilities =
+    Multiclass_prediction.probabilities prediction |> Option.get
+  in
+  Array.iteri
+    (fun row expected ->
+      Array.iteri
+        (fun column value ->
+          Alcotest.check (Alcotest.float 0.0) "aligned probability" value
+            (Matrix.get probabilities row column))
+        expected)
+    [|
+      [| 0.; 1.; 0. |];
+      [| 0.; 1.; 0. |];
+      [| 0.; 1.; 0. |];
+      [| 1.; 0.; 0. |];
+      [| 1.; 0.; 0. |];
+      [| 1.; 0.; 0. |];
+      [| 1.; 0.; 0. |];
+      [| 1.; 0.; 0. |];
+      [| 1.; 0.; 0. |];
+    |]
+
+let test_out_of_fold_coverage_and_failures () =
+  let dataset =
+    regression_dataset
+      (Array.init 9 (fun row -> [| Float.of_int row |]))
+      (Array.init 9 Float.of_int)
+  in
+  let reject splitter =
+    match
+      Cross_validation.Regression.cross_val_predict ~splitter
+        ~seed:(Seed.of_int 7) (linear_pipeline ()) dataset
+    with
+    | Ok _ -> Alcotest.fail "non-partitioning splitter was accepted"
+    | Error error ->
+        Alcotest.(check bool)
+          "coverage validation" true
+          (match Error.kind error with
+          | Error.Validation _ -> true
+          | Error.Data _ | Error.Shape_mismatch _
+          | Error.Feature_schema_mismatch _ | Error.Numerical _
+          | Error.Convergence _ | Error.Compatibility _ | Error.Artifact _
+          | Error.Callback_failure _ | Error.Cancelled ->
+              false)
+  in
+  reject
+    (Holdout.create () |> get
+    |> Cross_validation.target_independent_splitter (module Holdout));
+  reject
+    (Repeated_k_fold.create ~folds:3 ~repeats:2 ()
+    |> get
+    |> Cross_validation.target_independent_splitter (module Repeated_k_fold));
+  let report =
+    Cross_validation.Regression.cross_val_predict
+      ~failure_policy:Cross_validation.Record ~splitter:(k_fold 3)
+      ~seed:(Seed.of_int 7)
+      (sometimes_failing_pipeline ())
+      dataset
+    |> get
+  in
+  Alcotest.(check int)
+    "two folds succeed" 2
+    (Cross_validation.successful_prediction_fold_count report);
+  let failures =
+    match Cross_validation.out_of_fold_predictions report with
+    | Ok _ -> Alcotest.fail "assembled predictions ignored a failed fold"
+    | Error failures -> failures
+  in
+  Alcotest.(check int) "one recorded failure" 1 (Array.length failures);
+  Alcotest.(check bool)
+    "fitting phase" true
+    (match failures.(0).phase with
+    | Fitting -> true
+    | Materialization | Prediction _ | Scoring _ -> false);
+  Alcotest.(check bool)
+    "fold context" true
+    (Error.context failures.(0).error
+    = [ Error.Fold 0; Error.Stage "sometimes-failing" ]);
+  match
+    Cross_validation.Regression.cross_val_predict ~splitter:(k_fold 3)
+      ~seed:(Seed.of_int 7)
+      (sometimes_failing_pipeline ())
+      dataset
+  with
+  | Ok _ -> Alcotest.fail "abort policy recorded a failed fold"
+  | Error error ->
+      Alcotest.(check bool)
+        "lowest failed fold" true
+        (Error.context error = [ Error.Fold 0; Error.Stage "sometimes-failing" ])
+
 let () =
   Alcotest.run "cross validation"
     [
@@ -305,6 +557,10 @@ let () =
           Alcotest.test_case "binary response dispatch" `Quick
             test_binary_response_dispatch;
           Alcotest.test_case "stable ordering" `Quick test_stable_ordering;
+          Alcotest.test_case "out-of-fold regression order" `Quick
+            test_regression_out_of_fold_order;
+          Alcotest.test_case "out-of-fold classification responses" `Quick
+            test_classification_out_of_fold_responses;
         ] );
       ( "failures",
         [
@@ -313,5 +569,7 @@ let () =
           Alcotest.test_case "scorer validation" `Quick test_scorer_validation;
           Alcotest.test_case "probability class contract" `Quick
             test_probability_class_contract;
+          Alcotest.test_case "out-of-fold coverage and failures" `Quick
+            test_out_of_fold_coverage_and_failures;
         ] );
     ]

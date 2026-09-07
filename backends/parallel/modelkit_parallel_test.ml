@@ -149,6 +149,38 @@ let test_domain_count_invariance () =
       check_report expected (run execution))
     [ 1; 2; 4 ]
 
+let test_prediction_domain_count_invariance () =
+  let run execution =
+    Cross_validation.Regression.cross_val_predict ~execution
+      ~splitter:(splitter ()) ~seed:(Seed.of_int 2026) (pipeline ())
+      (dataset ())
+    |> get
+  in
+  let signature report =
+    let folds = Cross_validation.prediction_folds report in
+    let values =
+      Cross_validation.out_of_fold_predictions report
+      |> Result.get_ok |> Target.regression_values |> Vector.to_array
+    in
+    ( Array.map
+        (fun fold ->
+          ( fold.Cross_validation.prediction_fold_index,
+            fold.Cross_validation.prediction_test_indices ))
+        folds,
+      values )
+  in
+  let expected = signature (run Execution.sequential) in
+  List.iter
+    (fun domains ->
+      let execution =
+        Modelkit_parallel.create ~inner_threads:1 ~domains ()
+        |> get |> Modelkit_parallel.execution
+      in
+      Alcotest.(check bool)
+        "out-of-fold predictions are schedule independent" true
+        (expected = signature (run execution)))
+    [ 1; 2; 4 ]
+
 let update_maximum maximum value =
   let rec update () =
     let observed = Atomic.get maximum in
@@ -469,6 +501,8 @@ let () =
         [
           Alcotest.test_case "domain-count invariance" `Quick
             test_domain_count_invariance;
+          Alcotest.test_case "prediction domain-count invariance" `Quick
+            test_prediction_domain_count_invariance;
           Alcotest.test_case "supervised domain-count invariance" `Quick
             (fun () -> test_supervised_domain_count_invariance ());
           Alcotest.test_case "column domain-count invariance" `Quick
