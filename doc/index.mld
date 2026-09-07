@@ -1451,6 +1451,58 @@ across execution backends, but NumPy's random row identities are not a
 compatibility promise. Reference fixtures compare partition sizes, class
 allocations without ties, and exact unshuffled holdout rows.
 
+{2 Nested cross-validation recipe}
+
+Model selection and model evaluation must use distinct held-out rows. In nested
+cross-validation, each outer training partition owns a fresh inner search. That
+search may fit and compare candidates only within its outer training data,
+including its full-data refit. The selected model is then scored once on the
+corresponding untouched outer test partition. Aggregating those outer scores
+estimates the performance of the complete selection procedure rather than the
+best candidate observed during tuning.
+
+The repository's
+{{:https://github.com/asara-io/ModelKit/blob/main/examples/nested_cv.ml}runnable
+nested-CV recipe} implements that protocol entirely through public APIs:
+
+{v
+let outer_train, outer_test = Split.materialize development outer_split in
+let inner_report =
+  Grid_search.Regression.search
+    ~grid:(grid ())
+    ~splitter:(k_fold 3)
+    ~scorers:[|Regression_scorer.neg_mean_squared_error|]
+    ~refit:"neg_mean_squared_error"
+    ~seed:(Seed.derive root_seed ~operation:"nested-cv-inner-search"
+             ~index:outer_index)
+    outer_train
+  |> Result.get_ok
+in
+let selected = Grid_search.selection inner_report |> Result.get_ok in
+score selected.Grid_search.selected_model outer_test
+v}
+
+Before the outer loop, the recipe uses {!Modelkit.Train_test_split.split} to
+reserve a final test dataset. After aggregating all outer-fold scores with
+{!Modelkit.Score_aggregation}, it performs one last search on the complete
+development dataset and evaluates that fitted selection once on the final
+holdout. Neither outer test rows nor final test rows influence preprocessing,
+candidate ranking, or refitting.
+
+Run the complete program from a source checkout:
+
+{v
+opam exec -- dune exec examples/nested_cv.exe
+v}
+
+The example derives holdout, outer-split, per-outer-fold inner-search, and final
+search seeds from separate logical operation names. Its outer loop is
+sequential; a bounded execution backend may be supplied to each inner search
+without creating nested parallelism. For grouped or time-ordered observations,
+replace K-fold with the appropriate group-aware or temporal splitter at both
+levels, and reserve the final test set with equivalent domain constraints
+rather than the ordinary shuffled helper.
+
 {2 Fixed folds and exhaustive exclusion}
 
 {!Modelkit.Predefined_split} accepts one integer test-fold assignment per row.
