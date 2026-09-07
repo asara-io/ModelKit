@@ -27,3 +27,9 @@
  (modules resampling_parallel_test)
  (package modelkit-parallel)
  (libraries modelkit modelkit-parallel modelkit_test_support alcotest))
+
+(test
+ (name partitioning_parallel_test)
+ (modules partitioning_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel modelkit_test_support alcotest))

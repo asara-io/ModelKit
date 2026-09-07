@@ -121,3 +121,7 @@ module Repeated_stratified_k_fold =
   Modelkit_resampling.Repeated_stratified_k_fold
 
 module Train_test_split = Modelkit_resampling.Train_test_split
+module Predefined_split = Modelkit_partitioning.Predefined_split
+module Leave_one_out = Modelkit_partitioning.Leave_one_out
+module Leave_one_group_out = Modelkit_partitioning.Leave_one_group_out
+module Stratified_group_k_fold = Modelkit_partitioning.Stratified_group_k_fold

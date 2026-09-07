@@ -990,6 +990,76 @@ across execution backends, but NumPy's random row identities are not a
 compatibility promise. Reference fixtures compare partition sizes, class
 allocations without ties, and exact unshuffled holdout rows.
 
+{2 Fixed folds and exhaustive exclusion}
+
+{!Modelkit.Predefined_split} accepts one integer test-fold assignment per row.
+Nonnegative IDs need not be contiguous; distinct IDs are emitted in ascending
+order. An assignment of [-1] keeps a row in every training partition and never
+places it in test data. Each test fold uses all other rows for training.
+Assignments are copied at construction; [params] and [fold_ids] return fresh
+arrays. Empty test schedules, invalid negative IDs, and schedules leaving an
+empty training partition are rejected.
+
+{@ocaml[
+# let fixed = Predefined_split.create
+    ~test_folds:[|-1; 8; 8; 2; 2; -1; 99; 99|] () |> Result.get_ok;;
+val fixed : Predefined_split.t = <abstr>
+# Predefined_split.fold_ids fixed = [|2; 8; 99|];;
+- : bool = true
+# let fixed_folds = Predefined_split.split fixed
+    ~rng:(Rng.create (Seed.of_int 1729))
+    ~x:(Matrix.create ~rows:8 ~columns:1 0. |> Result.get_ok)
+    ~y:None () |> Result.get_ok;;
+...
+# Array.map (fun (train, test) -> Row_view.length train, Row_view.length test)
+    fixed_folds = [|(6, 2); (6, 2); (6, 2)|];;
+- : bool = true
+]}
+
+{!Modelkit.Leave_one_out} tests each row once, in source order, against all
+remaining rows. It requires at least two rows. Its eager row views require
+quadratic index storage, and single-row scoring can make metrics such as
+R-squared undefined. Select a suitable scorer, such as negative squared error.
+
+{!Modelkit.Leave_one_group_out} tests each distinct group once, in ascending
+integer-ID order, against all other groups. It requires aligned groups and at
+least two distinct IDs. Each row is tested exactly once and groups never cross
+a fold's training/test boundary. Index storage grows with row count times
+group count. Both exhaustive splitters and predefined splits ignore the RNG.
+Predefined and single-row splits do not enforce group exclusion.
+
+{2 Stratified groups}
+
+{!Modelkit.Stratified_group_k_fold} keeps each group intact while seeking
+balanced class proportions across test folds. It requires aligned groups and
+classification labels, at least two folds, and at least as many groups as
+folds. Every row is tested exactly once, all folds are nonempty, and training
+contains the complete complement of each test fold. All row views preserve
+source order.
+
+The greedy algorithm considers groups with the greatest class-count dispersion
+first and selects the fold that best balances per-class fractions. Numerical
+ties favor the less populated fold, then its index. With [shuffle=true], a
+seeded permutation breaks ties between groups with equal dispersion; it does
+not globally randomize group placement. Groups are assigned to remaining
+empty folds when needed to ensure nonempty partitions. Sparse group histograms
+avoid allocating every possible group/class pair.
+
+Stratification is best effort under group exclusion. A rare class concentrated
+in one group cannot occur in both training and test when that group is held
+out. The splitter permits this valid partition; the estimator or scorer may
+reject it. Class balance is not a promise of optimality or universal class
+coverage. The reference fixtures check exact unshuffled membership on known
+cases; ModelKit's tie tolerance and nonempty-fold safeguard are documented in
+the API, and general scikit-learn membership equivalence is not guaranteed.
+
+Package stratified-group specifications with
+{!Modelkit.Cross_validation.target_aware_splitter}; use
+{!Modelkit.Cross_validation.target_independent_splitter} for predefined and
+leave-one-out/group-out specifications. Predefined schedules containing [-1]
+rows intentionally do not have full test coverage; preserve that distinction
+when assembling predictions in source-row order.
+
 {1 Artifact safety and compatibility}
 
 {!Modelkit.Artifact} stores canonical big-endian integers and IEEE-754 binary64

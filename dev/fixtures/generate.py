@@ -2062,6 +2062,57 @@ def generate_resampling_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_partitioning_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.model_selection import (
+        LeaveOneGroupOut, LeaveOneOut, PredefinedSplit, StratifiedGroupKFold,
+    )
+
+    assignments = np.array([-1, 8, 8, 2, 2, -1, 99, 99])
+    leave_groups = np.array([10, -3, 10, 2, -3, 2])
+    groups = np.repeat([-10, 2, 9, 20, 35, 50], [5, 4, 3, 4, 6, 2])
+    labels = np.array([0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 0, 1,
+                       1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1])
+    rows = ["# ModelKit sklearn partitioning reference fixture v1"]
+
+    def add(name, values):
+        rows.append(f"{name}\t{comma_separated(values)}")
+
+    add("assignments", assignments)
+    add("leave_groups", leave_groups)
+    add("groups", groups)
+    add("labels", labels)
+    cases = {
+        "predefined": PredefinedSplit(assignments).split(),
+        "leave_one_out": LeaveOneOut().split(np.zeros((4, 1))),
+        "leave_one_group_out": LeaveOneGroupOut().split(
+            np.zeros((len(leave_groups), 1)), groups=leave_groups),
+        "stratified_group": StratifiedGroupKFold(n_splits=3).split(
+            np.zeros((len(groups), 1)), labels, groups),
+    }
+    for name, splits in cases.items():
+        for index, (train, test) in enumerate(splits):
+            add(f"{name}_{index}_train", train)
+            add(f"{name}_{index}_test", test)
+    (fixture_dir / "partitioning_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {"stratified_group_folds": 3, "shuffle": False},
+        "comparison": "Exact source row identities for unshuffled fixtures; grouped balancing is heuristic, with ModelKit additionally guaranteeing nonempty folds.",
+        "environment": environment.metadata(), "fixture": "partitioning_v1",
+        "generator": "dev/fixtures/generate.py", "license": "Apache-2.0",
+        "schema_version": 1,
+        "references": ["sklearn.model_selection.PredefinedSplit",
+                       "sklearn.model_selection.LeaveOneOut",
+                       "sklearn.model_selection.LeaveOneGroupOut",
+                       "sklearn.model_selection.StratifiedGroupKFold"],
+    }
+    (fixture_dir / "partitioning_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
@@ -2069,6 +2120,7 @@ def main() -> None:
     generate_split_fixture(fixture_dir)
     generate_splitter_fixture(fixture_dir)
     generate_resampling_fixture(fixture_dir)
+    generate_partitioning_fixture(fixture_dir)
     generate_metrics_fixture(fixture_dir)
     generate_preprocessing_fixture(fixture_dir)
     generate_transform_fixture(fixture_dir)

@@ -4,6 +4,8 @@
   and nested preprocessing chains with fold-local fitting.
 - Route requested weights, groups, and callbacks through nested consumers,
   cross-validation, search, and full-data refit with bounded cancellation.
+- Add stratified-group K-fold, predefined, leave-one-out, and leave-one-group-out
+  splitters with explicit coverage, feasibility, and group-exclusion contracts.
 - Add shuffle, stratified-shuffle, holdout, and repeated K-fold splitters, plus
   aligned train/test dataset splitting with explicit counts and fractional sizes.
 - Add transformed-target regression with fold-local target fitting, metadata

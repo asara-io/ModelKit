@@ -19,6 +19,7 @@
   modelkit_regularized_linear
   modelkit_sgd
   modelkit_resampling
+  modelkit_partitioning
   modelkit_splitting
   modelkit_target
   modelkit_transforms))
