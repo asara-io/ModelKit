@@ -1376,6 +1376,66 @@ module Variance_threshold : sig
        and type rng = Rng.t
 end
 
+(** Dense target-aware feature selection by an association score.
+
+    Count selection retains exactly [k] features. Percentile selection retains
+    [floor (input_width * percentile / 100)] features and fails at fit time if
+    that is zero. Higher scores rank first; a score tie prefers the lower
+    original column index. Selected output columns always retain original input
+    order and named schemas are filtered accordingly. *)
+module Univariate_selection : sig
+  type selection = Count of int | Percentile of float
+
+  (** Squared Pearson-correlation F ranking for scalar regression targets.
+
+      This release provides scores for feature ranking rather than inferential
+      p-values. It accepts finite, unweighted dense inputs with at least three
+      rows. Constant features or targets score zero, and perfect correlation
+      scores [Float.max_float]. *)
+  module Regression : sig
+    type params = { selection : selection }
+    type t
+    type fitted
+
+    val create : selection -> (t, Error.t) result
+    val scores : fitted -> Vector.t
+    val selected_indices : fitted -> int array
+
+    include
+      TRANSFORMER
+        with type t := t
+         and type params := params
+         and type target = Target.regression Target.t
+         and type fitted := fitted
+         and type rng = Rng.t
+  end
+
+  (** One-way ANOVA F ranking for integer classification targets.
+
+      This release provides scores for feature ranking rather than inferential
+      p-values. It accepts finite, unweighted dense inputs with at least two
+      classes and one residual degree of freedom. Constant features score zero;
+      nonzero between-class variance with zero within-class variance scores
+      [Float.max_float]. *)
+  module Classification : sig
+    type params = { selection : selection }
+    type t
+    type fitted
+
+    val create : selection -> (t, Error.t) result
+    val scores : fitted -> Vector.t
+    val selected_indices : fitted -> int array
+
+    include
+      TRANSFORMER
+        with type t := t
+         and type params := params
+         and type target = Target.classification Target.t
+         and type fitted := fitted
+         and type rng = Rng.t
+  end
+end
+
 (** Per-feature affine scaling into a configured finite range.
 
     Fitting learns finite minima, maxima, scales, and offsets. Constant features

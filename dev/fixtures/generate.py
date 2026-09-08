@@ -404,6 +404,116 @@ def generate_preprocessing_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_univariate_selection_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.feature_selection import (
+        SelectKBest,
+        SelectPercentile,
+        f_classif,
+        f_regression,
+    )
+
+    regression_x = np.array(
+        [
+            [-2.0, 4.0, 0.3, 7.0],
+            [-1.5, 2.25, -0.2, 7.0],
+            [-1.0, 1.0, 1.2, 7.0],
+            [-0.5, 0.25, 0.7, 7.0],
+            [0.0, 0.0, -0.8, 7.0],
+            [0.5, 0.25, 0.1, 7.0],
+            [1.0, 1.0, -1.1, 7.0],
+            [1.5, 2.25, 0.9, 7.0],
+            [2.0, 4.0, -0.4, 7.0],
+            [2.5, 6.25, 1.5, 7.0],
+        ],
+        dtype=np.float64,
+    )
+    regression_y = np.array(
+        [-3.8, -2.4, -2.1, -0.4, 0.2, 1.4, 1.7, 3.5, 3.8, 5.4],
+        dtype=np.float64,
+    )
+    regression_scores, _ = f_regression(regression_x, regression_y)
+    regression_selector = SelectKBest(f_regression, k=2).fit(
+        regression_x, regression_y
+    )
+
+    classification_x = np.array(
+        [
+            [-0.2, 0.0, 1.2, 4.0],
+            [0.1, 1.0, -0.3, 5.0],
+            [0.3, 2.0, 0.5, 3.0],
+            [-0.1, 1.0, -1.0, 4.0],
+            [2.8, 2.0, 0.1, 5.0],
+            [3.1, 0.0, 1.5, 4.0],
+            [3.3, 1.0, -0.7, 3.0],
+            [2.9, 2.0, 0.8, 5.0],
+            [6.2, 1.0, -1.4, 4.0],
+            [5.8, 2.0, 0.2, 3.0],
+            [6.1, 0.0, 1.0, 5.0],
+            [5.9, 1.0, -0.1, 4.0],
+        ],
+        dtype=np.float64,
+    )
+    classification_y = np.repeat(np.array([-3, 4, 11], dtype=np.int64), 4)
+    classification_scores, _ = f_classif(classification_x, classification_y)
+    classification_selector = SelectPercentile(f_classif, percentile=50.0).fit(
+        classification_x, classification_y
+    )
+
+    rows = ["# ModelKit sklearn univariate-selection reference fixture v1"]
+
+    def add_matrix(name: str, matrix) -> None:
+        for index, row in enumerate(matrix):
+            rows.append(f"{name}\t{index}\t{float_values(row)}")
+
+    def add_vector(name: str, values) -> None:
+        rows.append(f"{name}\t{float_values(values)}")
+
+    add_matrix("regression_x", regression_x)
+    add_vector("regression_y", regression_y)
+    add_vector("regression_scores", regression_scores)
+    add_vector("regression_selected", regression_selector.get_support(indices=True))
+    add_matrix("regression_output", regression_selector.transform(regression_x))
+    add_matrix("classification_x", classification_x)
+    add_vector("classification_y", classification_y)
+    add_vector("classification_scores", classification_scores)
+    add_vector(
+        "classification_selected",
+        classification_selector.get_support(indices=True),
+    )
+    add_matrix(
+        "classification_output",
+        classification_selector.transform(classification_x),
+    )
+
+    (fixture_dir / "univariate_selection_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "comparison": "F-scores, selected indices, and transformed dense matrices for count and percentile selection.",
+        "configuration": {
+            "classification_percentile": 50.0,
+            "regression_k": 2,
+        },
+        "environment": environment.metadata(),
+        "fixture": "univariate_selection_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.feature_selection.f_regression",
+            "sklearn.feature_selection.f_classif",
+            "sklearn.feature_selection.SelectKBest",
+            "sklearn.feature_selection.SelectPercentile",
+        ],
+        "schema_version": 1,
+    }
+    (fixture_dir / "univariate_selection_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def generate_transform_fixture(fixture_dir: Path) -> None:
     import numpy as np
     from sklearn.impute import MissingIndicator
@@ -2466,6 +2576,7 @@ def main() -> None:
     generate_permutation_test_fixture(fixture_dir)
     generate_metrics_fixture(fixture_dir)
     generate_preprocessing_fixture(fixture_dir)
+    generate_univariate_selection_fixture(fixture_dir)
     generate_transform_fixture(fixture_dir)
     generate_column_transformer_fixture(fixture_dir)
     generate_nested_composition_fixture(fixture_dir)

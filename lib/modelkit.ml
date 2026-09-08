@@ -45,6 +45,7 @@ module Reference_backend = Modelkit_protocols.Reference_backend
 module Simple_imputer = Modelkit_preprocessing.Simple_imputer
 module Standard_scaler = Modelkit_preprocessing.Standard_scaler
 module Variance_threshold = Modelkit_preprocessing.Variance_threshold
+module Univariate_selection = Modelkit_feature_selection.Univariate_selection
 module Min_max_scaler = Modelkit_transforms.Min_max_scaler
 module Max_abs_scaler = Modelkit_transforms.Max_abs_scaler
 module Robust_scaler = Modelkit_transforms.Robust_scaler

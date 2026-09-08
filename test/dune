@@ -26,6 +26,24 @@
  (libraries modelkit alcotest))
 
 (test
+ (name feature_selection_test)
+ (modules feature_selection_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name univariate_selection_fixture_test)
+ (modules univariate_selection_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/univariate_selection_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_UNIVARIATE_FIXTURE
+   %{dep:fixtures/sklearn/univariate_selection_v1.tsv}
+   (run %{test}))))
+
+(test
  (name transforms_test)
  (modules transforms_test)
  (package modelkit)

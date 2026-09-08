@@ -8,6 +8,7 @@
   modelkit_conformance
   modelkit_class_weight
   modelkit_data
+  modelkit_feature_selection
   modelkit_glm
   modelkit_linear_classifiers
   modelkit_linear_models
