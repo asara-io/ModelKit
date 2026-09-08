@@ -24,4 +24,5 @@
   modelkit_partitioning
   modelkit_splitting
   modelkit_target
+  modelkit_transform_cache
   modelkit_transforms))

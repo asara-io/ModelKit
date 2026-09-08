@@ -104,6 +104,39 @@ scores, and repeatability. Reports are data rather than Alcotest values, so a
 third-party package can make them fail its preferred test runner by asserting
 {!val:Modelkit.Conformance.passed}.
 
+{1 Transform-cache foundation}
+
+{!Modelkit.Transform_cache} defines the data and ownership contracts for
+opt-in reuse of fitted transformer state. This increment establishes the cache
+foundation only: pipelines, cross-validation, and search do not yet read or
+write cache entries, and persistent storage is scheduled separately.
+
+{!Modelkit.Transform_cache.Component} gives each codec a validated,
+package-qualified name and positive format version. A
+{!Modelkit.Transform_cache.Key} canonically frames the component identity,
+immutable configuration, training features, optional target, routed metadata,
+and logical seed. Changing any one field produces a different key. Content IDs
+use OCaml's portable [Digest] implementation for deterministic cache identity;
+they are accidental-collision detectors, not cryptographic authentication, and
+must not be used as trust proofs for attacker-controlled content.
+
+A transformer that implements
+{!module-type:Modelkit.Transform_cache.CACHEABLE_TRANSFORMER} supplies a stable
+configuration identity plus reviewed encoders and validating decoders for its
+fitted state. {!Modelkit.Transform_cache.Codec} preserves the specification and
+fitted types across that boundary. Requesting caching for an ordinary
+transformer through {!val:Modelkit.Transform_cache.Codec.require} returns a
+typed compatibility error rather than silently omitting or inventing a codec.
+
+{!Modelkit.Transform_cache.Memory} is an explicitly created, caller-owned
+store; ModelKit installs no process-global cache. It copies byte payloads on
+insertion and retrieval, bounds retained payload bytes and entry count, and
+evicts the least-recently-written entries. Updates and counters are safe across
+OCaml domains. The byte bound excludes keys and OCaml allocation headers, so it
+is a payload limit rather than a total resident-memory guarantee. Cached fitted
+payloads can reveal properties of training data and should be scoped and
+handled with the same care as fitted models.
+
 {1 Sparse storage foundation}
 
 {!Modelkit.Csr_matrix} copies admitted index arrays and requires canonical CSR

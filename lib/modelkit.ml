@@ -19,6 +19,7 @@ module Conversion_report = Modelkit_data.Conversion_report
 module Admission = Modelkit_data.Admission
 module Callback = Modelkit_callback.Callback
 module Metadata = Modelkit_metadata.Metadata
+module Transform_cache = Modelkit_transform_cache.Transform_cache
 
 module type METADATA_TRANSFORMER = Modelkit_protocols.METADATA_TRANSFORMER
 module type METADATA_ESTIMATOR = Modelkit_protocols.METADATA_ESTIMATOR

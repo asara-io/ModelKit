@@ -236,6 +236,12 @@
  (libraries modelkit alcotest))
 
 (test
+ (name transform_cache_test)
+ (modules transform_cache_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
  (name convention_test)
  (modules convention_test)
  (package modelkit)
