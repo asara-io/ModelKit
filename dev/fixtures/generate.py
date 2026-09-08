@@ -635,8 +635,9 @@ def generate_model_based_selection_fixture(fixture_dir: Path) -> None:
 
 def generate_recursive_feature_elimination_fixture(fixture_dir: Path) -> None:
     import numpy as np
-    from sklearn.feature_selection import RFE
+    from sklearn.feature_selection import RFE, RFECV
     from sklearn.linear_model import LinearRegression, RidgeClassifier
+    from sklearn.model_selection import KFold, StratifiedKFold
 
     regression_x = np.array(
         [
@@ -744,6 +745,108 @@ def generate_recursive_feature_elimination_fixture(fixture_dir: Path) -> None:
     }
     (fixture_dir / "recursive_feature_elimination_v1.metadata.json").write_text(
         json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    regression_cv_selector = RFECV(
+        LinearRegression(),
+        step=1,
+        min_features_to_select=1,
+        cv=KFold(n_splits=3, shuffle=False),
+        scoring="neg_mean_squared_error",
+    ).fit(regression_x, regression_y)
+    classification_cv_selector = RFECV(
+        RidgeClassifier(alpha=0.5),
+        step=0.4,
+        min_features_to_select=1,
+        cv=StratifiedKFold(n_splits=3, shuffle=False),
+        scoring="accuracy",
+    ).fit(classification_x, classification_y)
+
+    cv_rows = [
+        "# ModelKit sklearn recursive-feature-elimination CV reference fixture v1"
+    ]
+
+    def add_cv_matrix(name: str, matrix) -> None:
+        for index, row in enumerate(matrix):
+            cv_rows.append(f"{name}\t{index}\t{float_values(row)}")
+
+    def add_cv_vector(name: str, values) -> None:
+        cv_rows.append(f"{name}\t{float_values(values)}")
+
+    def add_cv_results(prefix: str, selector) -> None:
+        results = selector.cv_results_
+        add_cv_vector(f"{prefix}_feature_counts", results["n_features"])
+        add_cv_vector(f"{prefix}_mean_scores", results["mean_test_score"])
+        add_cv_vector(f"{prefix}_standard_deviations", results["std_test_score"])
+        for fold in range(3):
+            add_cv_vector(
+                f"{prefix}_fold_{fold}_scores", results[f"split{fold}_test_score"]
+            )
+
+    add_cv_matrix("regression_x", regression_x)
+    add_cv_vector("regression_y", regression_y)
+    add_cv_results("regression", regression_cv_selector)
+    add_cv_vector(
+        "regression_selected", regression_cv_selector.get_support(indices=True)
+    )
+    add_cv_vector("regression_ranking", regression_cv_selector.ranking_)
+    add_cv_vector(
+        "regression_importances", np.abs(regression_cv_selector.estimator_.coef_)
+    )
+    add_cv_matrix("regression_output", regression_cv_selector.transform(regression_x))
+    add_cv_matrix("classification_x", classification_x)
+    add_cv_vector("classification_y", classification_y)
+    add_cv_results("classification", classification_cv_selector)
+    add_cv_vector(
+        "classification_selected",
+        classification_cv_selector.get_support(indices=True),
+    )
+    add_cv_vector("classification_ranking", classification_cv_selector.ranking_)
+    add_cv_vector(
+        "classification_importances",
+        np.linalg.norm(
+            classification_cv_selector.estimator_.coef_, ord=1, axis=0
+        ),
+    )
+    add_cv_matrix(
+        "classification_output", classification_cv_selector.transform(classification_x)
+    )
+
+    (fixture_dir / "recursive_feature_elimination_cv_v1.tsv").write_text(
+        "\n".join(cv_rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    cv_metadata = {
+        "comparison": "Fold scores by ascending feature count, selected indices, rankings, final-estimator importances, and transformed dense matrices.",
+        "configuration": {
+            "classification_cv": "StratifiedKFold(n_splits=3, shuffle=False)",
+            "classification_estimator": "RidgeClassifier(alpha=0.5)",
+            "classification_scoring": "accuracy",
+            "classification_step": 0.4,
+            "minimum_feature_count": 1,
+            "regression_cv": "KFold(n_splits=3, shuffle=False)",
+            "regression_estimator": "LinearRegression()",
+            "regression_scoring": "neg_mean_squared_error",
+            "regression_step": 1,
+        },
+        "environment": environment.metadata(),
+        "fixture": "recursive_feature_elimination_cv_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.feature_selection.RFECV",
+            "sklearn.linear_model.LinearRegression",
+            "sklearn.linear_model.RidgeClassifier",
+            "sklearn.model_selection.KFold",
+            "sklearn.model_selection.StratifiedKFold",
+        ],
+        "schema_version": 1,
+    }
+    (
+        fixture_dir / "recursive_feature_elimination_cv_v1.metadata.json"
+    ).write_text(
+        json.dumps(cv_metadata, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
         newline="\n",
     )

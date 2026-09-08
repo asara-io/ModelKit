@@ -4289,6 +4289,172 @@ module Cross_validation : sig
   end
 end
 
+(** Dense recursive feature elimination with fold-local cross-validation.
+
+    Every validation fold follows one complete elimination path and scores each
+    visited feature width on untouched test rows. Folds use the supplied bounded
+    {!Execution.t}; fits within a fold remain sequential. The smallest feature
+    count wins equal mean scores. After selection, a fresh recursive elimination
+    run fits the chosen width on all supplied rows.
+
+    The optional [max_fits] bound is checked before estimator fitting against
+    [path widths * (folds + 1)], covering every fold path plus the largest
+    possible full-data refit. Actual fit count can be lower when CV selects more
+    than the minimum number of features. Inputs are finite dense matrices.
+    Weights are selected for both fold fitting and scoring, and groups are
+    supplied to the configured splitter. Binary and multiclass variants accept
+    label-response scorers; probability-response scoring requires a future
+    importance-and-response protocol. *)
+module Recursive_feature_elimination_cv : sig
+  type score = {
+    feature_count : int;
+    fold_scores : float array;
+    mean_score : float;
+    standard_deviation : float;
+  }
+
+  module Regression : sig
+    module Make
+        (Estimator :
+          IMPORTANCE_ESTIMATOR
+            with type target = Target.regression Target.t
+             and type prediction = Target.regression Target.t
+             and type rng = Rng.t) : sig
+      type params = {
+        min_feature_count : int;
+        step : Recursive_feature_elimination.step;
+        max_fits : int option;
+        scorer_name : string;
+        estimator_params : Estimator.params;
+      }
+
+      type t
+      type fitted
+
+      val create :
+        ?min_feature_count:int ->
+        ?step:Recursive_feature_elimination.step ->
+        ?max_fits:int ->
+        ?execution:Execution.t ->
+        splitter:Target.regression Target.t Cross_validation.splitter ->
+        scorer:Regression_scorer.t ->
+        Estimator.t ->
+        (t, Error.t) result
+
+      val cv_results : fitted -> score array
+      (** Returns feature counts in ascending order with defensive fold-score
+          copies. *)
+
+      val selected_feature_count : fitted -> int
+      val selected_indices : fitted -> int array
+      val ranking : fitted -> int array
+      val final_importances : fitted -> Vector.t
+      val fitted_estimator : fitted -> Estimator.fitted
+      val fit_count : fitted -> int
+
+      include
+        METADATA_TRANSFORMER
+          with type t := t
+           and type params := params
+           and type target = Target.regression Target.t
+           and type fitted := fitted
+           and type rng = Rng.t
+    end
+  end
+
+  module Binary_classification : sig
+    module Make
+        (Estimator :
+          IMPORTANCE_ESTIMATOR
+            with type target = Target.classification Target.t
+             and type prediction = Target.classification Target.t
+             and type rng = Rng.t) : sig
+      type params = {
+        min_feature_count : int;
+        step : Recursive_feature_elimination.step;
+        max_fits : int option;
+        scorer_name : string;
+        estimator_params : Estimator.params;
+      }
+
+      type t
+      type fitted
+
+      val create :
+        ?min_feature_count:int ->
+        ?step:Recursive_feature_elimination.step ->
+        ?max_fits:int ->
+        ?execution:Execution.t ->
+        splitter:Target.classification Target.t Cross_validation.splitter ->
+        scorer:Binary_classification_scorer.t ->
+        Estimator.t ->
+        (t, Error.t) result
+
+      val cv_results : fitted -> score array
+      val selected_feature_count : fitted -> int
+      val selected_indices : fitted -> int array
+      val ranking : fitted -> int array
+      val final_importances : fitted -> Vector.t
+      val fitted_estimator : fitted -> Estimator.fitted
+      val fit_count : fitted -> int
+
+      include
+        METADATA_TRANSFORMER
+          with type t := t
+           and type params := params
+           and type target = Target.classification Target.t
+           and type fitted := fitted
+           and type rng = Rng.t
+    end
+  end
+
+  module Multiclass_classification : sig
+    module Make
+        (Estimator :
+          IMPORTANCE_ESTIMATOR
+            with type target = Target.classification Target.t
+             and type prediction = Target.classification Target.t
+             and type rng = Rng.t) : sig
+      type params = {
+        min_feature_count : int;
+        step : Recursive_feature_elimination.step;
+        max_fits : int option;
+        scorer_name : string;
+        estimator_params : Estimator.params;
+      }
+
+      type t
+      type fitted
+
+      val create :
+        ?min_feature_count:int ->
+        ?step:Recursive_feature_elimination.step ->
+        ?max_fits:int ->
+        ?execution:Execution.t ->
+        splitter:Target.classification Target.t Cross_validation.splitter ->
+        scorer:Multiclass_classification_scorer.t ->
+        Estimator.t ->
+        (t, Error.t) result
+
+      val cv_results : fitted -> score array
+      val selected_feature_count : fitted -> int
+      val selected_indices : fitted -> int array
+      val ranking : fitted -> int array
+      val final_importances : fitted -> Vector.t
+      val fitted_estimator : fitted -> Estimator.fitted
+      val fit_count : fitted -> int
+
+      include
+        METADATA_TRANSFORMER
+          with type t := t
+           and type params := params
+           and type target = Target.classification Target.t
+           and type fitted := fitted
+           and type rng = Rng.t
+    end
+  end
+end
+
 (** Leakage-safe learning curves over nested training-fold prefixes.
 
     A learning curve measures how train and validation scores change as each

@@ -136,6 +136,25 @@ module Recursive_feature_elimination : sig
     val final_importances : fitted -> Vector.t
     val fitted_estimator : fitted -> Estimator.fitted
 
+    module Internal : sig
+      type path_point
+
+      val fit_path :
+        t ->
+        ?sample_weight:Sample_weight.t ->
+        rng:Rng.t ->
+        feature_schema:Feature_schema.t ->
+        x:Matrix.t ->
+        y:Estimator.target option ->
+        unit ->
+        (path_point array * int array, Error.t) result
+
+      val estimator : path_point -> Estimator.fitted
+      val importances : path_point -> Vector.t
+      val selected_indices : path_point -> int array
+      val feature_schema : path_point -> Feature_schema.t
+    end
+
     include
       TRANSFORMER
         with type t := t

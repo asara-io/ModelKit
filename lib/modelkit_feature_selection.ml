@@ -800,6 +800,13 @@ module Recursive_feature_elimination = struct
       output_schema : Feature_schema.t;
     }
 
+    type path_point = {
+      path_estimator : Estimator.fitted;
+      path_importances : Vector.t;
+      path_selected : int array;
+      path_schema : Feature_schema.t;
+    }
+
     type target = Estimator.target
     type rng = Rng.t
 
@@ -954,7 +961,8 @@ module Recursive_feature_elimination = struct
         active;
       retained
 
-    let fit (specification : t) ?sample_weight ~rng ~feature_schema ~x ~y () =
+    let fit_path (specification : t) ?sample_weight ~rng ~feature_schema ~x ~y
+        () =
       let module Internal = Univariate_selection.Internal in
       let operation = "recursive feature elimination" in
       let* () = Internal.validate_input ~operation feature_schema x in
@@ -994,7 +1002,7 @@ module Recursive_feature_elimination = struct
       in
       let ranking = Array.make columns 1 in
       let root_seed = Rng.to_seed rng in
-      let rec eliminate round active =
+      let rec eliminate round reversed active =
         let* active_schema =
           if Array.length active = columns then Ok feature_schema
           else Internal.subset_schema feature_schema active
@@ -1031,8 +1039,16 @@ module Recursive_feature_elimination = struct
         let* () =
           validate_importances ~columns:(Array.length active) importances
         in
+        let point =
+          {
+            path_estimator = estimator;
+            path_importances = importances;
+            path_selected = active;
+            path_schema = active_schema;
+          }
+        in
         if Array.length active = desired then
-          Ok (active, active_schema, estimator, importances)
+          Ok (Array.of_list (List.rev (point :: reversed)), ranking)
         else
           let remove_count = Int.min step (Array.length active - desired) in
           let next = remove_weakest ~count:remove_count ~active ~importances in
@@ -1042,11 +1058,19 @@ module Recursive_feature_elimination = struct
             if not retained.(column) then
               ranking.(column) <- ranking.(column) + 1
           done;
-          eliminate (round + 1) next
+          eliminate (round + 1) (point :: reversed) next
       in
-      let* selected, output_schema, estimator, final_importances =
-        eliminate 0 (Array.init columns Fun.id)
+      eliminate 0 [] (Array.init columns Fun.id)
+
+    let fit (specification : t) ?sample_weight ~rng ~feature_schema ~x ~y () =
+      let* path, ranking =
+        fit_path specification ?sample_weight ~rng ~feature_schema ~x ~y ()
       in
+      let final = path.(Array.length path - 1) in
+      let selected = final.path_selected in
+      let output_schema = final.path_schema in
+      let estimator = final.path_estimator in
+      let final_importances = final.path_importances in
       Ok
         ({
            fitted_params_value =
@@ -1062,6 +1086,16 @@ module Recursive_feature_elimination = struct
            output_schema;
          }
           : fitted)
+
+    module Internal = struct
+      type nonrec path_point = path_point
+
+      let fit_path = fit_path
+      let estimator point = point.path_estimator
+      let importances point = point.path_importances
+      let selected_indices point = Array.copy point.path_selected
+      let feature_schema point = point.path_schema
+    end
 
     let transform (fitted : fitted) ~feature_schema ~x =
       Univariate_selection.Internal.transform

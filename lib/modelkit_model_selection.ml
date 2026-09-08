@@ -1397,6 +1397,537 @@ module Cross_validation = struct
   end
 end
 
+module Recursive_feature_elimination_cv = struct
+  type score = {
+    feature_count : int;
+    fold_scores : float array;
+    mean_score : float;
+    standard_deviation : float;
+  }
+
+  let validation ~remediation name reason =
+    Error (Error.make ~remediation (Error.Validation { name; reason }))
+
+  module type TASK = sig
+    type kind
+    type prediction
+    type scorer
+
+    val scorer_name : scorer -> string
+    val clone_scorer : scorer -> scorer
+    val validate_scorer : scorer -> (unit, Error.t) result
+
+    val score :
+      scorer ->
+      ?sample_weight:Sample_weight.t ->
+      truth:kind Target.t ->
+      prediction:prediction ->
+      unit ->
+      (float, Error.t) result
+  end
+
+  module Make
+      (Task : TASK)
+      (Estimator :
+        IMPORTANCE_ESTIMATOR
+          with type target = Task.kind Target.t
+           and type prediction = Task.prediction
+           and type rng = Rng.t) =
+  struct
+    module Rfe =
+      Modelkit_feature_selection.Recursive_feature_elimination.Make (Estimator)
+
+    type params = {
+      min_feature_count : int;
+      step : Modelkit_feature_selection.Recursive_feature_elimination.step;
+      max_fits : int option;
+      scorer_name : string;
+      estimator_params : Estimator.params;
+    }
+
+    type t = {
+      specification_params : params;
+      estimator_specification : Estimator.t;
+      path_specification : Rfe.t;
+      splitter : Task.kind Target.t Cross_validation.splitter;
+      scorer : Task.scorer;
+      execution : Execution.t;
+    }
+
+    type fitted = {
+      fitted_params_value : params;
+      fitted_rfe : Rfe.fitted;
+      cv_scores : score array;
+      selected_feature_count : int;
+      fit_count : int;
+    }
+
+    type target = Task.kind Target.t
+    type rng = Rng.t
+
+    let ( let* ) = Result.bind
+
+    let validation ~remediation name reason =
+      Error (Error.make ~remediation (Error.Validation { name; reason }))
+
+    let validate_max_fits = function
+      | None -> Ok ()
+      | Some count when count > 0 -> Ok ()
+      | Some _ ->
+          validation ~remediation:"choose a strictly positive fit bound"
+            "recursive feature elimination CV max_fits" "must be positive"
+
+    let create ?(min_feature_count = 1)
+        ?(step =
+          Modelkit_feature_selection.Recursive_feature_elimination.Count 1)
+        ?max_fits ?(execution = Execution.sequential) ~splitter ~scorer
+        estimator =
+      let* () = validate_max_fits max_fits in
+      let* () = Task.validate_scorer scorer in
+      let* path_specification =
+        Rfe.create ~step ~feature_count:min_feature_count estimator
+      in
+      Ok
+        ({
+           specification_params =
+             {
+               min_feature_count;
+               step;
+               max_fits;
+               scorer_name = Task.scorer_name scorer;
+               estimator_params = Estimator.params estimator;
+             };
+           estimator_specification = estimator;
+           path_specification;
+           splitter;
+           scorer;
+           execution;
+         }
+          : t)
+
+    let clone (specification : t) =
+      let estimator = Estimator.clone specification.estimator_specification in
+      let path_specification =
+        Rfe.create ~step:specification.specification_params.step
+          ~feature_count:specification.specification_params.min_feature_count
+          estimator
+        |> Result.get_ok
+      in
+      ({
+         specification_params =
+           {
+             specification.specification_params with
+             scorer_name = Task.scorer_name specification.scorer;
+             estimator_params = Estimator.params estimator;
+           };
+         estimator_specification = estimator;
+         path_specification;
+         splitter = specification.splitter;
+         scorer = Task.clone_scorer specification.scorer;
+         execution = specification.execution;
+       }
+        : t)
+
+    let params (specification : t) = specification.specification_params
+
+    let fit_request _ =
+      Metadata.Request.create ~sample_weight:Metadata.Request.Optional
+        ~groups:Metadata.Request.Optional ()
+
+    let transform_request _ = Metadata.Request.none
+
+    let resolved_step step columns =
+      match step with
+      | Modelkit_feature_selection.Recursive_feature_elimination.Count count ->
+          count
+      | Modelkit_feature_selection.Recursive_feature_elimination.Fraction
+          fraction ->
+          Int.max 1
+            (int_of_float (Float.floor (fraction *. Float.of_int columns)))
+
+    let path_counts ~columns ~minimum ~step =
+      let step = resolved_step step columns in
+      let rec build reversed current =
+        if current = minimum then Array.of_list (List.rev (current :: reversed))
+        else build (current :: reversed) (Int.max minimum (current - step))
+      in
+      build [] columns
+
+    let fit_upper_bound ~path_length ~folds =
+      let multiplier = folds + 1 in
+      if path_length > max_int / multiplier then
+        validation
+          ~remediation:
+            "use fewer folds, a larger elimination step, or a narrower input"
+          "recursive feature elimination CV fit plan"
+          "fit count exceeds the platform integer range"
+      else Ok (path_length * multiplier)
+
+    let enforce_fit_bound specification planned =
+      match specification.specification_params.max_fits with
+      | None -> Ok ()
+      | Some maximum when planned <= maximum -> Ok ()
+      | Some maximum ->
+          validation
+            ~remediation:
+              "raise max_fits or reduce folds, input width, or elimination \
+               rounds"
+            "recursive feature elimination CV fit plan"
+            (Printf.sprintf "upper bound %d exceeds max_fits %d" planned maximum)
+
+    let contextualize_fold fold error =
+      Error.with_context (Error.Fold fold) error
+
+    let subset_matrix x selected =
+      Matrix.init ~rows:(Matrix.rows x) ~columns:(Array.length selected)
+        (fun row output_column -> Matrix.get x row selected.(output_column))
+      |> Result.map_error (fun error ->
+          Error.of_data_error
+            ~remediation:
+              "provide representable recursive-elimination CV matrix dimensions"
+            error)
+
+    let dataset metadata ~feature_schema ~x ~target =
+      let* () = Metadata.validate ~rows:(Matrix.rows x) metadata in
+      let* () =
+        Feature_schema.validate_matrix feature_schema x
+        |> Result.map_error (fun error ->
+            Error.of_data_error
+              ~remediation:"provide features matching the declared schema" error)
+      in
+      Dataset.create ~finiteness:Dataset.Require_finite
+        ?feature_names:(Feature_schema.names feature_schema)
+        ?sample_weight:(Metadata.sample_weight metadata)
+        ?groups:(Metadata.groups metadata) ~x ~y:target ()
+      |> Result.map_error (fun error ->
+          Error.of_data_error
+            ~remediation:
+              "provide finite, aligned data for recursive feature elimination \
+               CV"
+            error)
+
+    let validated_splits specification ~rng dataset =
+      let splitter_rng =
+        Rng.create
+          (Seed.derive (Rng.to_seed rng)
+             ~operation:"recursive-feature-elimination-cv-splitter" ~index:0)
+      in
+      let* pairs =
+        specification.splitter.Cross_validation.run_splitter ~rng:splitter_rng
+          ~groups:(Dataset.groups dataset) ~x:(Dataset.features dataset)
+          ~y:(Dataset.target dataset)
+      in
+      if Array.length pairs = 0 then
+        validation ~remediation:"use a splitter that produces at least one fold"
+          "recursive feature elimination CV splits"
+          "the splitter produced no folds"
+      else
+        let rec loop index reversed =
+          if index = Array.length pairs then
+            Ok (Array.of_list (List.rev reversed))
+          else
+            let train, test = pairs.(index) in
+            let* split =
+              Split.of_views ~train ~test
+              |> Result.map_error (contextualize_fold index)
+            in
+            loop (index + 1) (split :: reversed)
+        in
+        loop 0 []
+
+    let score_path specification ~root_seed ~fold_index ~expected_counts train
+        test =
+      let fold_rng =
+        Rng.create
+          (Seed.derive root_seed
+             ~operation:"recursive-feature-elimination-cv-fold"
+             ~index:fold_index)
+      in
+      let* path, _ranking =
+        Rfe.Internal.fit_path
+          (Rfe.clone specification.path_specification)
+          ?sample_weight:(Dataset.sample_weight train)
+          ~rng:fold_rng
+          ~feature_schema:(Dataset.feature_schema train)
+          ~x:(Dataset.features train)
+          ~y:(Some (Dataset.target train))
+          ()
+      in
+      let* () =
+        if Array.length path = Array.length expected_counts then Ok ()
+        else
+          Error
+            (Error.make
+               ~remediation:
+                 "report one fitted point for every recursive elimination width"
+               (Error.Compatibility
+                  {
+                    component = "recursive feature elimination path";
+                    reason = "returned an unexpected number of fitted points";
+                  }))
+      in
+      let rec score_points index reversed =
+        if index = Array.length path then Ok (Array.of_list (List.rev reversed))
+        else
+          let point = path.(index) in
+          let selected = Rfe.Internal.selected_indices point in
+          let* () =
+            if Array.length selected = expected_counts.(index) then Ok ()
+            else
+              Error
+                (Error.make
+                   ~remediation:
+                     "preserve the declared recursive elimination path widths"
+                   (Error.Compatibility
+                      {
+                        component = "recursive feature elimination path";
+                        reason = "returned an unexpected fitted feature width";
+                      }))
+          in
+          let* test_x = subset_matrix (Dataset.features test) selected in
+          let point_schema = Rfe.Internal.feature_schema point in
+          let* prediction =
+            Estimator.predict
+              (Rfe.Internal.estimator point)
+              ~feature_schema:point_schema ~x:test_x
+          in
+          let* value =
+            Task.score specification.scorer
+              ?sample_weight:(Dataset.sample_weight test)
+              ~truth:(Dataset.target test) ~prediction ()
+            |> Result.map_error
+                 (Error.with_context
+                    (Error.Stage
+                       (Printf.sprintf "%s with %d features"
+                          specification.specification_params.scorer_name
+                          expected_counts.(index))))
+          in
+          score_points (index + 1) (value :: reversed)
+      in
+      score_points 0 [] |> Result.map_error (contextualize_fold fold_index)
+
+    let summarize counts fold_scores =
+      let path_length = Array.length counts in
+      let folds = Array.length fold_scores in
+      let rec build output reversed =
+        if output = path_length then Ok (Array.of_list (List.rev reversed))
+        else
+          let path_index = path_length - output - 1 in
+          let values =
+            Array.init folds (fun fold -> fold_scores.(fold).(path_index))
+          in
+          let* aggregate = Score_aggregation.summarize values in
+          build (output + 1)
+            ({
+               feature_count = counts.(path_index);
+               fold_scores = values;
+               mean_score = aggregate.Score_aggregation.mean;
+               standard_deviation =
+                 aggregate.Score_aggregation.standard_deviation;
+             }
+            :: reversed)
+      in
+      build 0 []
+
+    let choose_feature_count scores =
+      let best = ref 0 in
+      for index = 1 to Array.length scores - 1 do
+        if scores.(index).mean_score > scores.(!best).mean_score then
+          best := index
+      done;
+      scores.(!best).feature_count
+
+    let fit (specification : t) ~metadata ~rng ~feature_schema ~x ~y () =
+      let* target =
+        match y with
+        | Some target -> Ok target
+        | None ->
+            validation
+              ~remediation:
+                "package this selector as a supervised metadata transformer \
+                 and provide training targets"
+              "recursive feature elimination CV target" "is required"
+      in
+      let* dataset = dataset metadata ~feature_schema ~x ~target in
+      let columns = Matrix.columns x in
+      let minimum = specification.specification_params.min_feature_count in
+      let* () =
+        if minimum <= columns then Ok ()
+        else
+          validation
+            ~remediation:
+              "choose a minimum feature count no greater than the input width"
+            "recursive feature elimination CV min_feature_count"
+            (Printf.sprintf "is %d for an input with %d features" minimum
+               columns)
+      in
+      let counts =
+        path_counts ~columns ~minimum
+          ~step:specification.specification_params.step
+      in
+      let* splits = validated_splits specification ~rng dataset in
+      let* upper_bound =
+        fit_upper_bound ~path_length:(Array.length counts)
+          ~folds:(Array.length splits)
+      in
+      let* () = enforce_fit_bound specification upper_bound in
+      let root_seed = Rng.to_seed rng in
+      let* fold_scores =
+        Execution.map specification.execution splits ~f:(fun ~index split ->
+            let* train, test =
+              Split.materialize dataset split
+              |> Result.map_error (contextualize_fold index)
+            in
+            score_path specification ~root_seed ~fold_index:index
+              ~expected_counts:counts train test)
+      in
+      let* cv_scores = summarize counts fold_scores in
+      let selected_feature_count = choose_feature_count cv_scores in
+      let* final_specification =
+        Rfe.create ~step:specification.specification_params.step
+          ~feature_count:selected_feature_count
+          (Estimator.clone specification.estimator_specification)
+      in
+      let refit_rng =
+        Rng.create
+          (Seed.derive root_seed
+             ~operation:"recursive-feature-elimination-cv-refit" ~index:0)
+      in
+      let* fitted_rfe =
+        Rfe.fit final_specification
+          ?sample_weight:(Metadata.sample_weight metadata)
+          ~rng:refit_rng ~feature_schema ~x ~y:(Some target) ()
+      in
+      let refit_count =
+        Array.length
+          (path_counts ~columns ~minimum:selected_feature_count
+             ~step:specification.specification_params.step)
+      in
+      let fit_count =
+        (Array.length splits * Array.length counts) + refit_count
+      in
+      let fitted_estimator_params =
+        (Rfe.fitted_params fitted_rfe).Rfe.estimator_params
+      in
+      Ok
+        ({
+           fitted_params_value =
+             {
+               specification.specification_params with
+               estimator_params = fitted_estimator_params;
+             };
+           fitted_rfe;
+           cv_scores;
+           selected_feature_count;
+           fit_count;
+         }
+          : fitted)
+
+    let transform (fitted : fitted) ~metadata ~feature_schema ~x =
+      let* () = Metadata.validate ~rows:(Matrix.rows x) metadata in
+      Rfe.transform fitted.fitted_rfe ~feature_schema ~x
+
+    let fitted_params (fitted : fitted) = fitted.fitted_params_value
+    let input_schema (fitted : fitted) = Rfe.input_schema fitted.fitted_rfe
+    let output_schema (fitted : fitted) = Rfe.output_schema fitted.fitted_rfe
+
+    let cv_results (fitted : fitted) =
+      Array.map
+        (fun score -> { score with fold_scores = Array.copy score.fold_scores })
+        fitted.cv_scores
+
+    let selected_feature_count (fitted : fitted) = fitted.selected_feature_count
+
+    let selected_indices (fitted : fitted) =
+      Rfe.selected_indices fitted.fitted_rfe
+
+    let ranking (fitted : fitted) = Rfe.ranking fitted.fitted_rfe
+
+    let final_importances (fitted : fitted) =
+      Rfe.final_importances fitted.fitted_rfe
+
+    let fitted_estimator (fitted : fitted) =
+      Rfe.fitted_estimator fitted.fitted_rfe
+
+    let fit_count (fitted : fitted) = fitted.fit_count
+  end
+
+  module Regression = struct
+    module Task = struct
+      type kind = Target.regression
+      type prediction = Target.regression Target.t
+      type scorer = Regression_scorer.t
+
+      let scorer_name = Regression_scorer.name
+      let clone_scorer = Regression_scorer.clone
+      let validate_scorer _ = Ok ()
+      let score = Regression_scorer.score
+    end
+
+    module Make = Make (Task)
+  end
+
+  module Binary_classification = struct
+    module Task = struct
+      type kind = Target.classification
+      type prediction = Target.classification Target.t
+      type scorer = Binary_classification_scorer.t
+
+      let scorer_name = Binary_classification_scorer.name
+      let clone_scorer = Binary_classification_scorer.clone
+
+      let validate_scorer scorer =
+        match Binary_classification_scorer.response scorer with
+        | Binary_classification_scorer.Labels -> Ok ()
+        | Binary_classification_scorer.Positive_probabilities ->
+            validation
+              ~remediation:
+                "use a label-response scorer with the importance estimator \
+                 protocol"
+              "recursive feature elimination CV binary scorer"
+              "positive-probability responses are not available"
+
+      let score scorer ?sample_weight ~truth ~prediction () =
+        Result.bind (Binary_prediction.create ~labels:prediction ())
+          (fun prediction ->
+            Binary_classification_scorer.score scorer ?sample_weight ~truth
+              ~prediction ())
+    end
+
+    module Make = Make (Task)
+  end
+
+  module Multiclass_classification = struct
+    module Task = struct
+      type kind = Target.classification
+      type prediction = Target.classification Target.t
+      type scorer = Multiclass_classification_scorer.t
+
+      let scorer_name = Multiclass_classification_scorer.name
+      let clone_scorer = Multiclass_classification_scorer.clone
+
+      let validate_scorer scorer =
+        match Multiclass_classification_scorer.response scorer with
+        | Multiclass_classification_scorer.Labels -> Ok ()
+        | Multiclass_classification_scorer.Class_probabilities ->
+            validation
+              ~remediation:
+                "use a label-response scorer with the importance estimator \
+                 protocol"
+              "recursive feature elimination CV multiclass scorer"
+              "class-probability responses are not available"
+
+      let score scorer ?sample_weight ~truth ~prediction () =
+        Result.bind (Multiclass_prediction.create ~labels:prediction ())
+          (fun prediction ->
+            Multiclass_classification_scorer.score scorer ?sample_weight ~truth
+              ~prediction ())
+    end
+
+    module Make = Make (Task)
+  end
+end
+
 module Learning_curve = struct
   type training_size = Count of int | Fraction of float
 

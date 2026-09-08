@@ -29,6 +29,12 @@
  (libraries modelkit modelkit-parallel alcotest))
 
 (test
+ (name recursive_feature_elimination_cv_parallel_test)
+ (modules recursive_feature_elimination_cv_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel alcotest))
+
+(test
  (name permutation_test_parallel_test)
  (modules permutation_test_parallel_test)
  (package modelkit-parallel)

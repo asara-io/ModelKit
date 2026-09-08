@@ -117,6 +117,10 @@ module Multiclass_ranking = Modelkit_metrics.Multiclass_ranking
 module Ranking_metrics = Modelkit_metrics.Ranking_metrics
 module Score_aggregation = Modelkit_metrics.Score_aggregation
 module Cross_validation = Modelkit_model_selection.Cross_validation
+
+module Recursive_feature_elimination_cv =
+  Modelkit_model_selection.Recursive_feature_elimination_cv
+
 module Learning_curve = Modelkit_model_selection.Learning_curve
 module Search_checkpoint = Modelkit_model_selection.Search_checkpoint
 module Grid_search = Modelkit_model_selection.Grid_search
