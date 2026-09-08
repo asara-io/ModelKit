@@ -113,3 +113,35 @@ module Select_from_model : sig
          and type rng = Rng.t
   end
 end
+
+(** Dense recursive feature elimination using fitted estimator importances. *)
+module Recursive_feature_elimination : sig
+  type step = Count of int | Fraction of float
+
+  module Make (Estimator : IMPORTANCE_ESTIMATOR with type rng = Rng.t) : sig
+    type params = {
+      feature_count : int;
+      step : step;
+      estimator_params : Estimator.params;
+    }
+
+    type t
+    type fitted
+
+    val create :
+      ?step:step -> feature_count:int -> Estimator.t -> (t, Error.t) result
+
+    val selected_indices : fitted -> int array
+    val ranking : fitted -> int array
+    val final_importances : fitted -> Vector.t
+    val fitted_estimator : fitted -> Estimator.fitted
+
+    include
+      TRANSFORMER
+        with type t := t
+         and type params := params
+         and type target = Estimator.target
+         and type fitted := fitted
+         and type rng = Rng.t
+  end
+end

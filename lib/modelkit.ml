@@ -49,6 +49,10 @@ module Variance_threshold = Modelkit_preprocessing.Variance_threshold
 module Univariate_selection = Modelkit_feature_selection.Univariate_selection
 module Feature_importance = Modelkit_feature_selection.Feature_importance
 module Select_from_model = Modelkit_feature_selection.Select_from_model
+
+module Recursive_feature_elimination =
+  Modelkit_feature_selection.Recursive_feature_elimination
+
 module Min_max_scaler = Modelkit_transforms.Min_max_scaler
 module Max_abs_scaler = Modelkit_transforms.Max_abs_scaler
 module Robust_scaler = Modelkit_transforms.Robust_scaler

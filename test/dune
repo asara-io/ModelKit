@@ -62,6 +62,24 @@
    (run %{test}))))
 
 (test
+ (name recursive_feature_elimination_test)
+ (modules recursive_feature_elimination_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name recursive_feature_elimination_fixture_test)
+ (modules recursive_feature_elimination_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/recursive_feature_elimination_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_RFE_FIXTURE
+   %{dep:fixtures/sklearn/recursive_feature_elimination_v1.tsv}
+   (run %{test}))))
+
+(test
  (name transforms_test)
  (modules transforms_test)
  (package modelkit)

@@ -1512,6 +1512,55 @@ module Select_from_model : sig
   end
 end
 
+(** Dense recursive feature elimination using fitted estimator importances.
+
+    [Count n] removes at most [n] features per round. [Fraction f] resolves once
+    against the original input width as [max 1 (floor (f * width))] and requires
+    [0 < f < 1]. Every round fits a fresh clone on the active dense columns.
+    Weakest importances are removed first; equal importances remove the lower
+    original column index first. Ranking [1] denotes a selected feature, with
+    larger values denoting earlier elimination. The final fitted estimator and
+    its importances use exactly the selected output schema.
+
+    Inputs must be finite and contain at least one feature. Optional sample
+    weights are row-validated and routed to every estimator fit. Round seeds are
+    derived from logical round indices. Each reduced round materializes one
+    dense matrix containing its active columns; sparse input is not accepted. *)
+module Recursive_feature_elimination : sig
+  type step = Count of int | Fraction of float
+
+  module Make (Estimator : IMPORTANCE_ESTIMATOR with type rng = Rng.t) : sig
+    type params = {
+      feature_count : int;
+      step : step;
+      estimator_params : Estimator.params;
+    }
+
+    type t
+    type fitted
+
+    val create :
+      ?step:step -> feature_count:int -> Estimator.t -> (t, Error.t) result
+
+    val selected_indices : fitted -> int array
+    val ranking : fitted -> int array
+
+    val final_importances : fitted -> Vector.t
+    (** Importances from the final estimator, in selected-feature order. *)
+
+    val fitted_estimator : fitted -> Estimator.fitted
+    (** The final estimator was trained on exactly the selected features. *)
+
+    include
+      TRANSFORMER
+        with type t := t
+         and type params := params
+         and type target = Estimator.target
+         and type fitted := fitted
+         and type rng = Rng.t
+  end
+end
+
 (** Per-feature affine scaling into a configured finite range.
 
     Fitting learns finite minima, maxima, scales, and offsets. Constant features

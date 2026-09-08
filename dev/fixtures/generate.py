@@ -633,6 +633,122 @@ def generate_model_based_selection_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_recursive_feature_elimination_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.feature_selection import RFE
+    from sklearn.linear_model import LinearRegression, RidgeClassifier
+
+    regression_x = np.array(
+        [
+            [-2.0, 4.0, 0.3, 1.0, -1.0],
+            [-1.5, 2.25, -0.2, 0.0, 1.0],
+            [-1.0, 1.0, 1.2, -1.0, 0.0],
+            [-0.5, 0.25, 0.7, 1.0, -1.0],
+            [0.0, 0.0, -0.8, 0.0, 1.0],
+            [0.5, 0.25, 0.1, -1.0, 0.0],
+            [1.0, 1.0, -1.1, 1.0, -1.0],
+            [1.5, 2.25, 0.9, 0.0, 1.0],
+            [2.0, 4.0, -0.4, -1.0, 0.0],
+            [2.5, 6.25, 1.5, 1.0, -1.0],
+        ],
+        dtype=np.float64,
+    )
+    regression_y = (
+        4.0 * regression_x[:, 0]
+        - 0.8 * regression_x[:, 1]
+        + 0.15 * regression_x[:, 2]
+        + 0.02 * regression_x[:, 3]
+        + 0.4 * regression_x[:, 4]
+        + 1.5
+    )
+    regression_selector = RFE(
+        LinearRegression(), n_features_to_select=2, step=1
+    ).fit(regression_x, regression_y)
+
+    classification_x = np.array(
+        [
+            [-0.2, 0.0, 1.2, 0.0, 1.0],
+            [0.1, 1.0, -0.3, 1.0, -1.0],
+            [0.3, 2.0, 0.5, -1.0, 0.0],
+            [-0.1, 1.0, -1.0, 0.5, 1.0],
+            [2.8, 2.0, 0.1, -0.5, -1.0],
+            [3.1, 0.0, 1.5, 1.0, 0.0],
+            [3.3, 1.0, -0.7, 0.0, 1.0],
+            [2.9, 2.0, 0.8, -1.0, -1.0],
+            [6.2, 1.0, -1.4, 0.5, 0.0],
+            [5.8, 2.0, 0.2, -0.5, 1.0],
+            [6.1, 0.0, 1.0, 1.0, -1.0],
+            [5.9, 1.0, -0.1, 0.0, 0.0],
+        ],
+        dtype=np.float64,
+    )
+    classification_y = np.repeat(np.array([-3, 4, 11], dtype=np.int64), 4)
+    classification_selector = RFE(
+        RidgeClassifier(alpha=0.5), n_features_to_select=2, step=0.4
+    ).fit(classification_x, classification_y)
+
+    rows = ["# ModelKit sklearn recursive-feature-elimination reference fixture v1"]
+
+    def add_matrix(name: str, matrix) -> None:
+        for index, row in enumerate(matrix):
+            rows.append(f"{name}\t{index}\t{float_values(row)}")
+
+    def add_vector(name: str, values) -> None:
+        rows.append(f"{name}\t{float_values(values)}")
+
+    add_matrix("regression_x", regression_x)
+    add_vector("regression_y", regression_y)
+    add_vector("regression_selected", regression_selector.get_support(indices=True))
+    add_vector("regression_ranking", regression_selector.ranking_)
+    add_vector("regression_importances", np.abs(regression_selector.estimator_.coef_))
+    add_matrix("regression_output", regression_selector.transform(regression_x))
+    add_matrix("classification_x", classification_x)
+    add_vector("classification_y", classification_y)
+    add_vector(
+        "classification_selected",
+        classification_selector.get_support(indices=True),
+    )
+    add_vector("classification_ranking", classification_selector.ranking_)
+    add_vector(
+        "classification_importances",
+        np.linalg.norm(classification_selector.estimator_.coef_, ord=1, axis=0),
+    )
+    add_matrix(
+        "classification_output",
+        classification_selector.transform(classification_x),
+    )
+
+    (fixture_dir / "recursive_feature_elimination_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "comparison": "Selected indices, elimination rankings, final-estimator importances, and transformed dense matrices.",
+        "configuration": {
+            "classification_estimator": "RidgeClassifier(alpha=0.5)",
+            "classification_feature_count": 2,
+            "classification_step": 0.4,
+            "regression_estimator": "LinearRegression()",
+            "regression_feature_count": 2,
+            "regression_step": 1,
+        },
+        "environment": environment.metadata(),
+        "fixture": "recursive_feature_elimination_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.feature_selection.RFE",
+            "sklearn.linear_model.LinearRegression",
+            "sklearn.linear_model.RidgeClassifier",
+        ],
+        "schema_version": 1,
+    }
+    (fixture_dir / "recursive_feature_elimination_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def generate_transform_fixture(fixture_dir: Path) -> None:
     import numpy as np
     from sklearn.impute import MissingIndicator
@@ -2697,6 +2813,7 @@ def main() -> None:
     generate_preprocessing_fixture(fixture_dir)
     generate_univariate_selection_fixture(fixture_dir)
     generate_model_based_selection_fixture(fixture_dir)
+    generate_recursive_feature_elimination_fixture(fixture_dir)
     generate_transform_fixture(fixture_dir)
     generate_column_transformer_fixture(fixture_dir)
     generate_nested_composition_fixture(fixture_dir)

@@ -774,3 +774,307 @@ module Select_from_model = struct
     let fitted_estimator (fitted : fitted) = fitted.fitted_model
   end
 end
+
+module Recursive_feature_elimination = struct
+  type step = Count of int | Fraction of float
+
+  module Make (Estimator : IMPORTANCE_ESTIMATOR with type rng = Rng.t) = struct
+    type params = {
+      feature_count : int;
+      step : step;
+      estimator_params : Estimator.params;
+    }
+
+    type t = {
+      specification_params : params;
+      estimator_specification : Estimator.t;
+    }
+
+    type fitted = {
+      fitted_params_value : params;
+      fitted_model : Estimator.fitted;
+      final_importances : Vector.t;
+      selected : int array;
+      feature_ranking : int array;
+      input_schema : Feature_schema.t;
+      output_schema : Feature_schema.t;
+    }
+
+    type target = Estimator.target
+    type rng = Rng.t
+
+    let ( let* ) = Result.bind
+
+    let validation ~remediation name reason =
+      Error (Error.make ~remediation (Error.Validation { name; reason }))
+
+    let validate_feature_count count =
+      if count > 0 then Ok ()
+      else
+        validation
+          ~remediation:"choose a strictly positive selected-feature count"
+          "recursive feature elimination feature_count" "must be positive"
+
+    let validate_step = function
+      | Count count when count > 0 -> Ok ()
+      | Count _ ->
+          validation
+            ~remediation:"choose a strictly positive integer elimination step"
+            "recursive feature elimination step" "must be positive"
+      | Fraction fraction
+        when Float.is_finite fraction && fraction > 0.0 && fraction < 1.0 ->
+          Ok ()
+      | Fraction _ ->
+          validation
+            ~remediation:
+              "choose a finite fractional elimination step strictly between 0 \
+               and 1"
+            "recursive feature elimination step"
+            "must be finite and strictly between zero and one"
+
+    let create ?(step = Count 1) ~feature_count estimator =
+      let* () = validate_feature_count feature_count in
+      let* () = validate_step step in
+      Ok
+        ({
+           specification_params =
+             {
+               feature_count;
+               step;
+               estimator_params = Estimator.params estimator;
+             };
+           estimator_specification = estimator;
+         }
+          : t)
+
+    let clone (specification : t) =
+      let estimator = Estimator.clone specification.estimator_specification in
+      ({
+         specification_params =
+           {
+             specification.specification_params with
+             estimator_params = Estimator.params estimator;
+           };
+         estimator_specification = estimator;
+       }
+        : t)
+
+    let params (specification : t) = specification.specification_params
+
+    let validate_importances ~columns importances =
+      let observed = Vector.length importances in
+      if observed <> columns then
+        Error
+          (Error.make
+             ~remediation:
+               "return exactly one importance for every fitted input feature"
+             (Error.Shape_mismatch
+                {
+                  name = "recursive elimination fitted feature importances";
+                  expected = [ columns ];
+                  observed = [ observed ];
+                }))
+      else
+        let rec loop column =
+          if column = columns then Ok ()
+          else
+            let value = Vector.get importances column in
+            if Float.is_finite value && value >= 0.0 then loop (column + 1)
+            else
+              validation
+                ~remediation:
+                  "return finite, non-negative fitted feature importances"
+                "recursive elimination fitted feature importance"
+                (Printf.sprintf "value at column %d is %g" column value)
+        in
+        loop 0
+
+    let validate_estimator_schema ~expected estimator =
+      let observed = Estimator.feature_schema estimator in
+      if Feature_schema.equal expected observed then Ok ()
+      else
+        Error
+          (Error.make
+             ~remediation:
+               "ensure the importance estimator reports its fitted input schema"
+             (Error.Compatibility
+                {
+                  component = "recursive elimination importance estimator";
+                  reason = "reported a different fitted feature schema";
+                }))
+
+    let validate_sample_weight ~rows = function
+      | None -> Ok ()
+      | Some weights ->
+          let observed = Sample_weight.length weights in
+          if rows = observed then Ok ()
+          else
+            Error
+              (Error.of_data_error
+                 ~remediation:
+                   "provide one sample weight per recursive-elimination \
+                    training row"
+                 (Data_error.Length_mismatch
+                    {
+                      name = "recursive feature elimination sample weights";
+                      expected = rows;
+                      observed;
+                    }))
+
+    let resolved_step step columns =
+      match step with
+      | Count count -> count
+      | Fraction fraction ->
+          Int.max 1
+            (int_of_float (Float.floor (fraction *. Float.of_int columns)))
+
+    let remove_weakest ~count ~active ~importances =
+      let ranked = Array.init (Array.length active) Fun.id in
+      Array.sort
+        (fun left right ->
+          let by_importance =
+            Float.compare
+              (Vector.get importances left)
+              (Vector.get importances right)
+          in
+          if by_importance <> 0 then by_importance
+          else Int.compare active.(left) active.(right))
+        ranked;
+      let removed = Array.make (Array.length active) false in
+      for rank = 0 to count - 1 do
+        removed.(ranked.(rank)) <- true
+      done;
+      let retained = Array.make (Array.length active - count) 0 in
+      let output = ref 0 in
+      Array.iteri
+        (fun position column ->
+          if not removed.(position) then (
+            retained.(!output) <- column;
+            incr output))
+        active;
+      retained
+
+    let fit (specification : t) ?sample_weight ~rng ~feature_schema ~x ~y () =
+      let module Internal = Univariate_selection.Internal in
+      let operation = "recursive feature elimination" in
+      let* () = Internal.validate_input ~operation feature_schema x in
+      let columns = Matrix.columns x in
+      let* () =
+        if columns > 0 then Ok ()
+        else
+          validation
+            ~remediation:
+              "provide at least one input feature for recursive elimination"
+            "recursive feature elimination features" "input width is zero"
+      in
+      let desired = specification.specification_params.feature_count in
+      let* () =
+        if desired <= columns then Ok ()
+        else
+          validation
+            ~remediation:
+              "choose a selected-feature count no greater than the input width"
+            "recursive feature elimination feature_count"
+            (Printf.sprintf "is %d for an input with %d features" desired
+               columns)
+      in
+      let* () = validate_sample_weight ~rows:(Matrix.rows x) sample_weight in
+      let* target =
+        match y with
+        | Some target -> Ok target
+        | None ->
+            validation
+              ~remediation:
+                "package this selector with Pipeline.Supervised.transformer \
+                 and provide training targets"
+              "recursive feature elimination target" "is required"
+      in
+      let step =
+        resolved_step specification.specification_params.step columns
+      in
+      let ranking = Array.make columns 1 in
+      let root_seed = Rng.to_seed rng in
+      let rec eliminate round active =
+        let* active_schema =
+          if Array.length active = columns then Ok feature_schema
+          else Internal.subset_schema feature_schema active
+        in
+        let* active_x =
+          if Array.length active = columns then Ok x
+          else
+            Matrix.init ~rows:(Matrix.rows x) ~columns:(Array.length active)
+              (fun row output_column -> Matrix.get x row active.(output_column))
+            |> Result.map_error (fun error ->
+                Error.of_data_error
+                  ~remediation:
+                    "provide representable recursive-elimination matrix \
+                     dimensions"
+                  error)
+        in
+        let round_rng =
+          Rng.create
+            (Seed.derive root_seed
+               ~operation:"recursive-feature-elimination-round" ~index:round)
+        in
+        let* estimator =
+          Estimator.fit
+            (Estimator.clone specification.estimator_specification)
+            ?sample_weight ~rng:round_rng ~feature_schema:active_schema
+            ~x:active_x ~y:target ()
+          |> Result.map_error
+               (Error.with_context
+                  (Error.Stage
+                     (Printf.sprintf "recursive elimination round %d" round)))
+        in
+        let* () = validate_estimator_schema ~expected:active_schema estimator in
+        let* importances = Estimator.feature_importances estimator in
+        let* () =
+          validate_importances ~columns:(Array.length active) importances
+        in
+        if Array.length active = desired then
+          Ok (active, active_schema, estimator, importances)
+        else
+          let remove_count = Int.min step (Array.length active - desired) in
+          let next = remove_weakest ~count:remove_count ~active ~importances in
+          let retained = Array.make columns false in
+          Array.iter (fun column -> retained.(column) <- true) next;
+          for column = 0 to columns - 1 do
+            if not retained.(column) then
+              ranking.(column) <- ranking.(column) + 1
+          done;
+          eliminate (round + 1) next
+      in
+      let* selected, output_schema, estimator, final_importances =
+        eliminate 0 (Array.init columns Fun.id)
+      in
+      Ok
+        ({
+           fitted_params_value =
+             {
+               specification.specification_params with
+               estimator_params = Estimator.fitted_params estimator;
+             };
+           fitted_model = estimator;
+           final_importances;
+           selected;
+           feature_ranking = ranking;
+           input_schema = feature_schema;
+           output_schema;
+         }
+          : fitted)
+
+    let transform (fitted : fitted) ~feature_schema ~x =
+      Univariate_selection.Internal.transform
+        ~operation:"recursive feature elimination"
+        ~expected_schema:fitted.input_schema ~selected:fitted.selected
+        ~feature_schema ~x
+
+    let fitted_params (fitted : fitted) = fitted.fitted_params_value
+    let input_schema (fitted : fitted) = fitted.input_schema
+    let output_schema (fitted : fitted) = fitted.output_schema
+    let selected_indices (fitted : fitted) = Array.copy fitted.selected
+    let ranking (fitted : fitted) = Array.copy fitted.feature_ranking
+    let final_importances (fitted : fitted) = fitted.final_importances
+    let fitted_estimator (fitted : fitted) = fitted.fitted_model
+  end
+end
