@@ -242,6 +242,12 @@
  (libraries modelkit alcotest))
 
 (test
+ (name pipeline_cache_test)
+ (modules pipeline_cache_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
  (name persistent_cache_test)
  (modules persistent_cache_test)
  (package modelkit)

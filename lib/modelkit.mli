@@ -1101,6 +1101,9 @@ module Transform_cache : sig
 
     val of_bytes : bytes -> t
     val of_string : string -> t
+    val of_matrix : Matrix.t -> t
+    val of_sample_weight : Sample_weight.t -> t
+    val of_groups : Groups.t -> t
 
     val combine : domain:string -> t array -> (t, Error.t) result
     (** Combines an ordered array under a nonblank domain. Domain and length
@@ -1245,6 +1248,18 @@ module Transform_cache : sig
 
     val remove : t -> Key.t -> (bool, Error.t) result
   end
+
+  (** A cache backend packaged behind one workflow-facing interface. *)
+  module Store : sig
+    type lookup = Miss | Hit of bytes | Corrupt of Error.t
+    type t
+
+    val memory : Memory.t -> t
+    val persistent : Persistent.t -> t
+    val get : t -> Key.t -> (lookup, Error.t) result
+    val put : t -> Key.t -> bytes -> (unit, Error.t) result
+    val remove : t -> Key.t -> (bool, Error.t) result
+  end
 end
 
 (** Pure portable SplitMix64 random-number generation. *)
@@ -1302,7 +1317,7 @@ module Simple_imputer : sig
   val statistics : fitted -> Vector.t
 
   include
-    TRANSFORMER
+    Transform_cache.CACHEABLE_TRANSFORMER
       with type t := t
        and type params := params
        and type target = unit
@@ -1329,7 +1344,7 @@ module Standard_scaler : sig
   val scale : fitted -> Vector.t
 
   include
-    TRANSFORMER
+    Transform_cache.CACHEABLE_TRANSFORMER
       with type t := t
        and type params := params
        and type target = unit
@@ -1679,7 +1694,12 @@ end
     transformers opting in with [route_sample_weight]. Metadata-aware packages
     use declared per-method requests for weights and groups. Each stage receives
     a child RNG derived from its logical name and position. Fit and inference
-    are sequential and allocate one dense matrix per transformer stage. *)
+    are sequential and allocate one dense matrix per transformer stage.
+
+    Caching is disabled by default. [with_cache] attaches an explicit
+    caller-owned store retained by pipeline clones used in cross-validation and
+    search. Cache-capable descendants in nested composition receive that same
+    store. *)
 module Pipeline : sig
   type transformer
   type builder
@@ -1715,6 +1735,21 @@ module Pipeline : sig
       Sample weights reach the stage's [fit] only when [route_sample_weight] is
       true; by default the stage fits unweighted, matching transformers that
       declare no weight support. *)
+
+  val cacheable_transformer :
+    ?route_sample_weight:bool ->
+    name:string ->
+    (module Transform_cache.CACHEABLE_TRANSFORMER
+       with type t = 'specification
+        and type params = 'params
+        and type target = unit
+        and type fitted = 'fitted
+        and type rng = Rng.t) ->
+    'specification ->
+    (transformer, Error.t) result
+  (** Packages a stage with an explicit stable fitted-state cache codec. A cache
+      hit restores fitted state and transforms the current training matrix; it
+      does not cache terminal estimators or transformed matrices. *)
 
   val metadata_estimator :
     name:string ->
@@ -1831,6 +1866,20 @@ module Pipeline : sig
         remain a terminal-estimator policy and do not alter the sample weights
         routed to transformers. *)
 
+    val cacheable_transformer :
+      ?route_sample_weight:bool ->
+      name:string ->
+      (module Transform_cache.CACHEABLE_TRANSFORMER
+         with type t = 'specification
+          and type params = 'params
+          and type target = 'kind Target.t
+          and type fitted = 'fitted
+          and type rng = Rng.t) ->
+      'specification ->
+      ('kind stage, Error.t) result
+    (** Target values become part of the cache key. They are never supplied to
+        an unsupervised stage adapted with {!val:unsupervised}. *)
+
     val unsupervised : transformer -> 'kind stage
     (** Adapts an existing unsupervised stage, retaining its weight-routing and
         artifact-codec policies. Its fit still receives [y:None]. *)
@@ -1857,6 +1906,20 @@ module Pipeline : sig
   end
 
   val clone : ('target, 'prediction) t -> ('target, 'prediction) t
+
+  val with_cache :
+    ('target, 'prediction) t ->
+    Transform_cache.Store.t ->
+    ('target, 'prediction) t
+  (** Returns a specification whose cacheable transformer stages reuse the
+      explicitly scoped store. Keys cover ordered feature schema and values,
+      targets for supervised stages, routed sample weights, configuration, and
+      logical stage seed. Nested unsupported leaves fail before fitting begins.
+      CV and search clones retain the store and derive schedule-independent keys
+      from logical work identities. *)
+
+  val without_cache : ('target, 'prediction) t -> ('target, 'prediction) t
+  val cache_enabled : ('target, 'prediction) t -> bool
   val transformer_names : ('target, 'prediction) t -> string array
   val estimator_name : ('target, 'prediction) t -> string
   val capabilities : ('target, 'prediction) t -> capabilities

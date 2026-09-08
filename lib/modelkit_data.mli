@@ -263,6 +263,7 @@ module Target : sig
   val length : _ t -> int
   val regression_values : regression t -> Vector.t
   val classification_values : classification t -> int array
+  val cache_identity : _ t -> string
   val select : 'kind t -> Row_view.t -> ('kind t, Data_error.t) result
 end
 

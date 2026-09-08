@@ -1,0 +1,400 @@
+{
+  "claim_eligible": false,
+  "environment": {
+    "cpu_count": 8,
+    "machine": "arm64",
+    "operating_system": "macOS-15.5-arm64-arm-64bit-Mach-O",
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "generated_at": "2026-09-08T05:39:01.097466+00:00",
+  "methodology": {
+    "measurement": "interleaved fresh-process wall time and sampled resident set size",
+    "rss_sample_interval_seconds": 0.001,
+    "signature_tolerance": {
+      "absolute": 1e-07,
+      "relative": 1e-07
+    },
+    "thread_limit": 1,
+    "warmup_runs": 1
+  },
+  "runs": {
+    "modelkit": [
+      {
+        "elapsed_ns": 787500833,
+        "peak_rss_bytes": 58212352,
+        "worker": {
+          "allocated_words": 103912225,
+          "cache_entries": 1,
+          "cache_hits": 3,
+          "cache_misses": 1,
+          "checksum": "-0.26999539802306322,-1.2299328920116137",
+          "cold_seconds": 0.196382,
+          "features": 20,
+          "ocaml": "5.3.0",
+          "operations": [
+            "cold_pipeline_fit",
+            "warm_pipeline_fit",
+            "standard_scaler_cache_decode",
+            "ridge_fit"
+          ],
+          "samples": 20000,
+          "signature": [
+            -0.2699953980230632,
+            -1.2299328920116137
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ],
+          "warm_fits": 3,
+          "warm_seconds_per_fit": 0.182229
+        }
+      },
+      {
+        "elapsed_ns": 786057292,
+        "peak_rss_bytes": 57589760,
+        "worker": {
+          "allocated_words": 103912225,
+          "cache_entries": 1,
+          "cache_hits": 3,
+          "cache_misses": 1,
+          "checksum": "-0.26999539802306322,-1.2299328920116137",
+          "cold_seconds": 0.196107,
+          "features": 20,
+          "ocaml": "5.3.0",
+          "operations": [
+            "cold_pipeline_fit",
+            "warm_pipeline_fit",
+            "standard_scaler_cache_decode",
+            "ridge_fit"
+          ],
+          "samples": 20000,
+          "signature": [
+            -0.2699953980230632,
+            -1.2299328920116137
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ],
+          "warm_fits": 3,
+          "warm_seconds_per_fit": 0.182193667
+        }
+      },
+      {
+        "elapsed_ns": 788543042,
+        "peak_rss_bytes": 60719104,
+        "worker": {
+          "allocated_words": 103912225,
+          "cache_entries": 1,
+          "cache_hits": 3,
+          "cache_misses": 1,
+          "checksum": "-0.26999539802306322,-1.2299328920116137",
+          "cold_seconds": 0.196926,
+          "features": 20,
+          "ocaml": "5.3.0",
+          "operations": [
+            "cold_pipeline_fit",
+            "warm_pipeline_fit",
+            "standard_scaler_cache_decode",
+            "ridge_fit"
+          ],
+          "samples": 20000,
+          "signature": [
+            -0.2699953980230632,
+            -1.2299328920116137
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ],
+          "warm_fits": 3,
+          "warm_seconds_per_fit": 0.182589
+        }
+      },
+      {
+        "elapsed_ns": 788644667,
+        "peak_rss_bytes": 62046208,
+        "worker": {
+          "allocated_words": 103912225,
+          "cache_entries": 1,
+          "cache_hits": 3,
+          "cache_misses": 1,
+          "checksum": "-0.26999539802306322,-1.2299328920116137",
+          "cold_seconds": 0.196715,
+          "features": 20,
+          "ocaml": "5.3.0",
+          "operations": [
+            "cold_pipeline_fit",
+            "warm_pipeline_fit",
+            "standard_scaler_cache_decode",
+            "ridge_fit"
+          ],
+          "samples": 20000,
+          "signature": [
+            -0.2699953980230632,
+            -1.2299328920116137
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ],
+          "warm_fits": 3,
+          "warm_seconds_per_fit": 0.182399
+        }
+      },
+      {
+        "elapsed_ns": 787760708,
+        "peak_rss_bytes": 62488576,
+        "worker": {
+          "allocated_words": 103912225,
+          "cache_entries": 1,
+          "cache_hits": 3,
+          "cache_misses": 1,
+          "checksum": "-0.26999539802306322,-1.2299328920116137",
+          "cold_seconds": 0.19675,
+          "features": 20,
+          "ocaml": "5.3.0",
+          "operations": [
+            "cold_pipeline_fit",
+            "warm_pipeline_fit",
+            "standard_scaler_cache_decode",
+            "ridge_fit"
+          ],
+          "samples": 20000,
+          "signature": [
+            -0.2699953980230632,
+            -1.2299328920116137
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "native",
+              "num_threads": 1,
+              "prefix": "modelkit",
+              "user_api": "ocaml",
+              "version": null
+            }
+          ],
+          "warm_fits": 3,
+          "warm_seconds_per_fit": 0.182433
+        }
+      }
+    ],
+    "sklearn": [
+      {
+        "elapsed_ns": 806872541,
+        "peak_rss_bytes": 156008448,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "1f4ebc157109ec2f375d6bc9b7a183170e842665b63c4f8117869cb641599c95",
+          "cold_seconds": 0.023852374986745417,
+          "features": 20,
+          "operations": [
+            "cold_pipeline_fit",
+            "warm_pipeline_fit",
+            "joblib_transform_cache",
+            "ridge_fit"
+          ],
+          "samples": 20000,
+          "signature": [
+            -0.2699953980235663,
+            -1.2299328920112649
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ],
+          "warm_fits": 3,
+          "warm_seconds_per_fit": 0.015043416700791568
+        }
+      },
+      {
+        "elapsed_ns": 818914625,
+        "peak_rss_bytes": 166068224,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "1f4ebc157109ec2f375d6bc9b7a183170e842665b63c4f8117869cb641599c95",
+          "cold_seconds": 0.023990000016056,
+          "features": 20,
+          "operations": [
+            "cold_pipeline_fit",
+            "warm_pipeline_fit",
+            "joblib_transform_cache",
+            "ridge_fit"
+          ],
+          "samples": 20000,
+          "signature": [
+            -0.2699953980235663,
+            -1.2299328920112649
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ],
+          "warm_fits": 3,
+          "warm_seconds_per_fit": 0.015121097346612563
+        }
+      },
+      {
+        "elapsed_ns": 808597291,
+        "peak_rss_bytes": 172769280,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "1f4ebc157109ec2f375d6bc9b7a183170e842665b63c4f8117869cb641599c95",
+          "cold_seconds": 0.024198500032071024,
+          "features": 20,
+          "operations": [
+            "cold_pipeline_fit",
+            "warm_pipeline_fit",
+            "joblib_transform_cache",
+            "ridge_fit"
+          ],
+          "samples": 20000,
+          "signature": [
+            -0.2699953980235663,
+            -1.2299328920112649
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ],
+          "warm_fits": 3,
+          "warm_seconds_per_fit": 0.015117791655939072
+        }
+      },
+      {
+        "elapsed_ns": 807816083,
+        "peak_rss_bytes": 159547392,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "1f4ebc157109ec2f375d6bc9b7a183170e842665b63c4f8117869cb641599c95",
+          "cold_seconds": 0.022655249980743974,
+          "features": 20,
+          "operations": [
+            "cold_pipeline_fit",
+            "warm_pipeline_fit",
+            "joblib_transform_cache",
+            "ridge_fit"
+          ],
+          "samples": 20000,
+          "signature": [
+            -0.2699953980235663,
+            -1.2299328920112649
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ],
+          "warm_fits": 3,
+          "warm_seconds_per_fit": 0.015083263317743937
+        }
+      },
+      {
+        "elapsed_ns": 803431166,
+        "peak_rss_bytes": 159760384,
+        "worker": {
+          "allocated_words": null,
+          "checksum": "1f4ebc157109ec2f375d6bc9b7a183170e842665b63c4f8117869cb641599c95",
+          "cold_seconds": 0.023310207994654775,
+          "features": 20,
+          "operations": [
+            "cold_pipeline_fit",
+            "warm_pipeline_fit",
+            "joblib_transform_cache",
+            "ridge_fit"
+          ],
+          "samples": 20000,
+          "signature": [
+            -0.2699953980235663,
+            -1.2299328920112649
+          ],
+          "threadpools": [
+            {
+              "architecture": null,
+              "internal_api": "openmp",
+              "num_threads": 1,
+              "prefix": "libomp",
+              "user_api": "openmp",
+              "version": null
+            }
+          ],
+          "warm_fits": 3,
+          "warm_seconds_per_fit": 0.015008055663201958
+        }
+      }
+    ]
+  },
+  "scenario": {
+    "claim_eligible": false,
+    "dataset": {
+      "features": 20,
+      "samples": 20000,
+      "seed": 1729
+    },
+    "measured_runs": 5,
+    "scenario": "transform_cache_dense_v1",
+    "thread_limit": 1,
+    "warm_fits": 3,
+    "warmup_runs": 1,
+    "workload": "transform_cache"
+  },
+  "schema_version": 2
+}

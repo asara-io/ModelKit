@@ -27,6 +27,9 @@ module Transform_cache : sig
 
     val of_bytes : bytes -> t
     val of_string : string -> t
+    val of_matrix : Matrix.t -> t
+    val of_sample_weight : Sample_weight.t -> t
+    val of_groups : Groups.t -> t
 
     val combine : domain:string -> t array -> (t, Error.t) result
     (** Combines an ordered array under a nonblank domain. Domain and length
@@ -174,6 +177,18 @@ module Transform_cache : sig
         rename. Concurrent writers for one key must encode identical payloads;
         an already-present different valid payload is a typed failure. *)
 
+    val remove : t -> Key.t -> (bool, Error.t) result
+  end
+
+  (** A cache backend packaged behind one workflow-facing interface. *)
+  module Store : sig
+    type lookup = Miss | Hit of bytes | Corrupt of Error.t
+    type t
+
+    val memory : Memory.t -> t
+    val persistent : Persistent.t -> t
+    val get : t -> Key.t -> (lookup, Error.t) result
+    val put : t -> Key.t -> bytes -> (unit, Error.t) result
     val remove : t -> Key.t -> (bool, Error.t) result
   end
 end

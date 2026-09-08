@@ -730,6 +730,41 @@ module Target = struct
   let classification_get : classification t -> int -> int = function
     | Classification_values values -> Array.get values
 
+  let digest_target domain length iter =
+    let state = ref (Digest.string ("modelkit:" ^ domain)) in
+    let buffer = Buffer.create 4096 in
+    let flush () =
+      if Buffer.length buffer > 0 then (
+        state := Digest.string (!state ^ Buffer.contents buffer);
+        Buffer.clear buffer)
+    in
+    let emit value =
+      String.iter
+        (fun byte ->
+          Buffer.add_char buffer byte;
+          if Buffer.length buffer = 4096 then flush ())
+        value
+    in
+    emit (string_of_int length);
+    iter (fun value ->
+        emit ":";
+        emit value);
+    flush ();
+    !state
+
+  let cache_identity : type kind. kind t -> string = function
+    | Regression_values values ->
+        digest_target "regression-target-v1" (Vector.length values) (fun emit ->
+            for index = 0 to Vector.length values - 1 do
+              emit
+                (Int64.to_string
+                   (Int64.bits_of_float (Vector.get values index)))
+            done)
+    | Classification_values values ->
+        digest_target "classification-target-v1" (Array.length values)
+          (fun emit ->
+            Array.iter (fun value -> emit (string_of_int value)) values)
+
   let select : type kind. kind t -> Row_view.t -> (kind t, Data_error.t) result
       =
    fun target view ->

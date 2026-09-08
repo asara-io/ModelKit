@@ -841,6 +841,55 @@ every raw run, per-fit timings, iteration counts, convergence flags, ranks,
 allocations, toolchain versions, thread limits, output signatures, and the
 full scenario.
 
+## Dense transform cache v1
+
+`transform_cache_dense_v1` performs one cold and three warm fits of a
+standard-scaler and ridge pipeline on the same deterministic 20,000 by 20
+float64 regression matrix. ModelKit uses an explicitly scoped in-memory
+fitted-state cache. scikit-learn uses `Pipeline(memory=...)` with a fresh
+joblib directory per worker process. Both terminal ridge estimators are
+refitted on every pass. Selected predictions must agree within `1e-7` absolute
+and relative tolerance before a report is written.
+
+The harness performs one warmup and five interleaved measured runs in fresh
+processes. Worker wall time includes runtime startup, data generation, one cold
+fit, and three warm fits. The workers also report isolated cold and mean warm
+fit CPU/wall timings; ModelKit reports process CPU time while Python reports
+monotonic elapsed time, so cold-to-warm ratios are meaningful within each
+runtime but the isolated timings are not a controlled cross-runtime clock
+comparison.
+
+The committed macOS arm64 report recorded these medians:
+
+| Implementation | Worker wall time | Peak RSS | Cold fit | Warm fit | Cold / warm |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| ModelKit 0.5.0-dev / OCaml 5.3.0 | 0.788 s | 60,719,104 bytes | 0.197 s | 0.182 s | 1.08× |
+| scikit-learn 1.9.0 / Python 3.14.3 | 0.808 s | 159,760,384 bytes | 0.024 s | 0.015 s | 1.58× |
+
+The result confirms deterministic reuse and lower observed process memory, but
+also shows the current scope clearly. A ModelKit hit avoids scaler fitting while
+still hashing the complete matrix, decoding fitted state, transforming the
+training matrix, and refitting ridge. scikit-learn's joblib cache retains the
+fitted transformer's transformed training output, so its warm-path reduction is
+larger. ModelKit's portable ridge kernel also dominates its isolated fit time.
+These measurements establish a regression baseline; they do not justify a
+comparative performance claim.
+
+Build and run it from the repository root:
+
+```sh
+opam exec -- dune build bench/ocaml/transform_cache_worker.exe
+env/bin/python dev/benchmarks/run.py \
+  --scenario dev/benchmarks/scenarios/transform_cache_dense.json
+```
+
+The raw report is
+`results/transform_cache_dense_v1.darwin-arm64.json`; it records all raw runs,
+cache hit/miss counts, internal cold and warm timings, allocations, toolchain
+versions, thread limits, output signatures, and methodology. This scenario is
+`claim_eligible: false` and has not run on the independent CI targets required
+by the release benchmark contract.
+
 ## Benchmark record for 0.4.0
 
 | Scenario | Evidence | Parity tolerance | ModelKit versus reference |

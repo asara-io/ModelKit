@@ -26,9 +26,11 @@ module Pipeline : sig
 
   type transformer = {
     transformer_name : string;
+    transformer_cache_check : unit -> (unit, Error.t) result;
     transformer_fit_metadata_check : Metadata.t -> (unit, Error.t) result;
     transformer_transform_metadata_check : Metadata.t -> (unit, Error.t) result;
     fit_transform :
+      cache:Modelkit_transform_cache.Transform_cache.Store.t option ->
       metadata:Metadata.t ->
       rng:Rng.t ->
       feature_schema:Feature_schema.t ->
@@ -43,10 +45,12 @@ module Pipeline : sig
 
   type 'target stage = {
     name : string;
+    stage_cache_check : unit -> (unit, Error.t) result;
     stage_fit_metadata_check : Metadata.t -> (unit, Error.t) result;
     stage_transform_metadata_check : Metadata.t -> (unit, Error.t) result;
     validate_target : x:Matrix.t -> y:'target -> (unit, Error.t) result;
     fit_stage :
+      cache:Modelkit_transform_cache.Transform_cache.Store.t option ->
       metadata:Metadata.t ->
       rng:Rng.t ->
       feature_schema:Feature_schema.t ->
@@ -92,6 +96,7 @@ module Pipeline : sig
   type ('target, 'prediction) t = {
     transformers : 'target stage array;
     estimator : ('target, 'prediction) estimator;
+    cache : Modelkit_transform_cache.Transform_cache.Store.t option;
   }
 
   type ('target, 'prediction) fitted = {
@@ -109,6 +114,8 @@ module Pipeline : sig
 
   val transformer_internal :
     ?encode:('fitted -> (encoded_component, Error.t) result) ->
+    ?cache_codec:
+      ('specification, 'fitted) Modelkit_transform_cache.Transform_cache.Codec.t ->
     ?route_sample_weight:bool ->
     name:string ->
     (module TRANSFORMER
@@ -142,6 +149,20 @@ module Pipeline : sig
         and type rng = Rng.t) ->
     'specification ->
     (transformer, Error.t) result
+
+  val cacheable_transformer :
+    ?route_sample_weight:bool ->
+    name:string ->
+    (module Modelkit_transform_cache.Transform_cache.CACHEABLE_TRANSFORMER
+       with type t = 'specification
+        and type params = 'params
+        and type target = unit
+        and type fitted = 'fitted
+        and type rng = Rng.t) ->
+    'specification ->
+    (transformer, Error.t) result
+  (** Packages a stage whose fitted state may be restored from an explicitly
+      attached pipeline cache. *)
 
   val estimator_internal :
     ?encode:('fitted -> (encoded_component, Error.t) result) ->
@@ -303,6 +324,19 @@ module Pipeline : sig
         remain a terminal-estimator policy and do not alter the sample weights
         routed to transformers. *)
 
+    val cacheable_transformer :
+      ?route_sample_weight:bool ->
+      name:string ->
+      (module Modelkit_transform_cache.Transform_cache.CACHEABLE_TRANSFORMER
+         with type t = 'specification
+          and type params = 'params
+          and type target = 'kind Target.t
+          and type fitted = 'fitted
+          and type rng = Rng.t) ->
+      'specification ->
+      ('kind stage, Error.t) result
+    (** The complete target content participates in this stage's cache key. *)
+
     val unsupervised : transformer -> 'kind stage
     (** Adapts an existing unsupervised stage, retaining its weight-routing and
         artifact-codec policies. Its fit still receives [y:None]. *)
@@ -329,6 +363,16 @@ module Pipeline : sig
   end
 
   val clone : ('target, 'prediction) t -> ('target, 'prediction) t
+
+  val with_cache :
+    ('target, 'prediction) t ->
+    Modelkit_transform_cache.Transform_cache.Store.t ->
+    ('target, 'prediction) t
+  (** Retains the caller-owned store through pipeline clones and nested
+      composition. Unsupported leaves fail preflight before fitting. *)
+
+  val without_cache : ('target, 'prediction) t -> ('target, 'prediction) t
+  val cache_enabled : ('target, 'prediction) t -> bool
   val transformer_names : ('target, 'prediction) t -> string array
   val estimator_name : ('target, 'prediction) t -> string
   val capabilities : ('target, 'prediction) t -> capabilities

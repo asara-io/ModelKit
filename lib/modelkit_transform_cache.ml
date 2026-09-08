@@ -72,6 +72,35 @@ module Transform_cache = struct
     let of_bytes value = Digest.bytes value
     let of_string value = Digest.string value
 
+    let matrix_digest domain ~rows ~columns get =
+      let digest = Digest_stream.create domain in
+      Digest_stream.token digest (string_of_int rows);
+      Digest_stream.token digest (string_of_int columns);
+      for row = 0 to rows - 1 do
+        for column = 0 to columns - 1 do
+          Digest_stream.token digest
+            (Int64.to_string (Int64.bits_of_float (get row column)))
+        done
+      done;
+      Digest_stream.finish digest
+
+    let of_matrix matrix =
+      matrix_digest "matrix-content-v1" ~rows:(Matrix.rows matrix)
+        ~columns:(Matrix.columns matrix) (Matrix.get matrix)
+
+    let of_sample_weight weights =
+      matrix_digest "sample-weight-content-v1"
+        ~rows:(Sample_weight.length weights) ~columns:1 (fun row _ ->
+          Sample_weight.get weights row)
+
+    let of_groups groups =
+      let digest = Digest_stream.create "group-content-v1" in
+      Digest_stream.token digest (string_of_int (Groups.length groups));
+      for index = 0 to Groups.length groups - 1 do
+        Digest_stream.token digest (string_of_int (Groups.get groups index))
+      done;
+      Digest_stream.finish digest
+
     let combine ~domain values =
       if String.trim domain = "" then
         Error
@@ -635,5 +664,47 @@ module Transform_cache = struct
             Result.bind (write_temporary cache key payload)
               (fun temporary_path ->
                 finish_publication cache key payload temporary_path)
+  end
+
+  module Store = struct
+    type lookup = Miss | Hit of bytes | Corrupt of Error.t
+
+    type t = {
+      read : Key.t -> (lookup, Error.t) result;
+      write : Key.t -> bytes -> (unit, Error.t) result;
+      delete : Key.t -> (bool, Error.t) result;
+    }
+
+    let memory cache =
+      {
+        read =
+          (fun key ->
+            Ok
+              (match Memory.get cache key with
+              | None -> Miss
+              | Some payload -> Hit payload));
+        write = Memory.put cache;
+        delete = (fun key -> Ok (Memory.remove cache key));
+      }
+
+    let persistent cache =
+      {
+        read =
+          (fun key ->
+            Result.map
+              (function
+                | Persistent.Miss -> Miss
+                | Persistent.Hit payload -> Hit payload
+                | Persistent.Corrupt error -> Corrupt error)
+              (Persistent.get cache key));
+        write =
+          (fun key payload ->
+            Result.map (fun _ -> ()) (Persistent.put cache key payload));
+        delete = Persistent.remove cache;
+      }
+
+    let get store = store.read
+    let put store = store.write
+    let remove store = store.delete
   end
 end

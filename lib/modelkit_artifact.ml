@@ -552,12 +552,19 @@ module Artifact = struct
     Ok (component 18 (Writer.contents writer))
 
   let simple_imputer_stage ~name specification =
-    Pipeline.transformer_internal ~encode:encode_simple_imputer ~name
+    Pipeline.transformer_internal ~encode:encode_simple_imputer
+      ~cache_codec:
+        (Modelkit_transform_cache.Transform_cache.Codec.of_module
+           (module Simple_imputer))
+      ~name
       (module Simple_imputer)
       specification
 
   let standard_scaler_stage ?route_sample_weight ~name specification =
     Pipeline.transformer_internal ~encode:encode_standard_scaler
+      ~cache_codec:
+        (Modelkit_transform_cache.Transform_cache.Codec.of_module
+           (module Standard_scaler))
       ?route_sample_weight ~name
       (module Standard_scaler)
       specification

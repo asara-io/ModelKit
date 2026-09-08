@@ -1,5 +1,6 @@
 open Modelkit_data
 open Modelkit_protocols
+module Transform_cache = Modelkit_transform_cache.Transform_cache
 
 module Preprocessing_internal = struct
   let ( let* ) = Result.bind
@@ -246,6 +247,194 @@ module Preprocessing_internal = struct
                  error))
 end
 
+module Cache_wire = struct
+  let ( let* ) = Result.bind
+  let max_features = 1_000_000
+  let max_string_bytes = 1_048_576
+
+  let failure component reason =
+    Error
+      (Error.make
+         ~remediation:"discard the cache entry and refit the transformer"
+         (Error.Compatibility { component; reason }))
+
+  module Writer = struct
+    let create magic =
+      let writer = Buffer.create 256 in
+      Buffer.add_string writer magic;
+      writer
+
+    let u8 writer value = Buffer.add_char writer (Char.chr value)
+
+    let i64 writer value =
+      for shift = 7 downto 0 do
+        u8 writer
+          (Int64.to_int
+             (Int64.logand (Int64.shift_right_logical value (shift * 8)) 0xffL))
+      done
+
+    let length writer value = i64 writer (Int64.of_int value)
+    let bool writer value = u8 writer (if value then 1 else 0)
+    let float writer value = i64 writer (Int64.bits_of_float value)
+
+    let string writer value =
+      length writer (String.length value);
+      Buffer.add_string writer value
+
+    let vector writer vector =
+      length writer (Vector.length vector);
+      for index = 0 to Vector.length vector - 1 do
+        float writer (Vector.get vector index)
+      done
+
+    let schema writer schema =
+      length writer (Feature_schema.feature_count schema);
+      match Feature_schema.names schema with
+      | None -> bool writer false
+      | Some names ->
+          bool writer true;
+          for index = 0 to Feature_names.length names - 1 do
+            string writer
+              (Feature_name.to_string (Feature_names.get names index))
+          done
+
+    let contents writer = Bytes.of_string (Buffer.contents writer)
+  end
+
+  module Reader = struct
+    type t = { bytes : bytes; component : string; mutable position : int }
+
+    let create ~component bytes = { bytes; component; position = 0 }
+    let remaining reader = Bytes.length reader.bytes - reader.position
+
+    let require reader count =
+      if count < 0 || count > remaining reader then
+        failure reader.component "cache payload is truncated"
+      else Ok ()
+
+    let literal reader expected =
+      let length = String.length expected in
+      let* () = require reader length in
+      let observed = Bytes.sub_string reader.bytes reader.position length in
+      reader.position <- reader.position + length;
+      if String.equal observed expected then Ok ()
+      else failure reader.component "cache payload has an invalid header"
+
+    let u8 reader =
+      let* () = require reader 1 in
+      let value = Char.code (Bytes.get reader.bytes reader.position) in
+      reader.position <- reader.position + 1;
+      Ok value
+
+    let i64 reader =
+      let* () = require reader 8 in
+      let value = ref 0L in
+      for _ = 0 to 7 do
+        value :=
+          Int64.logor
+            (Int64.shift_left !value 8)
+            (Int64.of_int (Char.code (Bytes.get reader.bytes reader.position)));
+        reader.position <- reader.position + 1
+      done;
+      Ok !value
+
+    let bounded_length reader ~name ~maximum =
+      let* value = i64 reader in
+      if value < 0L || value > Int64.of_int maximum then
+        failure reader.component (name ^ " exceeds the decoder limit")
+      else Ok (Int64.to_int value)
+
+    let bool reader =
+      let* value = u8 reader in
+      match value with
+      | 0 -> Ok false
+      | 1 -> Ok true
+      | _ -> failure reader.component "cache payload contains an invalid bool"
+
+    let float reader = Result.map Int64.float_of_bits (i64 reader)
+
+    let string reader =
+      let* length =
+        bounded_length reader ~name:"feature-name length"
+          ~maximum:max_string_bytes
+      in
+      let* () = require reader length in
+      let value = Bytes.sub_string reader.bytes reader.position length in
+      reader.position <- reader.position + length;
+      Ok value
+
+    let vector reader =
+      let* length =
+        bounded_length reader ~name:"vector length" ~maximum:max_features
+      in
+      let* () =
+        if length > remaining reader / 8 then
+          failure reader.component "cache vector is truncated"
+        else Ok ()
+      in
+      let values = Array.make length 0.0 in
+      let rec loop index =
+        if index = length then Ok (Vector.of_array values)
+        else
+          let* value = float reader in
+          values.(index) <- value;
+          loop (index + 1)
+      in
+      loop 0
+
+    let schema reader =
+      let* feature_count =
+        bounded_length reader ~name:"feature count" ~maximum:max_features
+      in
+      let* named = bool reader in
+      if not named then
+        Feature_schema.anonymous ~feature_count
+        |> Result.map_error (fun error ->
+            Error.of_data_error
+              ~remediation:"discard the cache entry and refit the transformer"
+              error)
+      else
+        let names = Array.make feature_count "" in
+        let rec loop index =
+          if index = feature_count then Ok ()
+          else
+            let* name = string reader in
+            names.(index) <- name;
+            loop (index + 1)
+        in
+        let* () = loop 0 in
+        let* names =
+          Feature_names.create ~expected_count:feature_count names
+          |> Result.map_error (fun error ->
+              Error.of_data_error
+                ~remediation:"discard the cache entry and refit the transformer"
+                error)
+        in
+        Ok (Feature_schema.named names)
+
+    let finish reader =
+      if remaining reader = 0 then Ok ()
+      else failure reader.component "cache payload contains trailing data"
+  end
+
+  let component name =
+    match
+      Transform_cache.Component.create ~package:"modelkit" ~name ~version:1
+    with
+    | Ok component -> component
+    | Error _ -> invalid_arg "invalid built-in cache component identity"
+
+  let configuration writer =
+    Transform_cache.Content_id.of_bytes (Writer.contents writer)
+
+  let finite_vector vector =
+    let rec loop index =
+      index = Vector.length vector
+      || (Float.is_finite (Vector.get vector index) && loop (index + 1))
+    in
+    loop 0
+end
+
 module Simple_imputer = struct
   type strategy = Mean | Median | Constant of float
   type params = { strategy : strategy }
@@ -344,6 +533,57 @@ module Simple_imputer = struct
   let input_schema fitted = fitted.schema
   let output_schema fitted = fitted.schema
   let statistics fitted = fitted.statistics
+  let cache_component = Cache_wire.component "simple-imputer"
+
+  let cache_configuration specification =
+    let writer = Cache_wire.Writer.create "MKIC01" in
+    (match specification.strategy with
+    | Mean -> Cache_wire.Writer.u8 writer 0
+    | Median -> Cache_wire.Writer.u8 writer 1
+    | Constant value ->
+        Cache_wire.Writer.u8 writer 2;
+        Cache_wire.Writer.float writer value);
+    Cache_wire.configuration writer
+
+  let encode_fitted fitted =
+    let writer = Cache_wire.Writer.create "MKIF01" in
+    (match fitted.params.strategy with
+    | Mean -> Cache_wire.Writer.u8 writer 0
+    | Median -> Cache_wire.Writer.u8 writer 1
+    | Constant value ->
+        Cache_wire.Writer.u8 writer 2;
+        Cache_wire.Writer.float writer value);
+    Cache_wire.Writer.vector writer fitted.statistics;
+    Cache_wire.Writer.schema writer fitted.schema;
+    Ok (Cache_wire.Writer.contents writer)
+
+  let decode_fitted payload =
+    let component_name = "simple imputer" in
+    let reader = Cache_wire.Reader.create ~component:component_name payload in
+    let open Cache_wire in
+    let* () = Reader.literal reader "MKIF01" in
+    let* strategy_tag = Reader.u8 reader in
+    let* strategy =
+      match strategy_tag with
+      | 0 -> Ok Mean
+      | 1 -> Ok Median
+      | 2 -> Result.map (fun value -> Constant value) (Reader.float reader)
+      | _ -> failure component_name "cache payload has an unknown strategy"
+    in
+    let* statistics = Reader.vector reader in
+    let* schema = Reader.schema reader in
+    let* () = Reader.finish reader in
+    let valid_strategy =
+      match strategy with
+      | Constant value -> Float.is_finite value
+      | Mean | Median -> true
+    in
+    if
+      (not valid_strategy)
+      || Vector.length statistics <> Feature_schema.feature_count schema
+      || not (finite_vector statistics)
+    then failure component_name "cache payload contains invalid fitted state"
+    else Ok { params = { strategy }; statistics; schema }
 end
 
 module Standard_scaler = struct
@@ -429,6 +669,48 @@ module Standard_scaler = struct
   let mean fitted = fitted.mean
   let variance fitted = fitted.variance
   let scale fitted = fitted.scale
+  let cache_component = Cache_wire.component "standard-scaler"
+
+  let cache_configuration specification =
+    let writer = Cache_wire.Writer.create "MKSC01" in
+    Cache_wire.Writer.bool writer specification.with_mean;
+    Cache_wire.Writer.bool writer specification.with_std;
+    Cache_wire.configuration writer
+
+  let encode_fitted fitted =
+    let writer = Cache_wire.Writer.create "MKSF01" in
+    Cache_wire.Writer.bool writer fitted.params.with_mean;
+    Cache_wire.Writer.bool writer fitted.params.with_std;
+    Cache_wire.Writer.vector writer fitted.mean;
+    Cache_wire.Writer.vector writer fitted.variance;
+    Cache_wire.Writer.vector writer fitted.scale;
+    Cache_wire.Writer.schema writer fitted.schema;
+    Ok (Cache_wire.Writer.contents writer)
+
+  let decode_fitted payload =
+    let component_name = "standard scaler" in
+    let reader = Cache_wire.Reader.create ~component:component_name payload in
+    let open Cache_wire in
+    let* () = Reader.literal reader "MKSF01" in
+    let* with_mean = Reader.bool reader in
+    let* with_std = Reader.bool reader in
+    let* mean = Reader.vector reader in
+    let* variance = Reader.vector reader in
+    let* scale = Reader.vector reader in
+    let* schema = Reader.schema reader in
+    let* () = Reader.finish reader in
+    let width = Feature_schema.feature_count schema in
+    let valid_variance value = Float.is_finite value && value >= 0.0 in
+    let valid_scale value = Float.is_finite value && value > 0.0 in
+    if
+      Vector.length mean <> width
+      || Vector.length variance <> width
+      || Vector.length scale <> width
+      || (not (finite_vector mean))
+      || (not (Array.for_all valid_variance (Vector.to_array variance)))
+      || not (Array.for_all valid_scale (Vector.to_array scale))
+    then failure component_name "cache payload contains invalid fitted state"
+    else Ok { params = { with_mean; with_std }; mean; variance; scale; schema }
 end
 
 module Variance_threshold = struct

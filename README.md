@@ -21,7 +21,7 @@ The full documentation is available via: [https://ocaml.org/p/modelkit/latest/do
 - Sequential pipelines support unsupervised and target-aware preprocessing fitted only on training rows, with explicit sample-weight routing, preserved feature schemas, and terminal prediction, decision, and probability dispatch.
 - Dense column-wise preprocessing combines independently fitted branches with checked index/name selectors, passthrough/drop, deterministic output names, and observable copy allocations.
 - Typed metadata requests route weights, groups, and callbacks through nested fitting, inference, cross-validation, and search, with aligned rows and deterministic progress reporting.
-- Content-addressed transform-cache foundations provide validated component identities, canonical keys, typed fitted-state codecs, explicitly scoped bounded memory, and portable integrity-checked directory storage without introducing global mutable state.
+- Opt-in content-addressed transform caching reuses fitted preprocessing state through pipelines, nested composition, cross-validation, and search. Complete feature, target, routed-weight, configuration, and seed identities prevent cross-fit reuse, while caller-scoped bounded memory and portable integrity-checked directory stores avoid global mutable state.
 - Feature unions, column transformers, and nestable preprocessing chains combine supervised and unsupervised transformations with deterministic feature names and fold-local fitting.
 - Transformed-target regression learns target mappings within each training fold, checks inverse transforms, and scores predictions in the original target space.
 - Portable weighted ordinary least squares, ridge, lasso, elastic-net, binary and multinomial logistic regression, Poisson and Tweedie generalized linear models, binary and multiclass ridge classification, and incremental SGD estimators keep immutable specifications separate from fitted coefficients and solver diagnostics.
@@ -51,9 +51,33 @@ Compared with 0.3.2, this release adds:
 - **Weights and multiclass evaluation.** Fold-local class weights, opt-in sample-weight routing to transformers, confusion-matrix and multiclass metrics with micro, macro, and weighted averaging, average precision, one-versus-rest and one-versus-one ROC AUC, top-k accuracy, DCG and NDCG, and multiclass cross-validation and grid search.
 - **Ecosystem adapters.** `modelkit-nx` and `modelkit-talon` admit explicitly typed features, targets, null masks, groups, names, and weights with conversion and allocation reports and a shared conformance suite. Both are pinned to Raven `1.0.0~alpha3` and build on Linux and macOS only.
 - **Third-party protocol tooling.** Published capability descriptions distinguish optional estimator, transformer, and scorer behavior from mandatory protocol invariants. Framework-neutral conformance reports exercise external implementations, while first-class custom scorers can be combined with built-in scorers in cross-validation, grid search, and randomized search without changing the built-in scorer parameter contract.
-- **Transform-cache foundations.** Validated package-qualified component identities, deterministic content and fit keys, typed fitted-state codecs, bounded domain-safe memory, and versioned directory-backed entries establish the opt-in cache contract. Persistent readers reject oversized or corrupt entries before reuse, while temporary-file publication and atomic rename keep concurrent readers from observing partial writes. Cache roots and payloads remain explicit caller-owned values; this increment does not yet connect them to pipelines.
+- **Transform caching.** `Simple_imputer` and `Standard_scaler` provide stable fitted-state codecs and can be packaged with `Pipeline.cacheable_transformer`. `Pipeline.with_cache` threads the explicit store through ordinary and supervised pipelines, transformer chains, feature unions, column transformers, cross-validation, and search; cloned specifications retain the same caller-owned store. Keys include the complete input schema and values, supervised targets, routed sample weights, transformer configuration, and the logical stage seed. Unsupported ordinary or metadata-aware transformer leaves fail preflight before any stage fits. Persistent readers reject oversized or corrupt entries before reuse, while temporary-file publication and atomic rename keep concurrent readers from observing partial writes.
 
 Persistent cache entries are plaintext fitted state: their checksums detect accidental corruption but do not authenticate content or provide encryption. Consumers caching data derived from secrets must protect the cache root, backups, and retention lifecycle with their environment's access controls and encryption.
+
+Caching is disabled unless a store is attached to an immutable pipeline specification:
+
+```ocaml
+let memory = Modelkit.Transform_cache.Memory.create () in
+let store = Modelkit.Transform_cache.Store.memory memory in
+let scale =
+  Modelkit.Pipeline.cacheable_transformer ~name:"scale"
+    (module Modelkit.Standard_scaler)
+    (Modelkit.Standard_scaler.create ())
+  |> Result.get_ok
+in
+let builder = Modelkit.Pipeline.add_transformer Modelkit.Pipeline.empty scale |> Result.get_ok in
+let estimator =
+  Modelkit.Pipeline.estimator ~name:"linear"
+    (module Modelkit.Linear_regression)
+    (Modelkit.Linear_regression.create ())
+  |> Result.get_ok
+in
+let pipeline = Modelkit.Pipeline.set_estimator builder estimator |> Result.get_ok in
+let cached_pipeline = Modelkit.Pipeline.with_cache pipeline store
+```
+
+For reuse across processes, create a `Transform_cache.Persistent.t` with an application-managed root and wrap it with `Transform_cache.Store.persistent`. `Pipeline.without_cache` returns an otherwise identical specification with caching disabled. A warm hit skips transformer fitting but still decodes the fitted state and transforms the current training matrix; terminal estimators are always refitted.
 
 Every new estimator runs through pipelines, cross-validation, scoring, and grid search, and every metric and solver is checked against committed scikit-learn reference fixtures. Learning-curve training sizes and scores are checked against `sklearn.model_selection.learning_curve`; fold-local scaled ridge validation-curve scores are checked against `sklearn.model_selection.validation_curve`; grouped permutation scores and corrected p-values are checked against `sklearn.model_selection.permutation_test_score`. The comparative benchmarks under `dev/benchmarks/` are development evidence only; they record convergence parity across data shapes together with a throughput gap on wide designs that later releases will address.
 
@@ -139,7 +163,7 @@ python dev/fixtures/generate.py
 python dev/benchmarks/run.py
 ```
 
-The committed smoke benchmark validates the measurement workflow only. The development preprocessing, dense-linear-model, regularized-linear, SGD-regression, SGD-classification, ridge-classifier, multinomial-logistic, generalized-linear-model, splitter, metrics, sequential and bounded-parallel cross-validation, finite grid-search, adapter-admission, sparse-kernel, and solver-shape benchmarks compare ModelKit operations with pinned scikit-learn and SciPy references on deterministic workloads. Build the corresponding OCaml worker and select a scenario under `dev/benchmarks/scenarios/`; the parallel cross-validation scenario records sequential and four-worker results for both runtimes so speedup, efficiency, wall time, and peak RSS can be compared. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for declared parity tolerances, scope, raw-result links, and limitations. Any published comparison will first be reproduced on independent CI targets.
+The committed smoke benchmark validates the measurement workflow only. The development preprocessing, transform-cache, dense-linear-model, regularized-linear, SGD-regression, SGD-classification, ridge-classifier, multinomial-logistic, generalized-linear-model, splitter, metrics, sequential and bounded-parallel cross-validation, finite grid-search, adapter-admission, sparse-kernel, and solver-shape benchmarks compare ModelKit operations with pinned scikit-learn and SciPy references on deterministic workloads. Build the corresponding OCaml worker and select a scenario under `dev/benchmarks/scenarios/`; the parallel cross-validation scenario records sequential and four-worker results for both runtimes so speedup, efficiency, wall time, and peak RSS can be compared. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for declared parity tolerances, scope, raw-result links, and limitations. Any published comparison will first be reproduced on independent CI targets.
 
 ## Project Policies
 

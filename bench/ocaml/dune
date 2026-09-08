@@ -47,6 +47,10 @@
  (libraries modelkit))
 
 (executable
+ (name transform_cache_worker)
+ (libraries modelkit))
+
+(executable
  (name permutation_test_worker)
  (libraries modelkit))
 

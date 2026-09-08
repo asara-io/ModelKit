@@ -2,6 +2,7 @@ open Modelkit_data
 open Modelkit_metadata
 module Callback = Modelkit_callback.Callback
 open Modelkit_protocols
+module Transform_cache = Modelkit_transform_cache.Transform_cache
 
 module Pipeline = struct
   type capabilities = { decision_function : bool; predict_proba : bool }
@@ -27,9 +28,11 @@ module Pipeline = struct
 
   type transformer = {
     transformer_name : string;
+    transformer_cache_check : unit -> (unit, Error.t) result;
     transformer_fit_metadata_check : Metadata.t -> (unit, Error.t) result;
     transformer_transform_metadata_check : Metadata.t -> (unit, Error.t) result;
     fit_transform :
+      cache:Transform_cache.Store.t option ->
       metadata:Metadata.t ->
       rng:Rng.t ->
       feature_schema:Feature_schema.t ->
@@ -44,10 +47,12 @@ module Pipeline = struct
 
   type 'target stage = {
     name : string;
+    stage_cache_check : unit -> (unit, Error.t) result;
     stage_fit_metadata_check : Metadata.t -> (unit, Error.t) result;
     stage_transform_metadata_check : Metadata.t -> (unit, Error.t) result;
     validate_target : x:Matrix.t -> y:'target -> (unit, Error.t) result;
     fit_stage :
+      cache:Transform_cache.Store.t option ->
       metadata:Metadata.t ->
       rng:Rng.t ->
       feature_schema:Feature_schema.t ->
@@ -93,6 +98,7 @@ module Pipeline = struct
   type ('target, 'prediction) t = {
     transformers : 'target stage array;
     estimator : ('target, 'prediction) estimator;
+    cache : Transform_cache.Store.t option;
   }
 
   type ('target, 'prediction) fitted = {
@@ -167,49 +173,121 @@ module Pipeline = struct
   let with_stage name result =
     Result.map_error (Error.with_context (Error.Stage name)) result
 
-  let fit_transformer (type specification target fitted) ?encode
+  let cache_unsupported name () =
+    Result.map
+      (fun _ -> ())
+      (Transform_cache.Codec.require ~component:name
+         Transform_cache.Codec.Unsupported)
+
+  let content_identity ~feature_schema ~x =
+    Transform_cache.Content_id.combine ~domain:"pipeline-training-input-v1"
+      [|
+        Transform_cache.Content_id.of_string
+          (Schema_fingerprint.to_string
+             (Feature_schema.fingerprint feature_schema));
+        Transform_cache.Content_id.of_matrix x;
+      |]
+
+  let metadata_identity sample_weight =
+    let marker = Transform_cache.Content_id.of_string "sample-weight" in
+    match sample_weight with
+    | None ->
+        Transform_cache.Content_id.combine ~domain:"pipeline-routed-metadata-v1"
+          [| Transform_cache.Content_id.of_string "no-sample-weight" |]
+    | Some sample_weight ->
+        Transform_cache.Content_id.combine ~domain:"pipeline-routed-metadata-v1"
+          [|
+            marker; Transform_cache.Content_id.of_sample_weight sample_weight;
+          |]
+
+  let fit_transformer (type specification target fitted) ?encode ?cache_codec
       ~route_sample_weight ~name
       (module Transformer : TRANSFORMER
         with type t = specification
          and type target = target
          and type fitted = fitted
          and type rng = Rng.t) (specification : specification) ~sample_weight
-      ~rng ~feature_schema ~x ~y =
+      ~cache ~rng ~feature_schema ~x ~y ~target_identity =
     let sample_weight = if route_sample_weight then sample_weight else None in
-    let* fitted =
-      Transformer.fit specification ?sample_weight ~rng ~feature_schema ~x ~y ()
+    let package fitted =
+      let* () =
+        validate_fitted_schema ~stage:name ~expected:feature_schema
+          (Transformer.input_schema fitted)
+      in
+      let output_schema = Transformer.output_schema fitted in
+      let* transformed = Transformer.transform fitted ~feature_schema ~x in
+      let* () = validate_transform_output ~input:x ~output_schema transformed in
+      let fitted_transformer : fitted_transformer =
+        {
+          stage_name = name;
+          transform_input_schema = feature_schema;
+          transform_output_schema = output_schema;
+          fitted_transform_metadata_check = (fun _ -> Ok ());
+          apply_transform = (fun ~metadata:_ -> Transformer.transform fitted);
+          encode_transformer =
+            Option.map (fun encode () -> encode fitted) encode;
+        }
+      in
+      Ok (fitted_transformer, transformed, output_schema)
     in
-    let* () =
-      validate_fitted_schema ~stage:name ~expected:feature_schema
-        (Transformer.input_schema fitted)
+    let fit () =
+      let* fitted =
+        Transformer.fit specification ?sample_weight ~rng ~feature_schema ~x ~y
+          ()
+      in
+      Result.map (fun packaged -> (fitted, packaged)) (package fitted)
     in
-    let output_schema = Transformer.output_schema fitted in
-    let* transformed = Transformer.transform fitted ~feature_schema ~x in
-    let* () = validate_transform_output ~input:x ~output_schema transformed in
-    let fitted_transformer : fitted_transformer =
-      {
-        stage_name = name;
-        transform_input_schema = feature_schema;
-        transform_output_schema = output_schema;
-        fitted_transform_metadata_check = (fun _ -> Ok ());
-        apply_transform = (fun ~metadata:_ -> Transformer.transform fitted);
-        encode_transformer = Option.map (fun encode () -> encode fitted) encode;
-      }
-    in
-    Ok (fitted_transformer, transformed, output_schema)
+    match (cache, cache_codec) with
+    | None, _ -> Result.map snd (fit ())
+    | Some _, None -> Error (cache_unsupported name () |> Result.get_error)
+    | Some cache, Some codec -> (
+        let* training_data = content_identity ~feature_schema ~x in
+        let* routed_metadata = metadata_identity sample_weight in
+        let key =
+          Transform_cache.Key.create
+            ~component:(Transform_cache.Codec.component codec)
+            ~configuration:
+              (Transform_cache.Codec.configuration codec specification)
+            ~training_data ~target:target_identity ~routed_metadata
+            ~seed:(Rng.to_seed rng)
+        in
+        let fit_and_store () =
+          let* fitted, packaged = fit () in
+          let* payload = Transform_cache.Codec.encode codec fitted in
+          let* () = Transform_cache.Store.put cache key payload in
+          Ok packaged
+        in
+        let recover_hit payload =
+          match
+            Result.bind (Transform_cache.Codec.decode codec payload) package
+          with
+          | Ok packaged -> Ok packaged
+          | Error _ ->
+              let* _ = Transform_cache.Store.remove cache key in
+              fit_and_store ()
+        in
+        let* lookup = Transform_cache.Store.get cache key in
+        match lookup with
+        | Transform_cache.Store.Miss | Transform_cache.Store.Corrupt _ ->
+            fit_and_store ()
+        | Transform_cache.Store.Hit payload -> recover_hit payload)
 
-  let transformer_internal ?encode ?(route_sample_weight = false) ~name
-      transformer specification =
+  let transformer_internal ?encode ?cache_codec ?(route_sample_weight = false)
+      ~name transformer specification =
     let* () = validate_name name in
-    let fit_transform ~metadata ~rng ~feature_schema ~x =
-      fit_transformer ?encode ~route_sample_weight ~name transformer
-        specification
+    let fit_transform ~cache ~metadata ~rng ~feature_schema ~x =
+      fit_transformer ?encode ?cache_codec ~route_sample_weight ~name
+        transformer specification
         ~sample_weight:(Metadata.sample_weight metadata)
-        ~rng ~feature_schema ~x ~y:None
+        ~cache ~rng ~feature_schema ~x ~y:None ~target_identity:None
     in
     Ok
       {
         transformer_name = name;
+        transformer_cache_check =
+          (match cache_codec with
+          | Some _ -> fun () -> Ok ()
+          | None -> cache_unsupported name);
         fit_transform;
         transformer_fit_metadata_check = (fun _ -> Ok ());
         transformer_transform_metadata_check = (fun _ -> Ok ());
@@ -217,6 +295,19 @@ module Pipeline = struct
 
   let transformer ?route_sample_weight ~name transformer specification =
     transformer_internal ?route_sample_weight ~name transformer specification
+
+  let cacheable_transformer (type specification params fitted)
+      ?route_sample_weight ~name
+      (module Transformer : Transform_cache.CACHEABLE_TRANSFORMER
+        with type t = specification
+         and type params = params
+         and type target = unit
+         and type fitted = fitted
+         and type rng = Rng.t) specification =
+    let codec = Transform_cache.Codec.of_module (module Transformer) in
+    transformer_internal ?route_sample_weight ~cache_codec:codec ~name
+      (module Transformer)
+      specification
 
   let package_metadata_transformer (type specification target fitted) ~name
       (module Transformer : METADATA_TRANSFORMER
@@ -271,12 +362,13 @@ module Pipeline = struct
     let validate_fit_metadata, validate_transform_metadata, fit =
       package_metadata_transformer ~name transformer specification
     in
-    let fit_transform ~metadata ~rng ~feature_schema ~x =
+    let fit_transform ~cache:_ ~metadata ~rng ~feature_schema ~x =
       fit ~metadata ~rng ~feature_schema ~x ~y:None
     in
     Ok
       {
         transformer_name = name;
+        transformer_cache_check = cache_unsupported name;
         transformer_fit_metadata_check = validate_fit_metadata;
         transformer_transform_metadata_check = validate_transform_metadata;
         fit_transform;
@@ -399,13 +491,14 @@ module Pipeline = struct
   let unsupervised (transformer : transformer) =
     {
       name = transformer.transformer_name;
+      stage_cache_check = transformer.transformer_cache_check;
       stage_fit_metadata_check = transformer.transformer_fit_metadata_check;
       stage_transform_metadata_check =
         transformer.transformer_transform_metadata_check;
       validate_target = (fun ~x:_ ~y:_ -> Ok ());
       fit_stage =
-        (fun ~metadata ~rng ~feature_schema ~x ~y:_ ->
-          transformer.fit_transform ~metadata ~rng ~feature_schema ~x);
+        (fun ~cache ~metadata ~rng ~feature_schema ~x ~y:_ ->
+          transformer.fit_transform ~cache ~metadata ~rng ~feature_schema ~x);
     }
 
   let add_transformer (builder : builder) (transformer : transformer) =
@@ -429,6 +522,7 @@ module Pipeline = struct
             Array.of_list
               (List.rev_map unsupervised builder.reversed_transformers);
           estimator;
+          cache = None;
         }
 
   module Supervised = struct
@@ -453,14 +547,48 @@ module Pipeline = struct
     let transformer ?(route_sample_weight = false) ~name transformer
         specification =
       let* () = validate_name name in
-      let fit_stage ~metadata ~rng ~feature_schema ~x ~y =
+      let fit_stage ~cache ~metadata ~rng ~feature_schema ~x ~y =
         fit_transformer ~route_sample_weight ~name transformer specification
           ~sample_weight:(Metadata.sample_weight metadata)
-          ~rng ~feature_schema ~x ~y:(Some y)
+          ~cache ~rng ~feature_schema ~x ~y:(Some y)
+          ~target_identity:
+            (Some
+               (Transform_cache.Content_id.of_string (Target.cache_identity y)))
       in
       Ok
         {
           name;
+          stage_cache_check = cache_unsupported name;
+          validate_target;
+          fit_stage;
+          stage_fit_metadata_check = (fun _ -> Ok ());
+          stage_transform_metadata_check = (fun _ -> Ok ());
+        }
+
+    let cacheable_transformer (type specification params kind fitted)
+        ?(route_sample_weight = false) ~name
+        (module Transformer : Transform_cache.CACHEABLE_TRANSFORMER
+          with type t = specification
+           and type params = params
+           and type target = kind Target.t
+           and type fitted = fitted
+           and type rng = Rng.t) specification =
+      let* () = validate_name name in
+      let codec = Transform_cache.Codec.of_module (module Transformer) in
+      let fit_stage ~cache ~metadata ~rng ~feature_schema ~x ~y =
+        fit_transformer ~cache_codec:codec ~route_sample_weight ~name
+          (module Transformer)
+          specification
+          ~sample_weight:(Metadata.sample_weight metadata)
+          ~cache ~rng ~feature_schema ~x ~y:(Some y)
+          ~target_identity:
+            (Some
+               (Transform_cache.Content_id.of_string (Target.cache_identity y)))
+      in
+      Ok
+        {
+          name;
+          stage_cache_check = (fun () -> Ok ());
           validate_target;
           fit_stage;
           stage_fit_metadata_check = (fun _ -> Ok ());
@@ -472,12 +600,13 @@ module Pipeline = struct
       let validate_fit_metadata, validate_transform_metadata, fit =
         package_metadata_transformer ~name transformer specification
       in
-      let fit_stage ~metadata ~rng ~feature_schema ~x ~y =
+      let fit_stage ~cache:_ ~metadata ~rng ~feature_schema ~x ~y =
         fit ~metadata ~rng ~feature_schema ~x ~y:(Some y)
       in
       Ok
         {
           name;
+          stage_cache_check = cache_unsupported name;
           validate_target;
           stage_fit_metadata_check = validate_fit_metadata;
           stage_transform_metadata_check = validate_transform_metadata;
@@ -505,10 +634,14 @@ module Pipeline = struct
           {
             transformers = Array.of_list (List.rev builder.reversed_stages);
             estimator;
+            cache = None;
           }
   end
 
   let clone specification = specification
+  let with_cache specification cache = { specification with cache = Some cache }
+  let without_cache specification = { specification with cache = None }
+  let cache_enabled specification = Option.is_some specification.cache
 
   let transformer_names specification =
     Array.map (fun transformer -> transformer.name) specification.transformers
@@ -527,6 +660,16 @@ module Pipeline = struct
   let fit_with_metadata specification ~metadata ~rng ~feature_schema ~x ~y () =
     let* () = validate_matrix feature_schema x in
     let* () = Metadata.validate ~rows:(Matrix.rows x) metadata in
+    let* () =
+      match specification.cache with
+      | None -> Ok ()
+      | Some _ ->
+          Array.fold_left
+            (fun result stage ->
+              let* () = result in
+              with_stage stage.name (stage.stage_cache_check ()))
+            (Ok ()) specification.transformers
+    in
     let* () =
       Array.fold_left
         (fun result (stage : _ stage) ->
@@ -556,8 +699,8 @@ module Pipeline = struct
         in
         let* fitted, transformed, output_schema =
           with_stage transformer.name
-            (transformer.fit_stage ~metadata ~rng:stage_rng
-               ~feature_schema:current_schema ~x:current_x ~y)
+            (transformer.fit_stage ~cache:specification.cache ~metadata
+               ~rng:stage_rng ~feature_schema:current_schema ~x:current_x ~y)
         in
         fit_transformers (index + 1) output_schema transformed
           (fitted :: reversed_fitted)

@@ -11,6 +11,12 @@
  (libraries modelkit modelkit-parallel alcotest))
 
 (test
+ (name pipeline_cache_parallel_test)
+ (modules pipeline_cache_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel alcotest))
+
+(test
  (name learning_curve_parallel_test)
  (modules learning_curve_parallel_test)
  (package modelkit-parallel)
