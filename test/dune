@@ -242,6 +242,18 @@
  (libraries modelkit alcotest))
 
 (test
+ (name persistent_cache_test)
+ (modules persistent_cache_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name persistent_cache_process_test)
+ (modules persistent_cache_process_test)
+ (package modelkit)
+ (libraries modelkit alcotest unix))
+
+(test
  (name convention_test)
  (modules convention_test)
  (package modelkit)

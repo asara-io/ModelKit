@@ -1208,6 +1208,43 @@ module Transform_cache : sig
     val clear : t -> unit
     val stats : t -> stats
   end
+
+  (** Portable directory-backed storage for immutable cache entries.
+
+      Entries and temporary publication files contain plaintext fitted state.
+      ModelKit requests restrictive permissions for newly created paths but does
+      not provide encryption, authenticate content, or override the host
+      filesystem's permission semantics. Protect the root, backups, and
+      retention policy before caching state derived from secret training data.
+  *)
+  module Persistent : sig
+    type limits
+
+    val limits : max_payload_bytes:int -> (limits, Error.t) result
+    (** The positive limit bounds allocation before reading a payload. *)
+
+    val default_limits : limits
+
+    (** Corrupt entries are never returned as hits. A subsequent [put] replaces
+        a corrupt entry, allowing callers to refit safely. *)
+    type lookup = Miss | Hit of bytes | Corrupt of Error.t
+
+    type publication = Published | Already_present
+    type t
+
+    val create : ?limits:limits -> root:string -> unit -> (t, Error.t) result
+    (** Creates [root] with restrictive requested permissions when absent. Its
+        parent must already exist; existing roots must be directories. *)
+
+    val root : t -> string
+    val get : t -> Key.t -> (lookup, Error.t) result
+
+    val put : t -> Key.t -> bytes -> (publication, Error.t) result
+    (** Publishes a complete entry by atomic rename. Concurrent writers for one
+        key must encode identical payloads. *)
+
+    val remove : t -> Key.t -> (bool, Error.t) result
+  end
 end
 
 (** Pure portable SplitMix64 random-number generation. *)

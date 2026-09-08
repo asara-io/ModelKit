@@ -349,4 +349,291 @@ module Transform_cache = struct
         evictions = state.eviction_count;
       }
   end
+
+  module Persistent = struct
+    let magic = "MDLKTC01"
+    let major_version = 1
+    let minor_version = 0
+    let checksum_algorithm = 1
+    let digest_bytes = 16
+    let header_bytes = 8 + 1 + 1 + digest_bytes + 8 + 1 + digest_bytes
+    let extension = ".mkcache"
+
+    type limits = { max_payload_bytes : int }
+
+    let limits ~max_payload_bytes =
+      if max_payload_bytes < 1 then
+        Error
+          (validation ~name:"persistent cache payload limit"
+             ~reason:"must be positive"
+             ~remediation:"choose a positive persistent-cache reader limit")
+      else if max_payload_bytes > max_int - header_bytes then
+        Error
+          (validation ~name:"persistent cache payload limit"
+             ~reason:"leaves no space for cache-entry framing"
+             ~remediation:"choose a smaller persistent-cache reader limit")
+      else Ok { max_payload_bytes }
+
+    let default_limits = { max_payload_bytes = 64 * 1024 * 1024 }
+
+    type lookup = Miss | Hit of bytes | Corrupt of Error.t
+    type publication = Published | Already_present
+    type t = { root_path : string; limits : limits }
+
+    let cache_error ~operation ~reason ~remediation =
+      Error.make ~remediation (Error.Artifact { operation; reason })
+
+    let failure ~operation reason =
+      cache_error ~operation ~reason
+        ~remediation:
+          "discard the affected cache entry and recompute it from trusted \
+           inputs"
+
+    let io_error ~operation reason =
+      Error
+        (cache_error ~operation ~reason
+           ~remediation:
+             "check that the cache root exists and is readable and writable")
+
+    let absolute_path path =
+      if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path
+      else path
+
+    let definitely_absent path =
+      try not (Sys.file_exists path) with Sys_error _ -> false
+
+    let create ?(limits = default_limits) ~root () =
+      if String.trim root = "" then
+        Error
+          (validation ~name:"persistent cache root" ~reason:"must not be blank"
+             ~remediation:"choose a dedicated cache directory")
+      else
+        let root_path = absolute_path root in
+        try
+          if Sys.file_exists root_path then
+            if Sys.is_directory root_path then Ok { root_path; limits }
+            else
+              io_error ~operation:"open transform cache"
+                "the configured cache root is not a directory"
+          else
+            try
+              Sys.mkdir root_path 0o700;
+              Ok { root_path; limits }
+            with Sys_error reason ->
+              if Sys.file_exists root_path && Sys.is_directory root_path then
+                Ok { root_path; limits }
+              else io_error ~operation:"create transform cache" reason
+        with Sys_error reason ->
+          io_error ~operation:"open transform cache" reason
+
+    let root cache = cache.root_path
+
+    let entry_path cache key =
+      Filename.concat cache.root_path (Key.to_hex key ^ extension)
+
+    let set_i64 bytes offset value =
+      for index = 0 to 7 do
+        let shift = (7 - index) * 8 in
+        let byte =
+          Int64.(to_int (logand (shift_right_logical value shift) 0xffL))
+        in
+        Bytes.set bytes (offset + index) (Char.chr byte)
+      done
+
+    let get_i64 bytes offset =
+      let value = ref 0L in
+      for index = 0 to 7 do
+        value :=
+          Int64.logor
+            (Int64.shift_left !value 8)
+            (Int64.of_int (Char.code (Bytes.get bytes (offset + index))))
+      done;
+      !value
+
+    let make_header key payload =
+      let header = Bytes.create header_bytes in
+      Bytes.blit_string magic 0 header 0 8;
+      Bytes.set header 8 (Char.chr major_version);
+      Bytes.set header 9 (Char.chr minor_version);
+      Bytes.blit_string key 0 header 10 digest_bytes;
+      set_i64 header (10 + digest_bytes) (Int64.of_int (Bytes.length payload));
+      Bytes.set header (18 + digest_bytes) (Char.chr checksum_algorithm);
+      Bytes.blit_string (Digest.bytes payload) 0 header (19 + digest_bytes)
+        digest_bytes;
+      header
+
+    let parse_header cache key ~file_length header =
+      let corrupt reason =
+        Error (failure ~operation:"read transform cache" reason)
+      in
+      if not (String.equal (Bytes.sub_string header 0 8) magic) then
+        corrupt "cache-entry magic does not match ModelKit"
+      else if
+        Char.code (Bytes.get header 8) <> major_version
+        || Char.code (Bytes.get header 9) <> minor_version
+      then corrupt "unsupported cache-entry container version"
+      else if not (String.equal (Bytes.sub_string header 10 digest_bytes) key)
+      then corrupt "cache-entry key does not match its requested key"
+      else
+        let payload_length = get_i64 header (10 + digest_bytes) in
+        if Int64.compare payload_length 0L < 0 then
+          corrupt "cache-entry payload length is negative"
+        else if
+          Int64.compare payload_length
+            (Int64.of_int cache.limits.max_payload_bytes)
+          > 0
+        then corrupt "cache entry exceeds the configured payload limit"
+        else if
+          Char.code (Bytes.get header (18 + digest_bytes)) <> checksum_algorithm
+        then corrupt "unsupported cache-entry checksum algorithm"
+        else
+          let payload_length = Int64.to_int payload_length in
+          if payload_length <> file_length - header_bytes then
+            corrupt "cache-entry payload length does not match its framing"
+          else
+            Ok
+              ( payload_length,
+                Bytes.sub_string header (19 + digest_bytes) digest_bytes )
+
+    let read_open_channel cache key channel =
+      try
+        let file_length = in_channel_length channel in
+        if file_length < header_bytes then
+          Ok
+            (Corrupt
+               (failure ~operation:"read transform cache"
+                  "cache entry is truncated"))
+        else if file_length > cache.limits.max_payload_bytes + header_bytes then
+          Ok
+            (Corrupt
+               (failure ~operation:"read transform cache"
+                  "cache entry exceeds the configured payload limit"))
+        else
+          let header = Bytes.create header_bytes in
+          really_input channel header 0 header_bytes;
+          match parse_header cache key ~file_length header with
+          | Error error -> Ok (Corrupt error)
+          | Ok (payload_length, expected_digest) ->
+              let payload = Bytes.create payload_length in
+              really_input channel payload 0 payload_length;
+              if String.equal expected_digest (Digest.bytes payload) then
+                Ok (Hit payload)
+              else
+                Ok
+                  (Corrupt
+                     (failure ~operation:"read transform cache"
+                        "cache-entry checksum does not match"))
+      with End_of_file ->
+        Ok
+          (Corrupt
+             (failure ~operation:"read transform cache"
+                "cache entry is truncated"))
+
+    let rec get_with_retries remaining cache key =
+      let path = entry_path cache key in
+      try
+        let channel = open_in_bin path in
+        Fun.protect
+          ~finally:(fun () -> close_in_noerr channel)
+          (fun () -> read_open_channel cache key channel)
+      with Sys_error reason ->
+        if definitely_absent path then Ok Miss
+        else if remaining > 0 then get_with_retries (remaining - 1) cache key
+        else io_error ~operation:"read transform cache" reason
+
+    let get cache key = get_with_retries 2 cache key
+
+    let remove_file path =
+      try
+        Sys.remove path;
+        Ok true
+      with Sys_error reason ->
+        if definitely_absent path then Ok false
+        else io_error ~operation:"remove transform cache entry" reason
+
+    let remove cache key = remove_file (entry_path cache key)
+
+    let write_temporary cache key payload =
+      try
+        let path, channel =
+          Filename.open_temp_file ~temp_dir:cache.root_path ~perms:0o600
+            "modelkit-transform-cache-" ".tmp"
+        in
+        let result =
+          try
+            output_bytes channel (make_header key payload);
+            output_bytes channel payload;
+            close_out channel;
+            Ok path
+          with error ->
+            close_out_noerr channel;
+            ignore (remove_file path);
+            raise error
+        in
+        result
+      with Sys_error reason ->
+        io_error ~operation:"write transform cache entry" reason
+
+    let payload_conflict () =
+      Error
+        (cache_error ~operation:"publish transform cache entry"
+           ~reason:"a different valid payload already exists for this key"
+           ~remediation:
+             "version the component codec or correct the nondeterministic \
+              fitted-state encoding")
+
+    let finish_publication cache key payload temporary_path =
+      let destination = entry_path cache key in
+      let clean_temporary () = ignore (remove_file temporary_path) in
+      try
+        Sys.rename temporary_path destination;
+        Ok Published
+      with Sys_error rename_reason -> (
+        match get cache key with
+        | Ok (Hit existing) when Bytes.equal existing payload ->
+            clean_temporary ();
+            Ok Already_present
+        | Ok (Hit _) ->
+            clean_temporary ();
+            payload_conflict ()
+        | Ok (Corrupt _) -> (
+            match remove_file destination with
+            | Error error ->
+                clean_temporary ();
+                Error error
+            | Ok _ -> (
+                try
+                  Sys.rename temporary_path destination;
+                  Ok Published
+                with Sys_error reason ->
+                  clean_temporary ();
+                  io_error ~operation:"publish transform cache entry" reason))
+        | Ok Miss ->
+            clean_temporary ();
+            io_error ~operation:"publish transform cache entry" rename_reason
+        | Error error ->
+            clean_temporary ();
+            Error error)
+
+    let put cache key payload =
+      if Bytes.length payload > cache.limits.max_payload_bytes then
+        Error
+          (validation ~name:"persistent cache payload"
+             ~reason:
+               (Format.sprintf "%d bytes exceeds the %d-byte cache limit"
+                  (Bytes.length payload) cache.limits.max_payload_bytes)
+             ~remediation:
+               "increase the explicit cache limit or leave this result uncached")
+      else
+        match get cache key with
+        | Ok (Hit existing) when Bytes.equal existing payload ->
+            Ok Already_present
+        | Ok (Hit _) -> payload_conflict ()
+        | Error error -> Error error
+        | Ok Miss | Ok (Corrupt _) ->
+            let payload = Bytes.copy payload in
+            Result.bind (write_temporary cache key payload)
+              (fun temporary_path ->
+                finish_publication cache key payload temporary_path)
+  end
 end
