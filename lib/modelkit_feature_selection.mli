@@ -56,3 +56,60 @@ module Univariate_selection : sig
          and type rng = Rng.t
   end
 end
+
+(** Conversion of fitted linear-model coefficients into non-negative feature
+    importances. *)
+module Feature_importance : sig
+  type coefficient_norm = L1 | L2 | Max
+
+  val absolute_coefficients : Vector.t -> (Vector.t, Error.t) result
+  (** Returns the elementwise absolute coefficient values. *)
+
+  val coefficient_norms :
+    ?norm:coefficient_norm -> Matrix.t -> (Vector.t, Error.t) result
+  (** Reduces coefficient rows into one importance per column. The default is
+      [L1], matching the conventional multiclass model-selection reduction. At
+      least one coefficient row is required. *)
+end
+
+(** Dense selection using importances extracted from a fitted estimator.
+
+    Fit and transform inputs must be finite. Optional sample weights are passed
+    to the importance estimator after row-alignment validation. *)
+module Select_from_model : sig
+  type threshold = Mean | Median | Value of float
+
+  module Make (Estimator : IMPORTANCE_ESTIMATOR with type rng = Rng.t) : sig
+    type params = {
+      threshold : threshold;
+      max_features : int option;
+      estimator_params : Estimator.params;
+    }
+
+    type t
+    type fitted
+
+    val create :
+      ?threshold:threshold ->
+      ?max_features:int ->
+      Estimator.t ->
+      (t, Error.t) result
+
+    val importances : fitted -> Vector.t
+    val threshold_value : fitted -> float
+    val selected_indices : fitted -> int array
+
+    val fitted_estimator : fitted -> Estimator.fitted
+    (** The fitted estimator uses the complete selector input schema and exists
+        to derive importances; it is distinct from a pipeline's downstream
+        estimator over selected columns. *)
+
+    include
+      TRANSFORMER
+        with type t := t
+         and type params := params
+         and type target = Estimator.target
+         and type fitted := fitted
+         and type rng = Rng.t
+  end
+end

@@ -676,6 +676,18 @@ module type ESTIMATOR = sig
   val feature_schema : fitted -> Feature_schema.t
 end
 
+(** Estimator with an explicit fitted feature-importance extractor.
+
+    The extractor returns one finite, non-negative value per feature in the
+    fitted estimator's schema. Generic selectors validate this contract before
+    using the values. Coefficient-based implementations can use
+    {!Feature_importance}. *)
+module type IMPORTANCE_ESTIMATOR = sig
+  include ESTIMATOR
+
+  val feature_importances : fitted -> (Vector.t, Error.t) result
+end
+
 (** Estimator whose targets and predictions are integer class labels. *)
 module type CLASSIFIER = sig
   include
@@ -1431,6 +1443,70 @@ module Univariate_selection : sig
         with type t := t
          and type params := params
          and type target = Target.classification Target.t
+         and type fitted := fitted
+         and type rng = Rng.t
+  end
+end
+
+(** Helpers for converting fitted linear-model coefficients into one
+    non-negative importance per feature. Non-finite coefficients and
+    unrepresentable reductions return typed numerical errors. *)
+module Feature_importance : sig
+  type coefficient_norm = L1 | L2 | Max
+
+  val absolute_coefficients : Vector.t -> (Vector.t, Error.t) result
+  (** Returns the elementwise absolute coefficient values. *)
+
+  val coefficient_norms :
+    ?norm:coefficient_norm -> Matrix.t -> (Vector.t, Error.t) result
+  (** Reduces coefficient rows into one importance per column. The default [L1]
+      reduction matches conventional multiclass model selection. At least one
+      coefficient row is required. [L2] uses a scaled accumulation to avoid
+      intermediate overflow. *)
+end
+
+(** Dense feature selection driven by an explicitly adapted fitted estimator.
+
+    A threshold of [Mean] or [Median] is resolved from the fitted importances;
+    [Value v] uses a checked finite non-negative cutoff. Features meeting the
+    threshold are retained, optionally capped by [max_features]. Higher
+    importances rank first under a cap, equal importances prefer the lower
+    original column index, and output columns retain input order. Inputs must be
+    finite and contain at least one feature. Optional sample weights are passed
+    to the importance estimator after row-alignment validation. *)
+module Select_from_model : sig
+  type threshold = Mean | Median | Value of float
+
+  module Make (Estimator : IMPORTANCE_ESTIMATOR with type rng = Rng.t) : sig
+    type params = {
+      threshold : threshold;
+      max_features : int option;
+      estimator_params : Estimator.params;
+    }
+
+    type t
+    type fitted
+
+    val create :
+      ?threshold:threshold ->
+      ?max_features:int ->
+      Estimator.t ->
+      (t, Error.t) result
+
+    val importances : fitted -> Vector.t
+    val threshold_value : fitted -> float
+    val selected_indices : fitted -> int array
+
+    val fitted_estimator : fitted -> Estimator.fitted
+    (** The fitted estimator was trained on the selector's complete input schema
+        to derive importances; it is not the downstream estimator fitted on
+        selected columns. *)
+
+    include
+      TRANSFORMER
+        with type t := t
+         and type params := params
+         and type target = Estimator.target
          and type fitted := fitted
          and type rng = Rng.t
   end

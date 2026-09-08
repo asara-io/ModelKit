@@ -37,6 +37,12 @@ module type ESTIMATOR = sig
   val feature_schema : fitted -> Feature_schema.t
 end
 
+module type IMPORTANCE_ESTIMATOR = sig
+  include ESTIMATOR
+
+  val feature_importances : fitted -> (Vector.t, Error.t) result
+end
+
 module type CLASSIFIER = sig
   include
     ESTIMATOR

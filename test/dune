@@ -44,6 +44,24 @@
    (run %{test}))))
 
 (test
+ (name model_based_selection_test)
+ (modules model_based_selection_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name model_based_selection_fixture_test)
+ (modules model_based_selection_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/model_based_selection_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_MODEL_SELECTOR_FIXTURE
+   %{dep:fixtures/sklearn/model_based_selection_v1.tsv}
+   (run %{test}))))
+
+(test
  (name transforms_test)
  (modules transforms_test)
  (package modelkit)

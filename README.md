@@ -18,6 +18,7 @@ The full documentation is available via: [https://ocaml.org/p/modelkit/latest/do
 - Dense datasets admit aligned features, targets, weights, groups, and names under an explicit finiteness policy; stable schema fingerprints and copy/view reports make compatibility and allocation behavior observable.
 - Immutable preprocessing specifications fit mean, median, or constant imputation, population standardization, and variance-based feature filtering without changing or losing feature identities.
 - Dense univariate feature selection ranks columns with regression correlation F-scores or classification ANOVA F-scores, retains a checked count or percentile with deterministic tie handling, and fits only on each supervised pipeline's training rows.
+- Dense model-based selection fits any estimator that implements the explicit feature-importance contract, supports mean, median, or numeric thresholds plus an optional feature cap, and provides checked coefficient helpers for scalar and multiclass linear models.
 - Portable numeric, categorical, target, interaction, and missingness transforms cover min-max, max-absolute, robust, per-sample normalization, one-hot, ordinal, label, polynomial, and missing-indicator workflows.
 - Sequential pipelines support unsupervised and target-aware preprocessing fitted only on training rows, with explicit sample-weight routing, preserved feature schemas, and terminal prediction, decision, and probability dispatch.
 - Dense column-wise preprocessing combines independently fitted branches with checked index/name selectors, passthrough/drop, deterministic output names, and observable copy allocations.
@@ -49,6 +50,7 @@ Compared with 0.3.2, this release adds:
 - **Sparse storage.** Checked immutable CSR matrices with indexed row views, explicit materialization, payload-memory accounting, and dense/CSR kernel dispatch, plus direct CSR output from one-hot encoding.
 - **A fuller preprocessing set.** Min-max, max-absolute, and robust scaling, per-sample normalization, one-hot, ordinal, and label encoding, polynomial features, and missing indicators, all as immutable specifications with distinct fitted states and feature-name propagation.
 - **Dense univariate feature selection.** Regression and classification selectors provide correlation or ANOVA F-score ranking, checked count and percentile policies, deterministic original-column ties, named output schemas, and fold-local target-aware pipeline and cross-validation integration.
+- **Dense model-based feature selection.** `Select_from_model.Make` accepts an explicitly adapted importance estimator, fits it within each training partition, validates one finite non-negative importance per input feature, and applies mean, median, or numeric thresholds with an optional deterministic feature cap. Coefficient helpers cover absolute scalar coefficients and L1, L2, or maximum reduction across multiclass coefficient rows.
 - **More linear estimators.** Lasso and elastic-net regression with regularization paths, binary and multiclass ridge classification, multinomial logistic regression, Poisson and Tweedie generalized linear models, and SGD regression and classification with an explicit incremental-training and checkpoint contract. Every estimator exposes coefficients, intercepts, and solver diagnostics.
 - **Weights and multiclass evaluation.** Fold-local class weights, opt-in sample-weight routing to transformers, confusion-matrix and multiclass metrics with micro, macro, and weighted averaging, average precision, one-versus-rest and one-versus-one ROC AUC, top-k accuracy, DCG and NDCG, and multiclass cross-validation and grid search.
 - **Ecosystem adapters.** `modelkit-nx` and `modelkit-talon` admit explicitly typed features, targets, null masks, groups, names, and weights with conversion and allocation reports and a shared conformance suite. Both are pinned to Raven `1.0.0~alpha3` and build on Linux and macOS only.
@@ -95,7 +97,32 @@ let select =
 
 `Percentile p` retains `floor (input_width * p / 100)` columns. Both modes rank higher scores first, prefer the lower original column index at a tie, preserve selected columns in input order, and propagate named schemas. The current statistical scope is finite, unweighted dense input using regression correlation F-scores or classification one-way ANOVA F-scores. These scores are for ranking: p-values, multiple-testing corrections, mutual-information and chi-squared scores, sample-weighted statistics, sparse inputs, and artifact/cache codecs are not yet included.
 
-Every new estimator runs through pipelines, cross-validation, scoring, and grid search, and every metric and solver is checked against committed scikit-learn reference fixtures. Dense univariate regression and classification F-scores, selected indices, and transformed matrices are checked against `sklearn.feature_selection`; learning-curve training sizes and scores are checked against `sklearn.model_selection.learning_curve`; fold-local scaled ridge validation-curve scores are checked against `sklearn.model_selection.validation_curve`; grouped permutation scores and corrected p-values are checked against `sklearn.model_selection.permutation_test_score`. The comparative benchmarks under `dev/benchmarks/` are development evidence only; they record convergence parity across data shapes together with a throughput gap on wide designs that later releases will address.
+Model-based selection uses a structural module contract instead of inspecting estimator attributes at runtime. For a scalar linear model, the adapter and reusable selector module are:
+
+```ocaml
+module Ridge_importance = struct
+  include Modelkit.Ridge_regression
+
+  let feature_importances fitted =
+    Modelkit.Feature_importance.absolute_coefficients (coefficients fitted)
+end
+
+module Ridge_selector = Modelkit.Select_from_model.Make (Ridge_importance)
+
+let select =
+  Ridge_selector.create
+    ~threshold:Modelkit.Select_from_model.Mean
+    ~max_features:12
+    (Modelkit.Ridge_regression.create ~alpha:1.0 () |> Result.get_ok)
+  |> Result.get_ok
+  |> Modelkit.Pipeline.Supervised.transformer ~name:"select"
+       (module Ridge_selector)
+  |> Result.get_ok
+```
+
+For multiclass coefficient matrices, use `Feature_importance.coefficient_norms`; its default L1 reduction matches scikit-learn's model-selection convention, while L2 and maximum reductions are explicit alternatives. Model-based selectors accept finite dense features and can pass sample weights to their estimator when the stage is packaged with `~route_sample_weight:true`. The fitted selector exposes its resolved threshold, validated importances, selected indices, and underlying fitted estimator. Sparse input and artifact/cache codecs remain deferred.
+
+Every new estimator runs through pipelines, cross-validation, scoring, and grid search, and every metric and solver is checked against committed scikit-learn reference fixtures. Dense univariate and model-based selectors check scores or coefficient importances, thresholds, selected indices, and transformed matrices against `sklearn.feature_selection`; learning-curve training sizes and scores are checked against `sklearn.model_selection.learning_curve`; fold-local scaled ridge validation-curve scores are checked against `sklearn.model_selection.validation_curve`; grouped permutation scores and corrected p-values are checked against `sklearn.model_selection.permutation_test_score`. The comparative benchmarks under `dev/benchmarks/` are development evidence only; they record convergence parity across data shapes together with a throughput gap on wide designs that later releases will address.
 
 Source checkouts additionally support target-aware pipelines, dense column transformation, feature unions, nested preprocessing chains, expanded splitters, out-of-fold prediction, leakage-safe learning and validation curves, cross-validated permutation significance tests, resumable randomized and successive-halving search, and a runnable nested-CV recipe. Learning-curve schedules accept absolute counts or fractions of the smallest base training fold and optionally shuffle nested prefixes deterministically. Validation curves preserve caller-typed values while applying an immutable setter and pipeline builder, evaluate every value on one shared split, and report per-fold plus aggregate train/test scores without selecting or refitting a winner. Permutation tests evaluate one higher-is-better scorer on shared folds, shuffle targets globally or strictly within dataset groups, and report the observed score, ordered null scores, and corrected upper-tail p-value. Curves and permutation tests can reject an excessive fit plan before fitting. The [nested-CV example](examples/nested_cv.ml) keeps every inner search inside its corresponding outer training fold before evaluating the selected model on untouched outer rows, then demonstrates a separately reserved final holdout. Planned for later versions: sparse feature input to estimators, artifact codecs for the estimators added since 0.3.2, tree and ensemble models, and accelerated numerical backends. The artifact format remains experimental during 0.x, with a committed golden reader for each released schema.
 

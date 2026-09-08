@@ -41,6 +41,17 @@ module type ESTIMATOR = sig
   val feature_schema : fitted -> Feature_schema.t
 end
 
+(** Estimator with an explicit fitted feature-importance extractor.
+
+    The extractor returns one finite, non-negative value per feature in the
+    fitted estimator's schema. Consumers validate this contract before using the
+    values for selection. *)
+module type IMPORTANCE_ESTIMATOR = sig
+  include ESTIMATOR
+
+  val feature_importances : fitted -> (Vector.t, Error.t) result
+end
+
 (** Estimator whose targets and predictions are integer class labels. *)
 module type CLASSIFIER = sig
   include

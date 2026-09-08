@@ -384,3 +384,393 @@ module Univariate_selection = struct
   module Regression = Make (Regression_score)
   module Classification = Make (Classification_score)
 end
+
+module Feature_importance = struct
+  type coefficient_norm = L1 | L2 | Max
+
+  let numerical reason =
+    Error
+      (Error.make
+         ~remediation:
+           "provide finite coefficients whose reduced importance is \
+            representable as float64"
+         (Error.Numerical { operation = "feature importance"; reason }))
+
+  let validate_coefficient ~row ~column value =
+    if Float.is_finite value then Ok ()
+    else
+      numerical
+        (Printf.sprintf "coefficient at row %d, column %d is not finite" row
+           column)
+
+  let absolute_coefficients coefficients =
+    let values = Vector.to_array coefficients in
+    let rec validate index =
+      if index = Array.length values then Ok (Vector.of_array values)
+      else
+        let value = values.(index) in
+        if not (Float.is_finite value) then
+          numerical
+            (Printf.sprintf "coefficient at index %d is not finite" index)
+        else (
+          values.(index) <- Float.abs value;
+          validate (index + 1))
+    in
+    validate 0
+
+  let l1 matrix column =
+    let total = ref 0.0 in
+    let rec loop row =
+      if row = Matrix.rows matrix then
+        if Float.is_finite !total then Ok !total
+        else numerical (Printf.sprintf "L1 norm overflowed at column %d" column)
+      else
+        let value = Matrix.get matrix row column in
+        match validate_coefficient ~row ~column value with
+        | Error _ as error -> error
+        | Ok () ->
+            total := !total +. Float.abs value;
+            loop (row + 1)
+    in
+    loop 0
+
+  let l2 matrix column =
+    let scale = ref 0.0 and sum_squares = ref 1.0 in
+    let rec loop row =
+      if row = Matrix.rows matrix then
+        let value =
+          if !scale = 0.0 then 0.0 else !scale *. Float.sqrt !sum_squares
+        in
+        if Float.is_finite value then Ok value
+        else numerical (Printf.sprintf "L2 norm overflowed at column %d" column)
+      else
+        let value = Matrix.get matrix row column in
+        match validate_coefficient ~row ~column value with
+        | Error _ as error -> error
+        | Ok () ->
+            let absolute = Float.abs value in
+            (if absolute <> 0.0 then
+               if !scale < absolute then (
+                 let ratio = !scale /. absolute in
+                 sum_squares := 1.0 +. (!sum_squares *. ratio *. ratio);
+                 scale := absolute)
+               else
+                 let ratio = absolute /. !scale in
+                 sum_squares := !sum_squares +. (ratio *. ratio));
+            loop (row + 1)
+    in
+    loop 0
+
+  let maximum matrix column =
+    let result = ref 0.0 in
+    let rec loop row =
+      if row = Matrix.rows matrix then Ok !result
+      else
+        let value = Matrix.get matrix row column in
+        match validate_coefficient ~row ~column value with
+        | Error _ as error -> error
+        | Ok () ->
+            result := Float.max !result (Float.abs value);
+            loop (row + 1)
+    in
+    loop 0
+
+  let coefficient_norms ?(norm = L1) coefficients =
+    let rows = Matrix.rows coefficients
+    and columns = Matrix.columns coefficients in
+    if rows = 0 then
+      Error
+        (Error.make ~remediation:"provide at least one fitted coefficient row"
+           (Error.Validation
+              {
+                name = "coefficient importance rows";
+                reason = "must not be empty";
+              }))
+    else
+      let values = Array.make columns 0.0 in
+      let rec reduce column =
+        if column = columns then Ok (Vector.of_array values)
+        else
+          let result =
+            match norm with
+            | L1 -> l1 coefficients column
+            | L2 -> l2 coefficients column
+            | Max -> maximum coefficients column
+          in
+          match result with
+          | Error _ as error -> error
+          | Ok value ->
+              values.(column) <- value;
+              reduce (column + 1)
+      in
+      reduce 0
+end
+
+module Select_from_model = struct
+  type threshold = Mean | Median | Value of float
+
+  module Make (Estimator : IMPORTANCE_ESTIMATOR with type rng = Rng.t) = struct
+    type params = {
+      threshold : threshold;
+      max_features : int option;
+      estimator_params : Estimator.params;
+    }
+
+    type t = {
+      specification_params : params;
+      estimator_specification : Estimator.t;
+    }
+
+    type fitted = {
+      fitted_params_value : params;
+      fitted_model : Estimator.fitted;
+      importances : Vector.t;
+      threshold_value : float;
+      selected : int array;
+      input_schema : Feature_schema.t;
+      output_schema : Feature_schema.t;
+    }
+
+    type target = Estimator.target
+    type rng = Rng.t
+
+    let ( let* ) = Result.bind
+
+    let validation ~remediation name reason =
+      Error (Error.make ~remediation (Error.Validation { name; reason }))
+
+    let validate_threshold = function
+      | Mean | Median -> Ok ()
+      | Value value when Float.is_finite value && value >= 0.0 -> Ok ()
+      | Value _ ->
+          validation
+            ~remediation:"choose a finite, non-negative importance threshold"
+            "model selection threshold" "must be finite and non-negative"
+
+    let validate_max_features = function
+      | None -> Ok ()
+      | Some count when count > 0 -> Ok ()
+      | Some _ ->
+          validation
+            ~remediation:"choose a strictly positive maximum feature count"
+            "model selection max_features" "must be positive"
+
+    let create ?(threshold = Mean) ?max_features estimator =
+      let* () = validate_threshold threshold in
+      let* () = validate_max_features max_features in
+      Ok
+        ({
+           specification_params =
+             {
+               threshold;
+               max_features;
+               estimator_params = Estimator.params estimator;
+             };
+           estimator_specification = estimator;
+         }
+          : t)
+
+    let clone (specification : t) =
+      let estimator = Estimator.clone specification.estimator_specification in
+      ({
+         specification_params =
+           {
+             specification.specification_params with
+             estimator_params = Estimator.params estimator;
+           };
+         estimator_specification = estimator;
+       }
+        : t)
+
+    let params (specification : t) = specification.specification_params
+
+    let validate_importances ~columns importances =
+      let observed = Vector.length importances in
+      if observed <> columns then
+        Error
+          (Error.make
+             ~remediation:
+               "return exactly one importance for every fitted input feature"
+             (Error.Shape_mismatch
+                {
+                  name = "fitted feature importances";
+                  expected = [ columns ];
+                  observed = [ observed ];
+                }))
+      else
+        let rec loop column =
+          if column = columns then Ok ()
+          else
+            let value = Vector.get importances column in
+            if Float.is_finite value && value >= 0.0 then loop (column + 1)
+            else
+              validation
+                ~remediation:
+                  "return finite, non-negative fitted feature importances"
+                "fitted feature importance"
+                (Printf.sprintf "value at column %d is %g" column value)
+        in
+        loop 0
+
+    let resolve_threshold threshold importances =
+      let values = Vector.to_array importances in
+      match threshold with
+      | Value value -> value
+      | Mean ->
+          let mean = ref 0.0 in
+          Array.iteri
+            (fun index value ->
+              mean := !mean +. ((value -. !mean) /. Float.of_int (index + 1)))
+            values;
+          !mean
+      | Median ->
+          Array.sort Float.compare values;
+          let length = Array.length values in
+          if length mod 2 = 1 then values.(length / 2)
+          else
+            let lower = values.((length / 2) - 1) in
+            let upper = values.(length / 2) in
+            lower +. ((upper -. lower) /. 2.0)
+
+    let select ~threshold ~max_features importances =
+      let eligible = ref [] in
+      for column = 0 to Vector.length importances - 1 do
+        if Vector.get importances column >= threshold then
+          eligible := column :: !eligible
+      done;
+      let eligible = Array.of_list (List.rev !eligible) in
+      if Array.length eligible = 0 then
+        validation
+          ~remediation:
+            "lower the threshold or fit an estimator with nonzero feature \
+             importances"
+          "model-based feature selection"
+          "no fitted feature importance meets the threshold"
+      else
+        let retained =
+          match max_features with
+          | None -> eligible
+          | Some count when Array.length eligible <= count -> eligible
+          | Some count ->
+              Array.sort
+                (fun left right ->
+                  let by_importance =
+                    Float.compare
+                      (Vector.get importances right)
+                      (Vector.get importances left)
+                  in
+                  if by_importance <> 0 then by_importance
+                  else Int.compare left right)
+                eligible;
+              Array.sub eligible 0 count
+        in
+        Array.sort Int.compare retained;
+        Ok retained
+
+    let fit (specification : t) ?sample_weight ~rng ~feature_schema ~x ~y () =
+      let module Internal = Univariate_selection.Internal in
+      let* () =
+        Internal.validate_input ~operation:"model-based feature selection"
+          feature_schema x
+      in
+      let* () =
+        if Matrix.columns x > 0 then Ok ()
+        else
+          validation
+            ~remediation:
+              "provide at least one input feature for model-based selection"
+            "model-based selection features" "input width is zero"
+      in
+      let* () =
+        match sample_weight with
+        | None -> Ok ()
+        | Some weights ->
+            let expected = Matrix.rows x in
+            let observed = Sample_weight.length weights in
+            if expected = observed then Ok ()
+            else
+              Error
+                (Error.of_data_error
+                   ~remediation:
+                     "provide one sample weight per model-selection training \
+                      row"
+                   (Data_error.Length_mismatch
+                      {
+                        name = "model-based selection sample weights";
+                        expected;
+                        observed;
+                      }))
+      in
+      let* target =
+        match y with
+        | Some target -> Ok target
+        | None ->
+            validation
+              ~remediation:
+                "package this selector with Pipeline.Supervised.transformer \
+                 and provide training targets"
+              "model-based selection target" "is required"
+      in
+      let* estimator =
+        Estimator.fit
+          (Estimator.clone specification.estimator_specification)
+          ?sample_weight ~rng ~feature_schema ~x ~y:target ()
+      in
+      let estimator_schema = Estimator.feature_schema estimator in
+      let* () =
+        if Feature_schema.equal estimator_schema feature_schema then Ok ()
+        else
+          Error
+            (Error.make
+               ~remediation:
+                 "ensure the importance estimator reports its fitted input \
+                  schema"
+               (Error.Compatibility
+                  {
+                    component = "importance estimator";
+                    reason = "reported a different fitted feature schema";
+                  }))
+      in
+      let* importances = Estimator.feature_importances estimator in
+      let* () = validate_importances ~columns:(Matrix.columns x) importances in
+      let threshold_value =
+        resolve_threshold specification.specification_params.threshold
+          importances
+      in
+      let* selected =
+        select ~threshold:threshold_value
+          ~max_features:specification.specification_params.max_features
+          importances
+      in
+      let* output_schema = Internal.subset_schema feature_schema selected in
+      Ok
+        ({
+           fitted_params_value =
+             {
+               specification.specification_params with
+               estimator_params = Estimator.fitted_params estimator;
+             };
+           fitted_model = estimator;
+           importances;
+           threshold_value;
+           selected;
+           input_schema = feature_schema;
+           output_schema;
+         }
+          : fitted)
+
+    let transform (fitted : fitted) ~feature_schema ~x =
+      Univariate_selection.Internal.transform
+        ~operation:"model-based feature selection"
+        ~expected_schema:fitted.input_schema ~selected:fitted.selected
+        ~feature_schema ~x
+
+    let fitted_params (fitted : fitted) = fitted.fitted_params_value
+    let input_schema (fitted : fitted) = fitted.input_schema
+    let output_schema (fitted : fitted) = fitted.output_schema
+    let importances (fitted : fitted) = fitted.importances
+    let threshold_value (fitted : fitted) = fitted.threshold_value
+    let selected_indices (fitted : fitted) = Array.copy fitted.selected
+    let fitted_estimator (fitted : fitted) = fitted.fitted_model
+  end
+end
