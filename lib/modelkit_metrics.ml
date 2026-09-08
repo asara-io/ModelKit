@@ -1689,6 +1689,29 @@ module Multiclass_classification_scorer = struct
         score_probabilities (fun ~classes ~probabilities ->
             Multiclass_ranking.top_k_accuracy ~k ?sample_weight ~truth ~classes
               ~probabilities ())
+
+  let as_scorer specification =
+    let prediction =
+      match response specification with
+      | Labels -> Capability.Labels
+      | Class_probabilities -> Capability.Class_probabilities
+    in
+    let module Implementation = struct
+      type nonrec t = t
+      type nonrec params = params
+      type nonrec truth = truth
+      type nonrec prediction = prediction
+
+      let clone = clone
+      let params = params
+      let name = name
+      let score = score
+    end in
+    Scorer.of_module
+      ~capabilities:
+        (Capability.scorer ~sample_weight:Capability.Supported ~prediction ())
+      (module Implementation)
+      specification
 end
 
 module Regression_scorer = struct
@@ -1737,6 +1760,25 @@ module Regression_scorer = struct
     | R2 ->
         Regression_metrics.r2 ~undefined:specification.undefined ?sample_weight
           ~truth ~prediction ()
+
+  let as_scorer specification =
+    let module Implementation = struct
+      type nonrec t = t
+      type nonrec params = params
+      type nonrec truth = truth
+      type nonrec prediction = prediction
+
+      let clone = clone
+      let params = params
+      let name = name
+      let score = score
+    end in
+    Scorer.of_module
+      ~capabilities:
+        (Capability.scorer ~sample_weight:Capability.Supported
+           ~prediction:Capability.Direct ())
+      (module Implementation)
+      specification
 end
 
 module Binary_classification_scorer = struct
@@ -1869,6 +1911,30 @@ module Binary_classification_scorer = struct
               ~positive_label:specification.positive_label
               ~undefined:specification.undefined ?sample_weight ~truth
               ~positive_probabilities ())
+
+  let as_scorer specification =
+    let prediction =
+      match response specification with
+      | Labels -> Capability.Labels
+      | Positive_probabilities ->
+          Capability.Positive_probabilities specification.positive_label
+    in
+    let module Implementation = struct
+      type nonrec t = t
+      type nonrec params = params
+      type nonrec truth = truth
+      type nonrec prediction = prediction
+
+      let clone = clone
+      let params = params
+      let name = name
+      let score = score
+    end in
+    Scorer.of_module
+      ~capabilities:
+        (Capability.scorer ~sample_weight:Capability.Supported ~prediction ())
+      (module Implementation)
+      specification
 end
 
 module Score_aggregation = struct

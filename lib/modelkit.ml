@@ -33,6 +33,9 @@ module type EXECUTION = Modelkit_protocols.EXECUTION
 module type RNG = Modelkit_protocols.RNG
 module type NUMERICAL_BACKEND = Modelkit_protocols.NUMERICAL_BACKEND
 
+module Capability = Modelkit_protocols.Capability
+module Scorer = Modelkit_protocols.Scorer
+module Conformance = Modelkit_conformance.Conformance
 module Seed = Modelkit_protocols.Seed
 module Rng = Modelkit_protocols.Rng
 module Sequential_execution = Modelkit_protocols.Sequential_execution

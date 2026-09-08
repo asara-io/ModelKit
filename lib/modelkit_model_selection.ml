@@ -168,6 +168,30 @@ module Cross_validation = struct
       in
       loop 0
 
+  let validate_custom_sample_weight dataset scorers =
+    match Dataset.sample_weight dataset with
+    | None -> Ok ()
+    | Some _ ->
+        Array.fold_left
+          (fun result scorer ->
+            let ( let* ) = Result.bind in
+            let* () = result in
+            match
+              (Scorer.capabilities scorer).Capability.scorer_sample_weight
+            with
+            | Capability.Supported -> Ok ()
+            | Capability.Unsupported ->
+                Error
+                  (validation ~name:"custom scorer capability"
+                     ~reason:
+                       (Format.sprintf
+                          "scorer %S declares sample weights unsupported"
+                          (Scorer.name scorer))
+                     ~remediation:
+                       "omit dataset weights or use a scorer that declares \
+                        weight support"))
+          (Ok ()) scorers
+
   let empty_scores ~return_train_score:_ names =
     Array.map
       (fun name -> { name; train_score = None; test_score = None })
@@ -600,9 +624,9 @@ module Cross_validation = struct
     let score_partition ~fold_index ~partition scorers dataset prediction =
       Array.map
         (fun scorer ->
-          let name = Regression_scorer.name scorer in
+          let name = Scorer.name scorer in
           let result =
-            Regression_scorer.score scorer
+            Scorer.score scorer
               ?sample_weight:(Dataset.sample_weight dataset)
               ~truth:(Dataset.target dataset) ~prediction ()
             |> Result.map_error (scorer_error fold_index name)
@@ -663,7 +687,7 @@ module Cross_validation = struct
       let scores =
         Array.mapi
           (fun index scorer ->
-            let name = Regression_scorer.name scorer in
+            let name = Scorer.name scorer in
             let train_score =
               if not return_train_score then None
               else
@@ -700,15 +724,38 @@ module Cross_validation = struct
 
     let cross_validate ?(return_train_score = false) ?(return_models = false)
         ?(return_indices = false) ?(failure_policy = Abort) ?fit_seed
-        ?(execution = Execution.sequential) ?metadata ~splitter ~scorers ~seed
-        pipeline dataset =
+        ?(execution = Execution.sequential) ?metadata ?(custom_scorers = [||])
+        ~splitter ~scorers ~seed pipeline dataset =
+      let ( let* ) = Result.bind in
       let metadata =
         match metadata with
         | Some metadata -> metadata
         | None -> Metadata.of_dataset dataset
       in
       let fit_seed = Option.value fit_seed ~default:seed in
-      let scorer_names = Array.map Regression_scorer.name scorers in
+      let scorers =
+        Array.append
+          (Array.map Regression_scorer.as_scorer scorers)
+          custom_scorers
+      in
+      let* () =
+        Array.fold_left
+          (fun result scorer ->
+            let* () = result in
+            match (Scorer.capabilities scorer).Capability.scorer_prediction with
+            | Capability.Direct -> Ok ()
+            | Capability.Labels | Capability.Positive_probabilities _
+            | Capability.Class_probabilities ->
+                Error
+                  (validation ~name:"regression custom scorer capability"
+                     ~reason:
+                       "a regression scorer requested a classification response"
+                     ~remediation:
+                       "declare Capability.Direct for regression predictions"))
+          (Ok ()) custom_scorers
+      in
+      let* () = validate_custom_sample_weight dataset custom_scorers in
+      let scorer_names = Array.map Scorer.name scorers in
       run ~return_train_score ~return_models ~return_indices ~failure_policy
         ~fit_seed ~execution ~metadata ~splitter ~scorer_names ~seed
         ~score_model:(score_model scorers) pipeline dataset
@@ -948,18 +995,21 @@ module Cross_validation = struct
     else Ok ()
 
   module Binary_scoring = struct
-    type scorer = Binary_classification_scorer.t
+    type scorer = (Target.classification Target.t, Binary_prediction.t) Scorer.t
     type prediction = Binary_prediction.t
 
-    let name = Binary_classification_scorer.name
+    let name = Scorer.name
 
     let needs_labels scorer =
-      Binary_classification_scorer.response scorer
-      = Binary_classification_scorer.Labels
+      (Scorer.capabilities scorer).Capability.scorer_prediction
+      = Capability.Labels
 
     let needs_probabilities scorer =
-      Binary_classification_scorer.response scorer
-      = Binary_classification_scorer.Positive_probabilities
+      match (Scorer.capabilities scorer).Capability.scorer_prediction with
+      | Capability.Positive_probabilities _ -> true
+      | Capability.Direct | Capability.Labels | Capability.Class_probabilities
+        ->
+          false
 
     let validate_classes classes probabilities =
       if Array.length classes <> 2 then
@@ -987,18 +1037,21 @@ module Cross_validation = struct
       match (needs_labels scorer, labels, probabilities) with
       | true, Some labels, _ -> Binary_prediction.create ~labels ()
       | false, _, Some (probabilities, classes) -> (
-          let params = Binary_classification_scorer.params scorer in
-          match
-            find_class_column classes
-              params.Binary_classification_scorer.positive_label
-          with
+          let positive_label =
+            match (Scorer.capabilities scorer).Capability.scorer_prediction with
+            | Capability.Positive_probabilities label -> label
+            | Capability.Direct | Capability.Labels
+            | Capability.Class_probabilities ->
+                assert false
+          in
+          match find_class_column classes positive_label with
           | None ->
               Error
                 (validation ~name:"positive probability class"
                    ~reason:
                      (Format.sprintf
                         "label %d is absent from the declared class order"
-                        params.Binary_classification_scorer.positive_label)
+                        positive_label)
                    ~remediation:
                      "configure the scorer positive label to match the \
                       classifier")
@@ -1010,22 +1063,24 @@ module Cross_validation = struct
               Binary_prediction.create ~positive_probabilities ())
       | true, None, _ | false, _, None -> assert false
 
-    let score = Binary_classification_scorer.score
+    let score = Scorer.score
   end
 
   module Multiclass_scoring = struct
-    type scorer = Multiclass_classification_scorer.t
+    type scorer =
+      (Target.classification Target.t, Multiclass_prediction.t) Scorer.t
+
     type prediction = Multiclass_prediction.t
 
-    let name = Multiclass_classification_scorer.name
+    let name = Scorer.name
 
     let needs_labels scorer =
-      Multiclass_classification_scorer.response scorer
-      = Multiclass_classification_scorer.Labels
+      (Scorer.capabilities scorer).Capability.scorer_prediction
+      = Capability.Labels
 
     let needs_probabilities scorer =
-      Multiclass_classification_scorer.response scorer
-      = Multiclass_classification_scorer.Class_probabilities
+      (Scorer.capabilities scorer).Capability.scorer_prediction
+      = Capability.Class_probabilities
 
     let validate_classes classes probabilities =
       let sorted = Array.copy classes in
@@ -1054,7 +1109,7 @@ module Cross_validation = struct
           Multiclass_prediction.create ~classes ~probabilities ()
       | true, None, _ | false, _, None -> assert false
 
-    let score = Multiclass_classification_scorer.score
+    let score = Scorer.score
   end
 
   let sorted_unique_labels target =
@@ -1268,11 +1323,75 @@ module Cross_validation = struct
   module Binary_classification = struct
     include Classification_evaluation (Binary_scoring)
 
+    let cross_validate_first_class = cross_validate
+
+    let cross_validate ?return_train_score ?return_models ?return_indices
+        ?failure_policy ?fit_seed ?execution ?metadata ?(custom_scorers = [||])
+        ~splitter ~scorers ~seed pipeline dataset =
+      let ( let* ) = Result.bind in
+      let* () =
+        Array.fold_left
+          (fun result scorer ->
+            let* () = result in
+            match (Scorer.capabilities scorer).Capability.scorer_prediction with
+            | Capability.Labels | Capability.Positive_probabilities _ -> Ok ()
+            | Capability.Direct | Capability.Class_probabilities ->
+                Error
+                  (validation ~name:"binary custom scorer capability"
+                     ~reason:
+                       "the scorer requested a response unavailable to binary \
+                        evaluation"
+                     ~remediation:
+                       "declare Labels or Positive_probabilities with the \
+                        positive class label"))
+          (Ok ()) custom_scorers
+      in
+      let* () = validate_custom_sample_weight dataset custom_scorers in
+      let scorers =
+        Array.append
+          (Array.map Binary_classification_scorer.as_scorer scorers)
+          custom_scorers
+      in
+      cross_validate_first_class ?return_train_score ?return_models
+        ?return_indices ?failure_policy ?fit_seed ?execution ?metadata ~splitter
+        ~scorers ~seed pipeline dataset
+
     let cross_val_predict = classification_cross_val_predict ~binary:true
   end
 
   module Multiclass_classification = struct
     include Classification_evaluation (Multiclass_scoring)
+
+    let cross_validate_first_class = cross_validate
+
+    let cross_validate ?return_train_score ?return_models ?return_indices
+        ?failure_policy ?fit_seed ?execution ?metadata ?(custom_scorers = [||])
+        ~splitter ~scorers ~seed pipeline dataset =
+      let ( let* ) = Result.bind in
+      let* () =
+        Array.fold_left
+          (fun result scorer ->
+            let* () = result in
+            match (Scorer.capabilities scorer).Capability.scorer_prediction with
+            | Capability.Labels | Capability.Class_probabilities -> Ok ()
+            | Capability.Direct | Capability.Positive_probabilities _ ->
+                Error
+                  (validation ~name:"multiclass custom scorer capability"
+                     ~reason:
+                       "the scorer requested a response unavailable to \
+                        multiclass evaluation"
+                     ~remediation:"declare Labels or Class_probabilities"))
+          (Ok ()) custom_scorers
+      in
+      let* () = validate_custom_sample_weight dataset custom_scorers in
+      let scorers =
+        Array.append
+          (Array.map Multiclass_classification_scorer.as_scorer scorers)
+          custom_scorers
+      in
+      cross_validate_first_class ?return_train_score ?return_models
+        ?return_indices ?failure_policy ?fit_seed ?execution ?metadata ~splitter
+        ~scorers ~seed pipeline dataset
 
     let cross_val_predict = classification_cross_val_predict ~binary:false
   end
@@ -2693,14 +2812,19 @@ module Grid_search = struct
 
     let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ?metadata ?checkpoint ~grid
-        ~splitter ~scorers ~policy ~seed dataset =
+        ?(execution = Execution.sequential) ?metadata ?checkpoint
+        ?(custom_scorers = [||]) ~grid ~splitter ~scorers ~policy ~seed dataset
+        =
       let metadata =
         match metadata with
         | Some metadata -> metadata
         | None -> Metadata.of_dataset dataset
       in
-      let scorer_names = Array.map Regression_scorer.name scorers in
+      let scorer_names =
+        Array.append
+          (Array.map Regression_scorer.name scorers)
+          (Array.map Scorer.name custom_scorers)
+      in
       let settings =
         settings ~return_train_score ~failure_policy ~scorer_names ~policy
       in
@@ -2711,15 +2835,16 @@ module Grid_search = struct
               ~fit_seed pipeline dataset =
             Cross_validation.Regression.cross_validate ~return_train_score
               ~failure_policy ~fit_seed ~execution ~metadata ~splitter ~scorers
-              ~seed pipeline dataset
+              ~custom_scorers ~seed pipeline dataset
           in
           search ?checkpoint ~return_train_score ~failure_policy ~cross_validate
             ~scorer_names ~metadata ~policy ~seed grid dataset)
 
     let search ?return_train_score ?failure_policy ?execution ?metadata
-        ?checkpoint ~grid ~splitter ~scorers ~refit ~seed dataset =
+        ?checkpoint ?custom_scorers ~grid ~splitter ~scorers ~refit ~seed
+        dataset =
       search_with_policy ?return_train_score ?failure_policy ?execution
-        ?metadata ?checkpoint ~grid ~splitter ~scorers
+        ?metadata ?checkpoint ?custom_scorers ~grid ~splitter ~scorers
         ~policy:(Best_score refit) ~seed dataset
   end
 
@@ -2728,14 +2853,19 @@ module Grid_search = struct
 
     let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ?metadata ?checkpoint ~grid
-        ~splitter ~scorers ~policy ~seed dataset =
+        ?(execution = Execution.sequential) ?metadata ?checkpoint
+        ?(custom_scorers = [||]) ~grid ~splitter ~scorers ~policy ~seed dataset
+        =
       let metadata =
         match metadata with
         | Some metadata -> metadata
         | None -> Metadata.of_dataset dataset
       in
-      let scorer_names = Array.map Binary_classification_scorer.name scorers in
+      let scorer_names =
+        Array.append
+          (Array.map Binary_classification_scorer.name scorers)
+          (Array.map Scorer.name custom_scorers)
+      in
       let settings =
         settings ~return_train_score ~failure_policy ~scorer_names ~policy
       in
@@ -2747,15 +2877,16 @@ module Grid_search = struct
               ~fit_seed pipeline dataset =
             Cross_validation.Binary_classification.cross_validate
               ~return_train_score ~failure_policy ~fit_seed ~execution ~metadata
-              ~splitter ~scorers ~seed pipeline dataset
+              ~splitter ~scorers ~custom_scorers ~seed pipeline dataset
           in
           search ?checkpoint ~return_train_score ~failure_policy ~cross_validate
             ~scorer_names ~metadata ~policy ~seed grid dataset)
 
     let search ?return_train_score ?failure_policy ?execution ?metadata
-        ?checkpoint ~grid ~splitter ~scorers ~refit ~seed dataset =
+        ?checkpoint ?custom_scorers ~grid ~splitter ~scorers ~refit ~seed
+        dataset =
       search_with_policy ?return_train_score ?failure_policy ?execution
-        ?metadata ?checkpoint ~grid ~splitter ~scorers
+        ?metadata ?checkpoint ?custom_scorers ~grid ~splitter ~scorers
         ~policy:(Best_score refit) ~seed dataset
   end
 
@@ -2764,15 +2895,18 @@ module Grid_search = struct
 
     let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ?metadata ?checkpoint ~grid
-        ~splitter ~scorers ~policy ~seed dataset =
+        ?(execution = Execution.sequential) ?metadata ?checkpoint
+        ?(custom_scorers = [||]) ~grid ~splitter ~scorers ~policy ~seed dataset
+        =
       let metadata =
         match metadata with
         | Some metadata -> metadata
         | None -> Metadata.of_dataset dataset
       in
       let scorer_names =
-        Array.map Multiclass_classification_scorer.name scorers
+        Array.append
+          (Array.map Multiclass_classification_scorer.name scorers)
+          (Array.map Scorer.name custom_scorers)
       in
       let settings =
         settings ~return_train_score ~failure_policy ~scorer_names ~policy
@@ -2785,15 +2919,16 @@ module Grid_search = struct
               ~fit_seed pipeline dataset =
             Cross_validation.Multiclass_classification.cross_validate
               ~return_train_score ~failure_policy ~fit_seed ~execution ~metadata
-              ~splitter ~scorers ~seed pipeline dataset
+              ~splitter ~scorers ~custom_scorers ~seed pipeline dataset
           in
           search ?checkpoint ~return_train_score ~failure_policy ~cross_validate
             ~scorer_names ~metadata ~policy ~seed grid dataset)
 
     let search ?return_train_score ?failure_policy ?execution ?metadata
-        ?checkpoint ~grid ~splitter ~scorers ~refit ~seed dataset =
+        ?checkpoint ?custom_scorers ~grid ~splitter ~scorers ~refit ~seed
+        dataset =
       search_with_policy ?return_train_score ?failure_policy ?execution
-        ?metadata ?checkpoint ~grid ~splitter ~scorers
+        ?metadata ?checkpoint ?custom_scorers ~grid ~splitter ~scorers
         ~policy:(Best_score refit) ~seed dataset
   end
 end
@@ -3742,12 +3877,17 @@ module Randomized_search = struct
 
     let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ?metadata ?checkpoint ~space
-        ~splitter ~scorers ~policy ~seed dataset =
+        ?(execution = Execution.sequential) ?metadata ?checkpoint
+        ?(custom_scorers = [||]) ~space ~splitter ~scorers ~policy ~seed dataset
+        =
       let metadata =
         Option.value metadata ~default:(Metadata.of_dataset dataset)
       in
-      let scorer_names = Array.map Regression_scorer.name scorers in
+      let scorer_names =
+        Array.append
+          (Array.map Regression_scorer.name scorers)
+          (Array.map Scorer.name custom_scorers)
+      in
       let settings =
         Grid_search.settings ~return_train_score ~failure_policy ~scorer_names
           ~policy
@@ -3759,7 +3899,7 @@ module Randomized_search = struct
               ~fit_seed pipeline dataset =
             Cross_validation.Regression.cross_validate ~metadata
               ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
-              ~scorers ~seed pipeline dataset
+              ~scorers ~custom_scorers ~seed pipeline dataset
           in
           Grid_search.search_candidates ?checkpoint ~return_train_score
             ~failure_policy ~cross_validate ~scorer_names ~metadata ~policy
@@ -3768,9 +3908,10 @@ module Randomized_search = struct
             ~build:space.sample_build dataset)
 
     let search ?return_train_score ?failure_policy ?execution ?metadata
-        ?checkpoint ~space ~splitter ~scorers ~refit ~seed dataset =
+        ?checkpoint ?custom_scorers ~space ~splitter ~scorers ~refit ~seed
+        dataset =
       search_with_policy ?return_train_score ?failure_policy ?execution
-        ?metadata ?checkpoint ~space ~splitter ~scorers
+        ?metadata ?checkpoint ?custom_scorers ~space ~splitter ~scorers
         ~policy:(Grid_search.Best_score refit) ~seed dataset
   end
 
@@ -3779,12 +3920,17 @@ module Randomized_search = struct
 
     let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ?metadata ?checkpoint ~space
-        ~splitter ~scorers ~policy ~seed dataset =
+        ?(execution = Execution.sequential) ?metadata ?checkpoint
+        ?(custom_scorers = [||]) ~space ~splitter ~scorers ~policy ~seed dataset
+        =
       let metadata =
         Option.value metadata ~default:(Metadata.of_dataset dataset)
       in
-      let scorer_names = Array.map Binary_classification_scorer.name scorers in
+      let scorer_names =
+        Array.append
+          (Array.map Binary_classification_scorer.name scorers)
+          (Array.map Scorer.name custom_scorers)
+      in
       let settings =
         Grid_search.settings ~return_train_score ~failure_policy ~scorer_names
           ~policy
@@ -3797,7 +3943,7 @@ module Randomized_search = struct
               ~fit_seed pipeline dataset =
             Cross_validation.Binary_classification.cross_validate ~metadata
               ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
-              ~scorers ~seed pipeline dataset
+              ~scorers ~custom_scorers ~seed pipeline dataset
           in
           Grid_search.search_candidates ?checkpoint ~return_train_score
             ~failure_policy ~cross_validate ~scorer_names ~metadata ~policy
@@ -3806,9 +3952,10 @@ module Randomized_search = struct
             ~build:space.sample_build dataset)
 
     let search ?return_train_score ?failure_policy ?execution ?metadata
-        ?checkpoint ~space ~splitter ~scorers ~refit ~seed dataset =
+        ?checkpoint ?custom_scorers ~space ~splitter ~scorers ~refit ~seed
+        dataset =
       search_with_policy ?return_train_score ?failure_policy ?execution
-        ?metadata ?checkpoint ~space ~splitter ~scorers
+        ?metadata ?checkpoint ?custom_scorers ~space ~splitter ~scorers
         ~policy:(Grid_search.Best_score refit) ~seed dataset
   end
 
@@ -3817,13 +3964,16 @@ module Randomized_search = struct
 
     let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ?metadata ?checkpoint ~space
-        ~splitter ~scorers ~policy ~seed dataset =
+        ?(execution = Execution.sequential) ?metadata ?checkpoint
+        ?(custom_scorers = [||]) ~space ~splitter ~scorers ~policy ~seed dataset
+        =
       let metadata =
         Option.value metadata ~default:(Metadata.of_dataset dataset)
       in
       let scorer_names =
-        Array.map Multiclass_classification_scorer.name scorers
+        Array.append
+          (Array.map Multiclass_classification_scorer.name scorers)
+          (Array.map Scorer.name custom_scorers)
       in
       let settings =
         Grid_search.settings ~return_train_score ~failure_policy ~scorer_names
@@ -3837,7 +3987,7 @@ module Randomized_search = struct
               ~fit_seed pipeline dataset =
             Cross_validation.Multiclass_classification.cross_validate ~metadata
               ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
-              ~scorers ~seed pipeline dataset
+              ~scorers ~custom_scorers ~seed pipeline dataset
           in
           Grid_search.search_candidates ?checkpoint ~return_train_score
             ~failure_policy ~cross_validate ~scorer_names ~metadata ~policy
@@ -3846,9 +3996,10 @@ module Randomized_search = struct
             ~build:space.sample_build dataset)
 
     let search ?return_train_score ?failure_policy ?execution ?metadata
-        ?checkpoint ~space ~splitter ~scorers ~refit ~seed dataset =
+        ?checkpoint ?custom_scorers ~space ~splitter ~scorers ~refit ~seed
+        dataset =
       search_with_policy ?return_train_score ?failure_policy ?execution
-        ?metadata ?checkpoint ~space ~splitter ~scorers
+        ?metadata ?checkpoint ?custom_scorers ~space ~splitter ~scorers
         ~policy:(Grid_search.Best_score refit) ~seed dataset
   end
 end

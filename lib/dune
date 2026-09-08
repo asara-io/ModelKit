@@ -5,6 +5,7 @@
   modelkit_checkpoint_codec
   modelkit_artifact
   modelkit_composition
+  modelkit_conformance
   modelkit_class_weight
   modelkit_data
   modelkit_glm

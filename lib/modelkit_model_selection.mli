@@ -23,7 +23,13 @@ module Cross_validation : sig
       A supplied callback receives evaluation lifecycle events and is delivered
       to nested consumers only when their per-method request opts in. Fold
       events are buffered and dispatched on the caller domain in logical order;
-      see {!Callback} for bounds, cancellation, and failure semantics. *)
+      see {!Callback} for bounds, cancellation, and failure semantics.
+
+      Each task-specific [cross_validate] accepts built-in [scorers] plus
+      optional first-class [custom_scorers]. Names must be nonblank and unique
+      across both arrays. A custom scorer's {!Capability.prediction} is checked
+      against the task before fitting, and its declared sample-weight support is
+      enforced while scoring. *)
 
   type failure_policy = Abort | Record
   type partition = Train | Test
@@ -111,6 +117,8 @@ module Cross_validation : sig
       ?fit_seed:Seed.t ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?custom_scorers:
+        (Target.regression Target.t, Target.regression Target.t) Scorer.t array ->
       splitter:Target.regression Target.t splitter ->
       scorers:Regression_scorer.t array ->
       seed:Seed.t ->
@@ -145,6 +153,8 @@ module Cross_validation : sig
       ?fit_seed:Seed.t ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Binary_prediction.t) Scorer.t array ->
       splitter:Target.classification Target.t splitter ->
       scorers:Binary_classification_scorer.t array ->
       seed:Seed.t ->
@@ -184,6 +194,8 @@ module Cross_validation : sig
       ?fit_seed:Seed.t ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Multiclass_prediction.t) Scorer.t array ->
       splitter:Target.classification Target.t splitter ->
       scorers:Multiclass_classification_scorer.t array ->
       seed:Seed.t ->
@@ -516,6 +528,8 @@ module Grid_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.regression Target.t, Target.regression Target.t) Scorer.t array ->
       grid:
         ( 'configuration,
           Target.regression Target.t,
@@ -534,6 +548,8 @@ module Grid_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.regression Target.t, Target.regression Target.t) Scorer.t array ->
       grid:
         ( 'configuration,
           Target.regression Target.t,
@@ -556,6 +572,8 @@ module Grid_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Binary_prediction.t) Scorer.t array ->
       grid:
         ( 'configuration,
           Target.classification Target.t,
@@ -574,6 +592,8 @@ module Grid_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Binary_prediction.t) Scorer.t array ->
       grid:
         ( 'configuration,
           Target.classification Target.t,
@@ -596,6 +616,8 @@ module Grid_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Multiclass_prediction.t) Scorer.t array ->
       grid:
         ( 'configuration,
           Target.classification Target.t,
@@ -614,6 +636,8 @@ module Grid_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Multiclass_prediction.t) Scorer.t array ->
       grid:
         ( 'configuration,
           Target.classification Target.t,
@@ -955,6 +979,8 @@ module Randomized_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.regression Target.t, Target.regression Target.t) Scorer.t array ->
       space:
         ( 'configuration,
           Target.regression Target.t,
@@ -973,6 +999,8 @@ module Randomized_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.regression Target.t, Target.regression Target.t) Scorer.t array ->
       space:
         ( 'configuration,
           Target.regression Target.t,
@@ -995,6 +1023,8 @@ module Randomized_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Binary_prediction.t) Scorer.t array ->
       space:
         ( 'configuration,
           Target.classification Target.t,
@@ -1013,6 +1043,8 @@ module Randomized_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Binary_prediction.t) Scorer.t array ->
       space:
         ( 'configuration,
           Target.classification Target.t,
@@ -1035,6 +1067,8 @@ module Randomized_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Multiclass_prediction.t) Scorer.t array ->
       space:
         ( 'configuration,
           Target.classification Target.t,
@@ -1053,6 +1087,8 @@ module Randomized_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Multiclass_prediction.t) Scorer.t array ->
       space:
         ( 'configuration,
           Target.classification Target.t,

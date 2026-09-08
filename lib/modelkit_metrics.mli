@@ -200,6 +200,10 @@ module Regression_scorer : sig
   val neg_root_mean_squared_error : t
   val r2 : ?undefined:Undefined_metric_policy.t -> unit -> t
 
+  val as_scorer :
+    t -> (Target.regression Target.t, Target.regression Target.t) Scorer.t
+  (** Admits a built-in specification through the first-class scorer API. *)
+
   include
     SCORER
       with type t := t
@@ -258,6 +262,10 @@ module Binary_classification_scorer : sig
 
   val average_precision :
     ?positive_label:int -> ?undefined:Undefined_metric_policy.t -> unit -> t
+
+  val as_scorer :
+    t -> (Target.classification Target.t, Binary_prediction.t) Scorer.t
+  (** Admits a built-in specification with its required response capability. *)
 
   include
     SCORER
@@ -520,6 +528,10 @@ module Multiclass_classification_scorer : sig
 
   val top_k_accuracy : k:int -> t
   (** Named [top_<k>_accuracy] so several cutoffs can share one report. *)
+
+  val as_scorer :
+    t -> (Target.classification Target.t, Multiclass_prediction.t) Scorer.t
+  (** Admits a built-in specification with its required response capability. *)
 
   include
     SCORER

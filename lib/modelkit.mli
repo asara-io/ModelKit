@@ -813,6 +813,176 @@ module type SCORER = sig
     (float, Error.t) result
 end
 
+(** Published descriptions of optional behavior implemented by a component.
+
+    Required protocol behavior is not a capability: determinism, immutable
+    specifications, typed failures, row alignment, and schema validation remain
+    mandatory. These values describe only behavior that a generic consumer may
+    need to select before invoking a component. *)
+module Capability : sig
+  type support = Supported | Unsupported
+
+  type prediction =
+    | Direct
+    | Labels
+    | Positive_probabilities of int
+    | Class_probabilities
+
+  type estimator = {
+    estimator_sample_weight : support;
+    estimator_fit_metadata : support;
+    estimator_decision_function : support;
+    estimator_predict_proba : support;
+  }
+
+  type transformer = {
+    transformer_target : support;
+    transformer_sample_weight : support;
+    transformer_fit_metadata : support;
+    transformer_transform_metadata : support;
+  }
+
+  type scorer = {
+    scorer_sample_weight : support;
+    scorer_prediction : prediction;
+  }
+
+  val estimator :
+    ?sample_weight:support ->
+    ?fit_metadata:support ->
+    ?decision_function:support ->
+    ?predict_proba:support ->
+    unit ->
+    estimator
+
+  val transformer :
+    ?target:support ->
+    ?sample_weight:support ->
+    ?fit_metadata:support ->
+    ?transform_metadata:support ->
+    unit ->
+    transformer
+
+  val scorer : ?sample_weight:support -> prediction:prediction -> unit -> scorer
+end
+
+(** A type-safe, first-class scorer supplied by application or third-party code.
+    [of_module] snapshots the immutable specification with [clone]. Names and
+    capability compatibility are validated by consuming evaluation APIs before
+    fitting begins. *)
+module Scorer : sig
+  type ('truth, 'prediction) t
+
+  val of_module :
+    capabilities:Capability.scorer ->
+    (module SCORER
+       with type t = 'specification
+        and type params = 'params
+        and type truth = 'truth
+        and type prediction = 'prediction) ->
+    'specification ->
+    ('truth, 'prediction) t
+
+  val name : ('truth, 'prediction) t -> string
+  val capabilities : ('truth, 'prediction) t -> Capability.scorer
+
+  val score :
+    ('truth, 'prediction) t ->
+    ?sample_weight:Sample_weight.t ->
+    truth:'truth ->
+    prediction:'prediction ->
+    unit ->
+    (float, Error.t) result
+end
+
+(** Framework-neutral protocol checks for third-party components.
+
+    Reports are ordinary values so package authors can use them from Alcotest,
+    OUnit, expect tests, or their own build tooling without adding a ModelKit
+    test-framework dependency. *)
+module Conformance : sig
+  type issue =
+    | Protocol_error of Error.t
+    | Violation of string
+    | Raised of string
+
+  type outcome = Passed | Failed of issue
+  type check = { name : string; outcome : outcome }
+  type report
+
+  val issue_to_string : issue -> string
+  val checks : report -> check array
+  val passed : report -> bool
+  val failures : report -> check array
+
+  module Estimator : sig
+    type ('specification, 'params, 'target, 'prediction, 'fitted, 'rng) fixture = {
+      specification : 'specification;
+      rng : unit -> 'rng;
+      feature_schema : Feature_schema.t;
+      x : Matrix.t;
+      y : 'target;
+      sample_weight : Sample_weight.t option;
+      equal_params : 'params -> 'params -> bool;
+      prediction_length : 'prediction -> int;
+      equal_prediction : 'prediction -> 'prediction -> bool;
+    }
+
+    val check :
+      (module ESTIMATOR
+         with type t = 'specification
+          and type params = 'params
+          and type target = 'target
+          and type prediction = 'prediction
+          and type fitted = 'fitted
+          and type rng = 'rng) ->
+      ('specification, 'params, 'target, 'prediction, 'fitted, 'rng) fixture ->
+      report
+  end
+
+  module Transformer : sig
+    type ('specification, 'params, 'target, 'fitted, 'rng) fixture = {
+      specification : 'specification;
+      rng : unit -> 'rng;
+      feature_schema : Feature_schema.t;
+      x : Matrix.t;
+      y : 'target option;
+      sample_weight : Sample_weight.t option;
+      equal_params : 'params -> 'params -> bool;
+    }
+
+    val check :
+      (module TRANSFORMER
+         with type t = 'specification
+          and type params = 'params
+          and type target = 'target
+          and type fitted = 'fitted
+          and type rng = 'rng) ->
+      ('specification, 'params, 'target, 'fitted, 'rng) fixture ->
+      report
+  end
+
+  module Scorer : sig
+    type ('specification, 'params, 'truth, 'prediction) fixture = {
+      specification : 'specification;
+      capabilities : Capability.scorer;
+      truth : 'truth;
+      prediction : 'prediction;
+      sample_weight : Sample_weight.t option;
+      equal_params : 'params -> 'params -> bool;
+    }
+
+    val check :
+      (module SCORER
+         with type t = 'specification
+          and type params = 'params
+          and type truth = 'truth
+          and type prediction = 'prediction) ->
+      ('specification, 'params, 'truth, 'prediction) fixture ->
+      report
+  end
+end
+
 (** Contract for deterministic materialization of train/test row selections. *)
 module type SPLITTER = sig
   include SPECIFICATION
@@ -3095,6 +3265,10 @@ module Regression_scorer : sig
   val neg_root_mean_squared_error : t
   val r2 : ?undefined:Undefined_metric_policy.t -> unit -> t
 
+  val as_scorer :
+    t -> (Target.regression Target.t, Target.regression Target.t) Scorer.t
+  (** Admits a built-in specification through the first-class scorer API. *)
+
   include
     SCORER
       with type t := t
@@ -3154,6 +3328,10 @@ module Binary_classification_scorer : sig
 
   val average_precision :
     ?positive_label:int -> ?undefined:Undefined_metric_policy.t -> unit -> t
+
+  val as_scorer :
+    t -> (Target.classification Target.t, Binary_prediction.t) Scorer.t
+  (** Admits a built-in specification with its required response capability. *)
 
   include
     SCORER
@@ -3417,6 +3595,10 @@ module Multiclass_classification_scorer : sig
   val top_k_accuracy : k:int -> t
   (** Named [top_<k>_accuracy] so several cutoffs can share one report. *)
 
+  val as_scorer :
+    t -> (Target.classification Target.t, Multiclass_prediction.t) Scorer.t
+  (** Admits a built-in specification with its required response capability. *)
+
   include
     SCORER
       with type t := t
@@ -3487,7 +3669,13 @@ module Cross_validation : sig
       A supplied callback receives evaluation lifecycle events and is delivered
       to nested consumers only when their per-method request opts in. Fold
       events are buffered and dispatched on the caller domain in logical order;
-      see {!Callback} for bounds, cancellation, and failure semantics. *)
+      see {!Callback} for bounds, cancellation, and failure semantics.
+
+      Each task-specific [cross_validate] accepts built-in [scorers] plus
+      optional first-class [custom_scorers]. Names must be nonblank and unique
+      across both arrays. A custom scorer's {!Capability.prediction} is checked
+      against the task before fitting, and its declared sample-weight support is
+      enforced while scoring. *)
 
   type failure_policy = Abort | Record
   type partition = Train | Test
@@ -3575,6 +3763,8 @@ module Cross_validation : sig
       ?fit_seed:Seed.t ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?custom_scorers:
+        (Target.regression Target.t, Target.regression Target.t) Scorer.t array ->
       splitter:Target.regression Target.t splitter ->
       scorers:Regression_scorer.t array ->
       seed:Seed.t ->
@@ -3609,6 +3799,8 @@ module Cross_validation : sig
       ?fit_seed:Seed.t ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Binary_prediction.t) Scorer.t array ->
       splitter:Target.classification Target.t splitter ->
       scorers:Binary_classification_scorer.t array ->
       seed:Seed.t ->
@@ -3648,6 +3840,8 @@ module Cross_validation : sig
       ?fit_seed:Seed.t ->
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Multiclass_prediction.t) Scorer.t array ->
       splitter:Target.classification Target.t splitter ->
       scorers:Multiclass_classification_scorer.t array ->
       seed:Seed.t ->
@@ -3980,6 +4174,8 @@ module Grid_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.regression Target.t, Target.regression Target.t) Scorer.t array ->
       grid:
         ( 'configuration,
           Target.regression Target.t,
@@ -3998,6 +4194,8 @@ module Grid_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.regression Target.t, Target.regression Target.t) Scorer.t array ->
       grid:
         ( 'configuration,
           Target.regression Target.t,
@@ -4020,6 +4218,8 @@ module Grid_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Binary_prediction.t) Scorer.t array ->
       grid:
         ( 'configuration,
           Target.classification Target.t,
@@ -4038,6 +4238,8 @@ module Grid_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Binary_prediction.t) Scorer.t array ->
       grid:
         ( 'configuration,
           Target.classification Target.t,
@@ -4060,6 +4262,8 @@ module Grid_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Multiclass_prediction.t) Scorer.t array ->
       grid:
         ( 'configuration,
           Target.classification Target.t,
@@ -4078,6 +4282,8 @@ module Grid_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Multiclass_prediction.t) Scorer.t array ->
       grid:
         ( 'configuration,
           Target.classification Target.t,
@@ -4922,6 +5128,8 @@ module Randomized_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.regression Target.t, Target.regression Target.t) Scorer.t array ->
       space:
         ( 'configuration,
           Target.regression Target.t,
@@ -4940,6 +5148,8 @@ module Randomized_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.regression Target.t, Target.regression Target.t) Scorer.t array ->
       space:
         ( 'configuration,
           Target.regression Target.t,
@@ -4962,6 +5172,8 @@ module Randomized_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Binary_prediction.t) Scorer.t array ->
       space:
         ( 'configuration,
           Target.classification Target.t,
@@ -4980,6 +5192,8 @@ module Randomized_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Binary_prediction.t) Scorer.t array ->
       space:
         ( 'configuration,
           Target.classification Target.t,
@@ -5002,6 +5216,8 @@ module Randomized_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Multiclass_prediction.t) Scorer.t array ->
       space:
         ( 'configuration,
           Target.classification Target.t,
@@ -5020,6 +5236,8 @@ module Randomized_search : sig
       ?execution:Execution.t ->
       ?metadata:Metadata.t ->
       ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Multiclass_prediction.t) Scorer.t array ->
       space:
         ( 'configuration,
           Target.classification Target.t,

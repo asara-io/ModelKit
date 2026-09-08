@@ -51,6 +51,59 @@ task-specific loaders.
 Portable tests consume committed scikit-learn reference data without requiring
 Python during a normal build or test run.
 
+{1 Third-party capabilities and conformance}
+
+{!Modelkit.Capability} describes optional behavior that generic workflow code
+must choose before invocation: sample-weight and metadata support, classifier
+responses, and optional estimator prediction methods. These descriptions do
+not weaken the base protocols. Immutable specifications, deterministic results,
+typed routine failures, schema validation, and transformer row preservation are
+always required and therefore are not capability flags.
+
+An external scorer implements {!module-type:Modelkit.SCORER}, then becomes a
+first-class value through {!val:Modelkit.Scorer.of_module}. Its capability
+description declares whether it accepts sample weights and which prediction
+response it consumes. Binary probability scorers include their positive class
+label in that declaration, allowing evaluation to select the correct fitted
+probability column. Pass these values through [custom_scorers] alongside the
+existing [scorers] argument in regression, binary, or multiclass
+cross-validation, grid search, and randomized search. Built-in scorer values
+remain unchanged; their [as_scorer] functions expose the same first-class
+representation when application code needs a uniform collection.
+
+{@ocaml[
+open Modelkit
+
+module Constant_score : SCORER with type t = float
+                                and type params = float
+                                and type truth = Target.regression Target.t
+                                and type prediction = Target.regression Target.t = struct
+  type t = float
+  type params = float
+  type truth = Target.regression Target.t
+  type prediction = Target.regression Target.t
+
+  let clone value = value
+  let params value = value
+  let name _ = "constant_score"
+  let score value ?sample_weight:_ ~truth:_ ~prediction:_ () = Ok value
+end
+
+let constant_score =
+  Scorer.of_module
+    ~capabilities:(Capability.scorer ~prediction:Capability.Direct ())
+    (module Constant_score) 0.5
+]}
+
+{!Modelkit.Conformance} provides framework-neutral reports for external
+estimators, transformers, and scorers. A fixture supplies representative valid
+data plus equality and prediction-length observations that cannot be inferred
+from abstract protocol types. Checks cover cloning, successful fitting or
+scoring, fitted parameter and schema reporting, row preservation, finite
+scores, and repeatability. Reports are data rather than Alcotest values, so a
+third-party package can make them fail its preferred test runner by asserting
+{!val:Modelkit.Conformance.passed}.
+
 {1 Sparse storage foundation}
 
 {!Modelkit.Csr_matrix} copies admitted index arrays and requires canonical CSR
