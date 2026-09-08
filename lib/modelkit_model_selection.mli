@@ -371,6 +371,134 @@ module Recursive_feature_elimination_cv : sig
   end
 end
 
+(** Dense forward and backward sequential feature selection. *)
+module Sequential_feature_selection : sig
+  type direction = Forward | Backward
+
+  module Regression : sig
+    module Make
+        (Estimator :
+          ESTIMATOR
+            with type target = Target.regression Target.t
+             and type prediction = Target.regression Target.t
+             and type rng = Rng.t) : sig
+      type params = {
+        feature_count : int;
+        direction : direction;
+        max_fits : int option;
+        scorer_name : string;
+        estimator_params : Estimator.params;
+      }
+
+      type t
+      type fitted
+
+      val create :
+        ?direction:direction ->
+        ?max_fits:int ->
+        ?execution:Execution.t ->
+        feature_count:int ->
+        splitter:Target.regression Target.t Cross_validation.splitter ->
+        scorer:Regression_scorer.t ->
+        Estimator.t ->
+        (t, Error.t) result
+
+      val selected_indices : fitted -> int array
+      val fit_count : fitted -> int
+
+      include
+        METADATA_TRANSFORMER
+          with type t := t
+           and type params := params
+           and type target = Target.regression Target.t
+           and type fitted := fitted
+           and type rng = Rng.t
+    end
+  end
+
+  module Binary_classification : sig
+    module Make
+        (Estimator :
+          ESTIMATOR
+            with type target = Target.classification Target.t
+             and type prediction = Target.classification Target.t
+             and type rng = Rng.t) : sig
+      type params = {
+        feature_count : int;
+        direction : direction;
+        max_fits : int option;
+        scorer_name : string;
+        estimator_params : Estimator.params;
+      }
+
+      type t
+      type fitted
+
+      val create :
+        ?direction:direction ->
+        ?max_fits:int ->
+        ?execution:Execution.t ->
+        feature_count:int ->
+        splitter:Target.classification Target.t Cross_validation.splitter ->
+        scorer:Binary_classification_scorer.t ->
+        Estimator.t ->
+        (t, Error.t) result
+
+      val selected_indices : fitted -> int array
+      val fit_count : fitted -> int
+
+      include
+        METADATA_TRANSFORMER
+          with type t := t
+           and type params := params
+           and type target = Target.classification Target.t
+           and type fitted := fitted
+           and type rng = Rng.t
+    end
+  end
+
+  module Multiclass_classification : sig
+    module Make
+        (Estimator :
+          ESTIMATOR
+            with type target = Target.classification Target.t
+             and type prediction = Target.classification Target.t
+             and type rng = Rng.t) : sig
+      type params = {
+        feature_count : int;
+        direction : direction;
+        max_fits : int option;
+        scorer_name : string;
+        estimator_params : Estimator.params;
+      }
+
+      type t
+      type fitted
+
+      val create :
+        ?direction:direction ->
+        ?max_fits:int ->
+        ?execution:Execution.t ->
+        feature_count:int ->
+        splitter:Target.classification Target.t Cross_validation.splitter ->
+        scorer:Multiclass_classification_scorer.t ->
+        Estimator.t ->
+        (t, Error.t) result
+
+      val selected_indices : fitted -> int array
+      val fit_count : fitted -> int
+
+      include
+        METADATA_TRANSFORMER
+          with type t := t
+           and type params := params
+           and type target = Target.classification Target.t
+           and type fitted := fitted
+           and type rng = Rng.t
+    end
+  end
+end
+
 (** Leakage-safe learning curves over nested training-fold prefixes.
 
     A learning curve measures how train and validation scores change as each

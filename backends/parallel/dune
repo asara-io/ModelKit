@@ -35,6 +35,12 @@
  (libraries modelkit modelkit-parallel alcotest))
 
 (test
+ (name sequential_feature_selection_parallel_test)
+ (modules sequential_feature_selection_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel alcotest))
+
+(test
  (name permutation_test_parallel_test)
  (modules permutation_test_parallel_test)
  (package modelkit-parallel)

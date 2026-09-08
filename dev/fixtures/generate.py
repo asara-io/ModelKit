@@ -635,7 +635,7 @@ def generate_model_based_selection_fixture(fixture_dir: Path) -> None:
 
 def generate_recursive_feature_elimination_fixture(fixture_dir: Path) -> None:
     import numpy as np
-    from sklearn.feature_selection import RFE, RFECV
+    from sklearn.feature_selection import RFE, RFECV, SequentialFeatureSelector
     from sklearn.linear_model import LinearRegression, RidgeClassifier
     from sklearn.model_selection import KFold, StratifiedKFold
 
@@ -847,6 +847,93 @@ def generate_recursive_feature_elimination_fixture(fixture_dir: Path) -> None:
         fixture_dir / "recursive_feature_elimination_cv_v1.metadata.json"
     ).write_text(
         json.dumps(cv_metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    sequential_selectors = {
+        "regression_forward": SequentialFeatureSelector(
+            LinearRegression(),
+            n_features_to_select=2,
+            direction="forward",
+            scoring="neg_mean_squared_error",
+            cv=KFold(n_splits=3, shuffle=False),
+            n_jobs=1,
+        ).fit(regression_x, regression_y),
+        "regression_backward": SequentialFeatureSelector(
+            LinearRegression(),
+            n_features_to_select=2,
+            direction="backward",
+            scoring="neg_mean_squared_error",
+            cv=KFold(n_splits=3, shuffle=False),
+            n_jobs=1,
+        ).fit(regression_x, regression_y),
+        "classification_forward": SequentialFeatureSelector(
+            RidgeClassifier(alpha=0.5),
+            n_features_to_select=2,
+            direction="forward",
+            scoring="accuracy",
+            cv=StratifiedKFold(n_splits=3, shuffle=False),
+            n_jobs=1,
+        ).fit(classification_x, classification_y),
+        "classification_backward": SequentialFeatureSelector(
+            RidgeClassifier(alpha=0.5),
+            n_features_to_select=2,
+            direction="backward",
+            scoring="accuracy",
+            cv=StratifiedKFold(n_splits=3, shuffle=False),
+            n_jobs=1,
+        ).fit(classification_x, classification_y),
+    }
+    sequential_rows = [
+        "# ModelKit sklearn sequential-feature-selection reference fixture v1"
+    ]
+
+    def add_sequential_matrix(name: str, matrix) -> None:
+        for index, row in enumerate(matrix):
+            sequential_rows.append(f"{name}\t{index}\t{float_values(row)}")
+
+    def add_sequential_vector(name: str, values) -> None:
+        sequential_rows.append(f"{name}\t{float_values(values)}")
+
+    add_sequential_matrix("regression_x", regression_x)
+    add_sequential_vector("regression_y", regression_y)
+    add_sequential_matrix("classification_x", classification_x)
+    add_sequential_vector("classification_y", classification_y)
+    for name, selector in sequential_selectors.items():
+        add_sequential_vector(f"{name}_selected", selector.get_support(indices=True))
+        source = regression_x if name.startswith("regression") else classification_x
+        add_sequential_matrix(f"{name}_output", selector.transform(source))
+
+    (fixture_dir / "sequential_feature_selection_v1.tsv").write_text(
+        "\n".join(sequential_rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    sequential_metadata = {
+        "comparison": "Selected indices and transformed dense matrices for forward and backward regression and multiclass selection.",
+        "configuration": {
+            "classification_cv": "StratifiedKFold(n_splits=3, shuffle=False)",
+            "classification_estimator": "RidgeClassifier(alpha=0.5)",
+            "classification_scoring": "accuracy",
+            "feature_count": 2,
+            "regression_cv": "KFold(n_splits=3, shuffle=False)",
+            "regression_estimator": "LinearRegression()",
+            "regression_scoring": "neg_mean_squared_error",
+        },
+        "environment": environment.metadata(),
+        "fixture": "sequential_feature_selection_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.feature_selection.SequentialFeatureSelector",
+            "sklearn.linear_model.LinearRegression",
+            "sklearn.linear_model.RidgeClassifier",
+            "sklearn.model_selection.KFold",
+            "sklearn.model_selection.StratifiedKFold",
+        ],
+        "schema_version": 1,
+    }
+    (fixture_dir / "sequential_feature_selection_v1.metadata.json").write_text(
+        json.dumps(sequential_metadata, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
         newline="\n",
     )

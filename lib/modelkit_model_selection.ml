@@ -1928,6 +1928,564 @@ module Recursive_feature_elimination_cv = struct
   end
 end
 
+module Sequential_feature_selection = struct
+  type direction = Forward | Backward
+
+  let validation ~remediation name reason =
+    Error (Error.make ~remediation (Error.Validation { name; reason }))
+
+  module type TASK = sig
+    type kind
+    type prediction
+    type scorer
+
+    val scorer_name : scorer -> string
+    val clone_scorer : scorer -> scorer
+    val validate_scorer : scorer -> (unit, Error.t) result
+
+    val score :
+      scorer ->
+      ?sample_weight:Sample_weight.t ->
+      truth:kind Target.t ->
+      prediction:prediction ->
+      unit ->
+      (float, Error.t) result
+  end
+
+  module Make
+      (Task : TASK)
+      (Estimator :
+        ESTIMATOR
+          with type target = Task.kind Target.t
+           and type prediction = Task.prediction
+           and type rng = Rng.t) =
+  struct
+    type params = {
+      feature_count : int;
+      direction : direction;
+      max_fits : int option;
+      scorer_name : string;
+      estimator_params : Estimator.params;
+    }
+
+    type t = {
+      specification_params : params;
+      estimator_specification : Estimator.t;
+      splitter : Task.kind Target.t Cross_validation.splitter;
+      scorer : Task.scorer;
+      execution : Execution.t;
+    }
+
+    type fitted = {
+      fitted_params_value : params;
+      selected : int array;
+      input_schema_value : Feature_schema.t;
+      output_schema_value : Feature_schema.t;
+      fit_count_value : int;
+    }
+
+    type target = Task.kind Target.t
+    type rng = Rng.t
+
+    let ( let* ) = Result.bind
+
+    let validation ~remediation name reason =
+      Error (Error.make ~remediation (Error.Validation { name; reason }))
+
+    let validate_feature_count count =
+      if count > 0 then Ok ()
+      else
+        validation ~remediation:"choose a strictly positive selected width"
+          "sequential feature selection feature_count" "must be positive"
+
+    let validate_max_fits = function
+      | None -> Ok ()
+      | Some count when count > 0 -> Ok ()
+      | Some _ ->
+          validation ~remediation:"choose a strictly positive fit bound"
+            "sequential feature selection max_fits" "must be positive"
+
+    let create ?(direction = Forward) ?max_fits
+        ?(execution = Execution.sequential) ~feature_count ~splitter ~scorer
+        estimator =
+      let* () = validate_feature_count feature_count in
+      let* () = validate_max_fits max_fits in
+      let* () = Task.validate_scorer scorer in
+      Ok
+        ({
+           specification_params =
+             {
+               feature_count;
+               direction;
+               max_fits;
+               scorer_name = Task.scorer_name scorer;
+               estimator_params = Estimator.params estimator;
+             };
+           estimator_specification = estimator;
+           splitter;
+           scorer;
+           execution;
+         }
+          : t)
+
+    let clone (specification : t) =
+      let estimator = Estimator.clone specification.estimator_specification in
+      ({
+         specification_params =
+           {
+             specification.specification_params with
+             scorer_name = Task.scorer_name specification.scorer;
+             estimator_params = Estimator.params estimator;
+           };
+         estimator_specification = estimator;
+         splitter = specification.splitter;
+         scorer = Task.clone_scorer specification.scorer;
+         execution = specification.execution;
+       }
+        : t)
+
+    let params (specification : t) = specification.specification_params
+
+    let fit_request _ =
+      Metadata.Request.create ~sample_weight:Metadata.Request.Optional
+        ~groups:Metadata.Request.Optional ()
+
+    let transform_request _ = Metadata.Request.none
+
+    let subset_schema schema selected =
+      match Feature_schema.names schema with
+      | None ->
+          Feature_schema.anonymous ~feature_count:(Array.length selected)
+          |> Result.map_error (fun error ->
+              Error.of_data_error
+                ~remediation:"provide a representable selected feature count"
+                error)
+      | Some names ->
+          let values =
+            Array.map
+              (fun column ->
+                Feature_names.get names column |> Feature_name.to_string)
+              selected
+          in
+          Feature_names.create ~expected_count:(Array.length values) values
+          |> Result.map Feature_schema.named
+          |> Result.map_error (fun error ->
+              Error.of_data_error
+                ~remediation:"provide valid selected feature names" error)
+
+    let subset_matrix x selected =
+      Matrix.init ~rows:(Matrix.rows x) ~columns:(Array.length selected)
+        (fun row output_column -> Matrix.get x row selected.(output_column))
+      |> Result.map_error (fun error ->
+          Error.of_data_error
+            ~remediation:
+              "provide representable sequential-selection matrix dimensions"
+            error)
+
+    let validate_finite x =
+      let rows = Matrix.rows x in
+      let columns = Matrix.columns x in
+      let rec loop row column =
+        if row = rows then Ok ()
+        else if column = columns then loop (row + 1) 0
+        else
+          let value = Matrix.get x row column in
+          if Float.is_finite value then loop row (column + 1)
+          else
+            Error
+              (Error.of_data_error
+                 ~remediation:"provide finite dense feature values"
+                 (Data_error.Non_finite
+                    {
+                      name = "sequential feature selection features";
+                      index = (row * columns) + column;
+                      value;
+                    }))
+      in
+      loop 0 0
+
+    let dataset metadata ~feature_schema ~x ~target =
+      let* () = Metadata.validate ~rows:(Matrix.rows x) metadata in
+      let* () =
+        Feature_schema.validate_matrix feature_schema x
+        |> Result.map_error (fun error ->
+            Error.of_data_error
+              ~remediation:"provide features matching the declared schema" error)
+      in
+      Dataset.create ~finiteness:Dataset.Require_finite
+        ?feature_names:(Feature_schema.names feature_schema)
+        ?sample_weight:(Metadata.sample_weight metadata)
+        ?groups:(Metadata.groups metadata) ~x ~y:target ()
+      |> Result.map_error (fun error ->
+          Error.of_data_error
+            ~remediation:
+              "provide finite, aligned data for sequential feature selection"
+            error)
+
+    let contextualize_fold fold error =
+      Error.with_context (Error.Fold fold) error
+
+    let validated_splits specification ~rng dataset =
+      let splitter_rng =
+        Rng.create
+          (Seed.derive (Rng.to_seed rng)
+             ~operation:"sequential-feature-selection-splitter" ~index:0)
+      in
+      let* pairs =
+        specification.splitter.Cross_validation.run_splitter ~rng:splitter_rng
+          ~groups:(Dataset.groups dataset) ~x:(Dataset.features dataset)
+          ~y:(Dataset.target dataset)
+      in
+      if Array.length pairs = 0 then
+        validation ~remediation:"use a splitter that produces at least one fold"
+          "sequential feature selection splits" "the splitter produced no folds"
+      else
+        let rec loop index reversed =
+          if index = Array.length pairs then
+            Ok (Array.of_list (List.rev reversed))
+          else
+            let train, test = pairs.(index) in
+            let* split =
+              Split.of_views ~train ~test
+              |> Result.map_error (contextualize_fold index)
+            in
+            let* materialized =
+              Split.materialize dataset split
+              |> Result.map_error (contextualize_fold index)
+            in
+            loop (index + 1) (materialized :: reversed)
+        in
+        loop 0 []
+
+    let checked_add left right =
+      if right > max_int - left then
+        validation
+          ~remediation:
+            "choose a narrower input, a closer selected width, or fewer folds"
+          "sequential feature selection fit plan"
+          "candidate count exceeds the platform integer range"
+      else Ok (left + right)
+
+    let candidate_evaluations direction ~columns ~selected_count =
+      let rec forward active total =
+        if active = selected_count then Ok total
+        else
+          let* total = checked_add total (columns - active) in
+          forward (active + 1) total
+      in
+      let rec backward active total =
+        if active = selected_count then Ok total
+        else
+          let* total = checked_add total active in
+          backward (active - 1) total
+      in
+      if selected_count = columns then Ok 0
+      else
+        match direction with
+        | Forward -> forward 0 0
+        | Backward -> backward columns 0
+
+    let planned_fits ~candidate_evaluations ~folds =
+      if candidate_evaluations > max_int / folds then
+        validation
+          ~remediation:
+            "choose fewer folds, a narrower input, or a closer selected width"
+          "sequential feature selection fit plan"
+          "fit count exceeds the platform integer range"
+      else Ok (candidate_evaluations * folds)
+
+    let enforce_fit_bound specification planned =
+      match specification.specification_params.max_fits with
+      | None -> Ok ()
+      | Some maximum when planned <= maximum -> Ok ()
+      | Some maximum ->
+          validation
+            ~remediation:
+              "raise max_fits or reduce folds, input width, or selection rounds"
+            "sequential feature selection fit plan"
+            (Printf.sprintf "requires %d fits, exceeding max_fits %d" planned
+               maximum)
+
+    let candidate_indices direction active =
+      let wanted = match direction with Forward -> false | Backward -> true in
+      Array.init (Array.length active) Fun.id
+      |> Array.to_list
+      |> List.filter (fun feature -> active.(feature) = wanted)
+      |> Array.of_list
+
+    let selected_with_candidate direction active candidate =
+      Array.init (Array.length active) Fun.id
+      |> Array.to_list
+      |> List.filter (fun feature ->
+          if feature = candidate then direction = Forward else active.(feature))
+      |> Array.of_list
+
+    let validate_estimator_schema expected fitted =
+      let observed = Estimator.feature_schema fitted in
+      if Feature_schema.equal expected observed then Ok ()
+      else
+        Error
+          (Error.make
+             ~remediation:
+               "ensure the estimator reports its fitted candidate schema"
+             (Error.Compatibility
+                {
+                  component = "sequential feature selection estimator";
+                  reason = "reported a different fitted feature schema";
+                }))
+
+    let fit_seed root_seed ~round ~candidate ~fold =
+      let round_seed =
+        Seed.derive root_seed ~operation:"sequential-feature-selection-round"
+          ~index:round
+      in
+      let candidate_seed =
+        Seed.derive round_seed
+          ~operation:"sequential-feature-selection-candidate" ~index:candidate
+      in
+      Seed.derive candidate_seed ~operation:"sequential-feature-selection-fold"
+        ~index:fold
+
+    let evaluate_candidate specification ~root_seed ~round ~candidate ~selected
+        ~selected_schema folds =
+      let rec evaluate_fold fold reversed =
+        if fold = Array.length folds then
+          let values = Array.of_list (List.rev reversed) in
+          let* aggregate = Score_aggregation.summarize values in
+          Ok aggregate.Score_aggregation.mean
+        else
+          let train, test = folds.(fold) in
+          let* train_x = subset_matrix (Dataset.features train) selected in
+          let* test_x = subset_matrix (Dataset.features test) selected in
+          let rng = Rng.create (fit_seed root_seed ~round ~candidate ~fold) in
+          let* fitted =
+            Estimator.fit
+              (Estimator.clone specification.estimator_specification)
+              ?sample_weight:(Dataset.sample_weight train)
+              ~rng ~feature_schema:selected_schema ~x:train_x
+              ~y:(Dataset.target train) ()
+            |> Result.map_error (contextualize_fold fold)
+          in
+          let* () =
+            validate_estimator_schema selected_schema fitted
+            |> Result.map_error (contextualize_fold fold)
+          in
+          let* prediction =
+            Estimator.predict fitted ~feature_schema:selected_schema ~x:test_x
+            |> Result.map_error (contextualize_fold fold)
+          in
+          let* score =
+            Task.score specification.scorer
+              ?sample_weight:(Dataset.sample_weight test)
+              ~truth:(Dataset.target test) ~prediction ()
+            |> Result.map_error
+                 (Error.with_context
+                    (Error.Stage specification.specification_params.scorer_name))
+            |> Result.map_error (contextualize_fold fold)
+          in
+          evaluate_fold (fold + 1) (score :: reversed)
+      in
+      evaluate_fold 0 []
+      |> Result.map_error (Error.with_context (Error.Candidate candidate))
+
+    let choose_candidate candidates scores =
+      let best = ref 0 in
+      for index = 1 to Array.length scores - 1 do
+        if scores.(index) > scores.(!best) then best := index
+      done;
+      candidates.(!best)
+
+    let fit (specification : t) ~metadata ~rng ~feature_schema ~x ~y () =
+      let* target =
+        match y with
+        | Some target -> Ok target
+        | None ->
+            validation
+              ~remediation:
+                "package this selector as a supervised metadata transformer \
+                 and provide training targets"
+              "sequential feature selection target" "is required"
+      in
+      let* dataset = dataset metadata ~feature_schema ~x ~target in
+      let columns = Matrix.columns x in
+      let selected_count = specification.specification_params.feature_count in
+      let* () =
+        if selected_count <= columns then Ok ()
+        else
+          validation
+            ~remediation:
+              "choose a selected-feature count no greater than the input width"
+            "sequential feature selection feature_count"
+            (Printf.sprintf "is %d for an input with %d features" selected_count
+               columns)
+      in
+      let* folds = validated_splits specification ~rng dataset in
+      let* evaluations =
+        candidate_evaluations specification.specification_params.direction
+          ~columns ~selected_count
+      in
+      let* planned =
+        planned_fits ~candidate_evaluations:evaluations
+          ~folds:(Array.length folds)
+      in
+      let* () = enforce_fit_bound specification planned in
+      let direction = specification.specification_params.direction in
+      let identity = selected_count = columns in
+      let active =
+        Array.make columns
+          (identity
+          || match direction with Forward -> false | Backward -> true)
+      in
+      let initial_count =
+        if identity then columns
+        else match direction with Forward -> 0 | Backward -> columns
+      in
+      let root_seed = Rng.to_seed rng in
+      let rec select round active_count =
+        if active_count = selected_count then Ok ()
+        else
+          let candidates = candidate_indices direction active in
+          let* scores =
+            Execution.map specification.execution candidates
+              ~f:(fun ~index:_ candidate ->
+                let selected =
+                  selected_with_candidate direction active candidate
+                in
+                let* selected_schema = subset_schema feature_schema selected in
+                evaluate_candidate specification ~root_seed ~round ~candidate
+                  ~selected ~selected_schema folds)
+          in
+          let chosen = choose_candidate candidates scores in
+          active.(chosen) <- direction = Forward;
+          let next_count =
+            match direction with
+            | Forward -> active_count + 1
+            | Backward -> active_count - 1
+          in
+          select (round + 1) next_count
+      in
+      let* () = select 0 initial_count in
+      let selected =
+        Array.init columns Fun.id |> Array.to_list
+        |> List.filter (fun feature -> active.(feature))
+        |> Array.of_list
+      in
+      let* output_schema = subset_schema feature_schema selected in
+      Ok
+        ({
+           fitted_params_value = specification.specification_params;
+           selected;
+           input_schema_value = feature_schema;
+           output_schema_value = output_schema;
+           fit_count_value = planned;
+         }
+          : fitted)
+
+    let transform (fitted : fitted) ~metadata ~feature_schema ~x =
+      let* () = Metadata.validate ~rows:(Matrix.rows x) metadata in
+      let* () =
+        if Feature_schema.equal fitted.input_schema_value feature_schema then
+          Ok ()
+        else
+          Error
+            (Error.make
+               ~remediation:"provide features with the fitted input schema"
+               (Error.Feature_schema_mismatch
+                  {
+                    expected = fitted.input_schema_value;
+                    observed = feature_schema;
+                  }))
+      in
+      let* () =
+        Feature_schema.validate_matrix feature_schema x
+        |> Result.map_error (fun error ->
+            Error.of_data_error
+              ~remediation:"provide features matching the declared schema" error)
+      in
+      let* () = validate_finite x in
+      subset_matrix x fitted.selected
+
+    let fitted_params (fitted : fitted) = fitted.fitted_params_value
+    let input_schema (fitted : fitted) = fitted.input_schema_value
+    let output_schema (fitted : fitted) = fitted.output_schema_value
+    let selected_indices (fitted : fitted) = Array.copy fitted.selected
+    let fit_count (fitted : fitted) = fitted.fit_count_value
+  end
+
+  module Regression = struct
+    module Task = struct
+      type kind = Target.regression
+      type prediction = Target.regression Target.t
+      type scorer = Regression_scorer.t
+
+      let scorer_name = Regression_scorer.name
+      let clone_scorer = Regression_scorer.clone
+      let validate_scorer _ = Ok ()
+      let score = Regression_scorer.score
+    end
+
+    module Make = Make (Task)
+  end
+
+  module Binary_classification = struct
+    module Task = struct
+      type kind = Target.classification
+      type prediction = Target.classification Target.t
+      type scorer = Binary_classification_scorer.t
+
+      let scorer_name = Binary_classification_scorer.name
+      let clone_scorer = Binary_classification_scorer.clone
+
+      let validate_scorer scorer =
+        match Binary_classification_scorer.response scorer with
+        | Binary_classification_scorer.Labels -> Ok ()
+        | Binary_classification_scorer.Positive_probabilities ->
+            validation
+              ~remediation:
+                "use a label-response scorer with the estimator protocol"
+              "sequential feature selection binary scorer"
+              "positive-probability responses are not available"
+
+      let score scorer ?sample_weight ~truth ~prediction () =
+        Result.bind (Binary_prediction.create ~labels:prediction ())
+          (fun prediction ->
+            Binary_classification_scorer.score scorer ?sample_weight ~truth
+              ~prediction ())
+    end
+
+    module Make = Make (Task)
+  end
+
+  module Multiclass_classification = struct
+    module Task = struct
+      type kind = Target.classification
+      type prediction = Target.classification Target.t
+      type scorer = Multiclass_classification_scorer.t
+
+      let scorer_name = Multiclass_classification_scorer.name
+      let clone_scorer = Multiclass_classification_scorer.clone
+
+      let validate_scorer scorer =
+        match Multiclass_classification_scorer.response scorer with
+        | Multiclass_classification_scorer.Labels -> Ok ()
+        | Multiclass_classification_scorer.Class_probabilities ->
+            validation
+              ~remediation:
+                "use a label-response scorer with the estimator protocol"
+              "sequential feature selection multiclass scorer"
+              "class-probability responses are not available"
+
+      let score scorer ?sample_weight ~truth ~prediction () =
+        Result.bind (Multiclass_prediction.create ~labels:prediction ())
+          (fun prediction ->
+            Multiclass_classification_scorer.score scorer ?sample_weight ~truth
+              ~prediction ())
+    end
+
+    module Make = Make (Task)
+  end
+end
+
 module Learning_curve = struct
   type training_size = Count of int | Fraction of float
 

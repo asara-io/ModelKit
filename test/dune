@@ -98,6 +98,24 @@
    (run %{test}))))
 
 (test
+ (name sequential_feature_selection_test)
+ (modules sequential_feature_selection_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name sequential_feature_selection_fixture_test)
+ (modules sequential_feature_selection_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/sequential_feature_selection_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_SFS_FIXTURE
+   %{dep:fixtures/sklearn/sequential_feature_selection_v1.tsv}
+   (run %{test}))))
+
+(test
  (name transforms_test)
  (modules transforms_test)
  (package modelkit)
