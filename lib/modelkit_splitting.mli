@@ -71,3 +71,19 @@ module Time_series_split : sig
        and type target = unit
        and type rng = Rng.t
 end
+
+module Splitter_internal : sig
+  val validation : name:string -> reason:string -> remediation:string -> Error.t
+  val validate_folds : name:string -> int -> (unit, Error.t) result
+
+  val validate_aligned_length :
+    name:string -> expected:int -> int -> (unit, Error.t) result
+
+  val shuffle : Rng.t -> 'a array -> unit
+
+  val split_from_assignments :
+    source_size:int ->
+    folds:int ->
+    int array ->
+    ((Row_view.t * Row_view.t) array, Error.t) result
+end

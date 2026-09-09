@@ -1,4 +1,5 @@
 open Modelkit_data
+open Modelkit_metadata
 
 module type SPECIFICATION = sig
   type t
@@ -34,6 +35,12 @@ module type ESTIMATOR = sig
 
   val fitted_params : fitted -> params
   val feature_schema : fitted -> Feature_schema.t
+end
+
+module type IMPORTANCE_ESTIMATOR = sig
+  include ESTIMATOR
+
+  val feature_importances : fitted -> (Vector.t, Error.t) result
 end
 
 module type CLASSIFIER = sig
@@ -78,6 +85,77 @@ module type TRANSFORMER = sig
   val output_schema : fitted -> Feature_schema.t
 end
 
+(** Transformer with explicit per-method metadata requests. Requests are read
+    from the specification when packaged and remain fixed for its fitted
+    lifetime. Both fit and transform requests are validated before training
+    begins, since fitting also transforms the training rows. The implementation
+    must preserve row count and order and must not retain metadata solely to
+    substitute it for future inference inputs. *)
+module type METADATA_TRANSFORMER = sig
+  include SPECIFICATION
+
+  type target
+  type fitted
+  type rng
+
+  val fit_request : t -> Metadata.Request.t
+  val transform_request : t -> Metadata.Request.t
+
+  val fit :
+    t ->
+    metadata:Metadata.t ->
+    rng:rng ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:target option ->
+    unit ->
+    (fitted, Error.t) result
+
+  val transform :
+    fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val fitted_params : fitted -> params
+  val input_schema : fitted -> Feature_schema.t
+  val output_schema : fitted -> Feature_schema.t
+end
+
+(** Estimator with a declared fit-metadata request. Prediction uses fitted state
+    and features; pipeline preprocessing may separately request inference
+    metadata. *)
+module type METADATA_ESTIMATOR = sig
+  include SPECIFICATION
+
+  type target
+  type prediction
+  type fitted
+  type rng
+
+  val fit_request : t -> Metadata.Request.t
+
+  val fit :
+    t ->
+    metadata:Metadata.t ->
+    rng:rng ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:target ->
+    unit ->
+    (fitted, Error.t) result
+
+  val predict :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (prediction, Error.t) result
+
+  val fitted_params : fitted -> params
+  val feature_schema : fitted -> Feature_schema.t
+end
+
 module type SCORER = sig
   include SPECIFICATION
 
@@ -93,6 +171,113 @@ module type SCORER = sig
     prediction:prediction ->
     unit ->
     (float, Error.t) result
+end
+
+module Capability = struct
+  type support = Supported | Unsupported
+
+  type prediction =
+    | Direct
+    | Labels
+    | Positive_probabilities of int
+    | Class_probabilities
+
+  type estimator = {
+    estimator_sample_weight : support;
+    estimator_fit_metadata : support;
+    estimator_decision_function : support;
+    estimator_predict_proba : support;
+  }
+
+  type transformer = {
+    transformer_target : support;
+    transformer_sample_weight : support;
+    transformer_fit_metadata : support;
+    transformer_transform_metadata : support;
+  }
+
+  type scorer = {
+    scorer_sample_weight : support;
+    scorer_prediction : prediction;
+  }
+
+  let estimator ?(sample_weight = Unsupported) ?(fit_metadata = Unsupported)
+      ?(decision_function = Unsupported) ?(predict_proba = Unsupported) () =
+    {
+      estimator_sample_weight = sample_weight;
+      estimator_fit_metadata = fit_metadata;
+      estimator_decision_function = decision_function;
+      estimator_predict_proba = predict_proba;
+    }
+
+  let transformer ?(target = Unsupported) ?(sample_weight = Unsupported)
+      ?(fit_metadata = Unsupported) ?(transform_metadata = Unsupported) () =
+    {
+      transformer_target = target;
+      transformer_sample_weight = sample_weight;
+      transformer_fit_metadata = fit_metadata;
+      transformer_transform_metadata = transform_metadata;
+    }
+
+  let scorer ?(sample_weight = Unsupported) ~prediction () =
+    { scorer_sample_weight = sample_weight; scorer_prediction = prediction }
+end
+
+module Scorer = struct
+  type ('truth, 'prediction) t =
+    | Scorer : {
+        implementation :
+          (module SCORER
+             with type t = 'specification
+              and type params = 'params
+              and type truth = 'truth
+              and type prediction = 'prediction);
+        specification : 'specification;
+        capabilities : Capability.scorer;
+      }
+        -> ('truth, 'prediction) t
+
+  let of_module (type specification params truth prediction) ~capabilities
+      (module Implementation : SCORER
+        with type t = specification
+         and type params = params
+         and type truth = truth
+         and type prediction = prediction) specification =
+    Scorer
+      {
+        implementation = (module Implementation);
+        specification = Implementation.clone specification;
+        capabilities;
+      }
+
+  let name (type truth prediction) (Scorer packed : (truth, prediction) t) =
+    let module Implementation = (val packed.implementation) in
+    Implementation.name packed.specification
+
+  let capabilities (Scorer packed) = packed.capabilities
+
+  let score (type truth prediction) (Scorer packed : (truth, prediction) t)
+      ?sample_weight ~truth ~prediction () =
+    match
+      (sample_weight, packed.capabilities.Capability.scorer_sample_weight)
+    with
+    | Some _, Capability.Unsupported ->
+        Error
+          (Error.make
+             ~remediation:
+               "omit sample weights or use a scorer that declares weight \
+                support"
+             (Error.Compatibility
+                {
+                  component = "custom scorer";
+                  reason =
+                    "sample weights were supplied to a scorer that declares \
+                     them unsupported";
+                }))
+    | None, _ | Some _, Capability.Supported ->
+        let module Implementation = (val packed.implementation) in
+        Implementation.score packed.specification ?sample_weight ~truth
+          ~prediction ()
 end
 
 module type SPLITTER = sig

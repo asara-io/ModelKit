@@ -1,0 +1,37 @@
+{
+  "comparison": "Per-alpha, per-fold train/test scores over one shared KFold partition with fold-local standard scaling.",
+  "configuration": {
+    "absolute_tolerance": 1e-07,
+    "alphas": [
+      0.0,
+      0.5,
+      5.0
+    ],
+    "folds": 3,
+    "ridge_solver": "svd",
+    "scoring": "neg_mean_squared_error",
+    "shuffle": false,
+    "standard_scaling": true
+  },
+  "environment": {
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "fixture": "validation_curve_v1",
+  "generator": "dev/fixtures/generate.py",
+  "license": "Apache-2.0",
+  "references": [
+    "sklearn.model_selection.validation_curve",
+    "sklearn.linear_model.Ridge",
+    "sklearn.preprocessing.StandardScaler"
+  ],
+  "schema_version": 1
+}

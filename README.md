@@ -11,19 +11,29 @@ Python users of `scikit-learn` will find this library familiar in serving the sa
 The full documentation is available via: [https://ocaml.org/p/modelkit/latest/doc/index.html](https://ocaml.org/p/modelkit/latest/doc/index.html)
 
 - Reproducible foundations with deterministic random streams and stable reference numerical operations across supported platforms, OCaml versions, and execution schedules.
-- Typed extension contracts separate immutable estimator specifications from fitted models and return actionable errors.
+- Typed extension contracts separate immutable estimator specifications from fitted models and return actionable errors; the public [estimator-authoring guide](https://ocaml.org/p/modelkit/latest/doc/authoring_estimators.html) covers conformance, metadata routing, composition, provenance, and artifact support.
 - Immutable, validated float64 data primitives catch shape, feature-order, and sample-alignment problems before model code runs.
 - The optional `modelkit-nx` and `modelkit-talon` packages admit explicitly typed Nx tensors and explicitly selected Talon dataframe columns with checked shapes, names, null masks, groups, weights, and observable copy/allocation behavior without making Raven a core dependency.
 - Checked immutable CSR matrices provide canonical sparse storage, zero-copy indexed row views, explicit materialization and payload-memory accounting, and portable dense/CSR numerical-kernel dispatch.
 - Dense datasets admit aligned features, targets, weights, groups, and names under an explicit finiteness policy; stable schema fingerprints and copy/view reports make compatibility and allocation behavior observable.
 - Immutable preprocessing specifications fit mean, median, or constant imputation, population standardization, and variance-based feature filtering without changing or losing feature identities.
+- Dense univariate feature selection ranks columns with regression correlation F-scores or classification ANOVA F-scores, retains a checked count or percentile with deterministic tie handling, and fits only on each supervised pipeline's training rows.
+- Dense model-based selection fits any estimator that implements the explicit feature-importance contract, supports mean, median, or numeric thresholds plus an optional feature cap, and provides checked coefficient helpers for scalar and multiclass linear models.
+- Dense recursive feature elimination repeatedly refits an importance estimator over shrinking feature sets, supports integer or fractional elimination steps, reports deterministic rankings, and leaves a final estimator fitted on exactly the selected schema.
+- Dense recursive feature elimination with cross-validation scores every fold-local elimination width, chooses the smallest width at an equal best mean score, enforces an optional pre-fit work bound, and refits the selected width on all training rows.
+- Dense forward and backward sequential selection greedily evaluates ordinary estimator candidates on fixed folds, supports bounded candidate execution and pre-fit work limits, and requires no feature-importance adapter.
 - Portable numeric, categorical, target, interaction, and missingness transforms cover min-max, max-absolute, robust, per-sample normalization, one-hot, ordinal, label, polynomial, and missing-indicator workflows.
-- Sequential pipelines fit preprocessing only on their training input, preserve schemas through ordered stages, and dispatch prediction, decision, and probability operations through an explicitly capable terminal estimator.
+- Sequential pipelines support unsupervised and target-aware preprocessing fitted only on training rows, with explicit sample-weight routing, preserved feature schemas, and terminal prediction, decision, and probability dispatch.
+- Dense column-wise preprocessing combines independently fitted branches with checked index/name selectors, passthrough/drop, deterministic output names, and observable copy allocations.
+- Typed metadata requests route weights, groups, and callbacks through nested fitting, inference, cross-validation, and search, with aligned rows and deterministic progress reporting.
+- Opt-in content-addressed transform caching reuses fitted preprocessing state through pipelines, nested composition, cross-validation, and search. Complete feature, target, routed-weight, configuration, and seed identities prevent cross-fit reuse, while caller-scoped bounded memory and portable integrity-checked directory stores avoid global mutable state.
+- Feature unions, column transformers, and nestable preprocessing chains combine supervised and unsupervised transformations with deterministic feature names and fold-local fitting.
+- Transformed-target regression learns target mappings within each training fold, checks inverse transforms, and scores predictions in the original target space.
 - Portable weighted ordinary least squares, ridge, lasso, elastic-net, binary and multinomial logistic regression, Poisson and Tweedie generalized linear models, binary and multiclass ridge classification, and incremental SGD estimators keep immutable specifications separate from fitted coefficients and solver diagnostics.
-- Deterministic K-fold, stratified K-fold, group K-fold, and expanding-window time-series splitters produce validated row views that can be explicitly materialized as aligned datasets.
+- Deterministic K-fold, stratified and repeated K-fold, shuffle and stratified-shuffle, holdout, group and stratified-group K-fold, predefined, leave-one-out/group-out, and expanding-window time-series splitters produce validated row views; train/test helpers materialize aligned features, targets, weights, and groups.
 - Weighted regression, binary, multiclass, and ranking metrics provide immutable higher-is-better scorers, plotting-neutral residual, ROC, and precision–recall data, stable score aggregation, and an explicit undefined-result policy.
-- Cross-validation fits pipelines within deterministic folds and reports ordered train/test scores, CPU timings, optional fitted models and indices, and typed failures; the optional `modelkit-parallel` package adds bounded Domainslib fold execution.
-- Typed finite grid search evaluates immutable pipeline configurations on shared deterministic splits, ranks candidates by a named scorer, records candidate failures, and refits the selected model on all training data.
+- Cross-validation fits pipelines within deterministic folds and reports ordered train/test scores, CPU timings, optional fitted models and indices, and typed failures; out-of-fold prediction restores regression values, classification labels, or globally aligned class probabilities to source row order and rejects splitters without exact test coverage; learning curves evaluate nested training-fold prefixes, validation curves evaluate one typed immutable parameter sequence over shared fixed folds, and permutation tests estimate corrected significance globally or within groups; the optional `modelkit-parallel` package adds bounded Domainslib execution to these evaluation workflows.
+- Typed grid, randomized, and successive-halving search evaluate immutable configurations on shared deterministic splits, support named-score or custom multi-metric selection and optional refitting, retain candidate failures, and resume from validated checkpoints; halving adds bounded training-row budgets and deterministic promotion.
 - Versioned data-only artifacts save and load fitted built-in regression and binary-classification pipelines with feature-schema identity, bounded readers, and corruption detection.
 
 ## Motivation and Future Work
@@ -36,19 +46,154 @@ Anticipating performance benefits from existing work such as using Owl for a num
 
 ## Status
 
-ModelKit 0.4.1 is the current release. The supported API is the flat `Modelkit.*` namespace documented in the [manual](https://ocaml.org/p/modelkit/latest/doc/index.html); the physical `Modelkit_*` source units are private. Optional integrations ship as separate packages that depend inward on the core: `modelkit-parallel` for bounded Domainslib fold execution, and `modelkit-nx` and `modelkit-talon` for checked admission of Raven tensors and dataframe columns.
+This branch builds ModelKit 0.5.0. The supported API is the flat `Modelkit.*` namespace documented in the [manual](https://ocaml.org/p/modelkit/latest/doc/index.html); the physical `Modelkit_*` source units are private. Optional integrations ship as separate packages that depend inward on the core: `modelkit-parallel` for bounded Domainslib fold execution, and `modelkit-nx` and `modelkit-talon` for checked admission of Raven tensors and dataframe columns.
 
-Compared with 0.3.2, this release adds:
+Compared with 0.4.1, this release adds:
 
-- **Sparse storage.** Checked immutable CSR matrices with indexed row views, explicit materialization, payload-memory accounting, and dense/CSR kernel dispatch, plus direct CSR output from one-hot encoding.
-- **A fuller preprocessing set.** Min-max, max-absolute, and robust scaling, per-sample normalization, one-hot, ordinal, and label encoding, polynomial features, and missing indicators, all as immutable specifications with distinct fitted states and feature-name propagation.
-- **More linear estimators.** Lasso and elastic-net regression with regularization paths, binary and multiclass ridge classification, multinomial logistic regression, Poisson and Tweedie generalized linear models, and SGD regression and classification with an explicit incremental-training and checkpoint contract. Every estimator exposes coefficients, intercepts, and solver diagnostics.
-- **Weights and multiclass evaluation.** Fold-local class weights, opt-in sample-weight routing to transformers, confusion-matrix and multiclass metrics with micro, macro, and weighted averaging, average precision, one-versus-rest and one-versus-one ROC AUC, top-k accuracy, DCG and NDCG, and multiclass cross-validation and grid search.
-- **Ecosystem adapters.** `modelkit-nx` and `modelkit-talon` admit explicitly typed features, targets, null masks, groups, names, and weights with conversion and allocation reports and a shared conformance suite. Both are pinned to Raven `1.0.0~alpha3` and build on Linux and macOS only.
+- **Nested, target-aware composition.** Typed supervised pipelines now compose column transformers, feature unions, nested transformer chains, passthrough/drop branches, and transformed-target regression while fitting every learned transformation inside its training partition. Deterministic output naming and schemas make composed feature spaces inspectable.
+- **Explicit metadata routing.** Nested fit and transform consumers declare requests for sample weights, groups, callbacks, and transform-time metadata. ModelKit validates row alignment before fitting, routes only requested values through cross-validation and search, and preserves deterministic callback and cancellation behavior under bounded parallel execution.
+- **Broader splitting and evaluation workflows.** Shuffle, stratified-shuffle, repeated K-fold, stratified-group, predefined, leave-one-out, leave-one-group-out, and holdout splitters join aligned train/test splitting. Out-of-fold prediction restores source row order with checked partition coverage and class-probability alignment; leakage-safe learning curves, validation curves, grouped permutation tests, and an executable nested-CV recipe support more complete experiments.
+- **Advanced, resumable search.** Typed randomized search supports finite choices and sampled distributions, shared named or custom multi-metric selection policies, optional refitting, and deterministic candidate streams. Successive halving adds checked resource budgets and deterministic promotion, while cooperative cancellation and bounded data-only checkpoints allow compatible searches to resume across process restarts without changing the selected result.
+- **A complete dense feature-selection workbench.** Regression and classification F-score selectors, model-based selection through an explicit fitted-estimator importance contract, recursive elimination, cross-validated recursive elimination, and forward/backward sequential selection all preserve feature schemas and deterministic ties. Supervised selectors fit inside each training fold, route declared weights and groups, enforce pre-fit work bounds, and can use the optional bounded parallel backend where appropriate.
+- **Content-addressed transform caching.** `Simple_imputer` and `Standard_scaler` provide stable fitted-state codecs and can be packaged with `Pipeline.cacheable_transformer`. `Pipeline.with_cache` threads an explicit memory or persistent store through ordinary and supervised pipelines, nested composition, cross-validation, and search. Complete data, schema, target, metadata, configuration, and seed identities prevent unsafe reuse; bounded readers, checksums, atomic publication, corruption handling, and explicit secret-data guidance define the persistent-store contract.
+- **Public third-party extension contracts.** Capability descriptions and reusable conformance checks cover external estimators, transformers, and scorers, including metadata-aware implementations and custom scorer admission into evaluation and search. A separately built public-only consumer exercises nested composition, metadata routing, parallel cross-validation, randomized search, provenance, and artifact-support reporting without depending on private modules.
+- **Artifact compatibility.** Newly written artifacts identify 0.5.0 as their producer while retaining the existing schema and readers. External or newly composed components without reviewed codecs remain fully usable in memory and return typed unsupported errors when portable encoding is requested.
 
-Every new estimator runs through pipelines, cross-validation, scoring, and grid search, and every metric and solver is checked against committed scikit-learn reference fixtures. The comparative benchmarks under `dev/benchmarks/` are development evidence only; they record convergence parity across data shapes together with a throughput gap on wide designs that later releases will address.
+Persistent cache entries are plaintext fitted state: their checksums detect accidental corruption but do not authenticate content or provide encryption. Consumers caching data derived from secrets must protect the cache root, backups, and retention lifecycle with their environment's access controls and encryption.
 
-Not in this release, and planned for later versions: column transformers and feature unions, further splitters and randomized search, sparse feature input to estimators, artifact codecs for the estimators added since 0.3.2, tree and ensemble models, and accelerated numerical backends. The artifact format remains experimental during 0.x, with a committed golden reader for each released schema.
+Caching is disabled unless a store is attached to an immutable pipeline specification:
+
+```ocaml
+let memory = Modelkit.Transform_cache.Memory.create () in
+let store = Modelkit.Transform_cache.Store.memory memory in
+let scale =
+  Modelkit.Pipeline.cacheable_transformer ~name:"scale"
+    (module Modelkit.Standard_scaler)
+    (Modelkit.Standard_scaler.create ())
+  |> Result.get_ok
+in
+let builder = Modelkit.Pipeline.add_transformer Modelkit.Pipeline.empty scale |> Result.get_ok in
+let estimator =
+  Modelkit.Pipeline.estimator ~name:"linear"
+    (module Modelkit.Linear_regression)
+    (Modelkit.Linear_regression.create ())
+  |> Result.get_ok
+in
+let pipeline = Modelkit.Pipeline.set_estimator builder estimator |> Result.get_ok in
+let cached_pipeline = Modelkit.Pipeline.with_cache pipeline store
+```
+
+For reuse across processes, create a `Transform_cache.Persistent.t` with an application-managed root and wrap it with `Transform_cache.Store.persistent`. `Pipeline.without_cache` returns an otherwise identical specification with caching disabled. A warm hit skips transformer fitting but still decodes the fitted state and transforms the current training matrix; terminal estimators are always refitted.
+
+Univariate selection is packaged as an ordinary supervised pipeline stage, so every cross-validation or search fold learns its scores from training rows alone:
+
+```ocaml
+let select =
+  Modelkit.Univariate_selection.Regression.create
+    (Modelkit.Univariate_selection.Count 12)
+  |> Result.get_ok
+  |> Modelkit.Pipeline.Supervised.transformer ~name:"select"
+       (module Modelkit.Univariate_selection.Regression)
+  |> Result.get_ok
+```
+
+`Percentile p` retains `floor (input_width * p / 100)` columns. Both modes rank higher scores first, prefer the lower original column index at a tie, preserve selected columns in input order, and propagate named schemas. The current statistical scope is finite, unweighted dense input using regression correlation F-scores or classification one-way ANOVA F-scores. These scores are for ranking: p-values, multiple-testing corrections, mutual-information and chi-squared scores, sample-weighted statistics, sparse inputs, and artifact/cache codecs are not yet included.
+
+Model-based selection uses a structural module contract instead of inspecting estimator attributes at runtime. For a scalar linear model, the adapter and reusable selector module are:
+
+```ocaml
+module Ridge_importance = struct
+  include Modelkit.Ridge_regression
+
+  let feature_importances fitted =
+    Modelkit.Feature_importance.absolute_coefficients (coefficients fitted)
+end
+
+module Ridge_selector = Modelkit.Select_from_model.Make (Ridge_importance)
+
+let select =
+  Ridge_selector.create
+    ~threshold:Modelkit.Select_from_model.Mean
+    ~max_features:12
+    (Modelkit.Ridge_regression.create ~alpha:1.0 () |> Result.get_ok)
+  |> Result.get_ok
+  |> Modelkit.Pipeline.Supervised.transformer ~name:"select"
+       (module Ridge_selector)
+  |> Result.get_ok
+```
+
+For multiclass coefficient matrices, use `Feature_importance.coefficient_norms`; its default L1 reduction matches scikit-learn's model-selection convention, while L2 and maximum reductions are explicit alternatives. Model-based selectors accept finite dense features and can pass sample weights to their estimator when the stage is packaged with `~route_sample_weight:true`. The fitted selector exposes its resolved threshold, validated importances, selected indices, and underlying fitted estimator. Sparse input and artifact/cache codecs remain deferred.
+
+Recursive feature elimination uses the same explicit importance contract but refits the estimator after each elimination step:
+
+```ocaml
+module Ridge_rfe = Modelkit.Recursive_feature_elimination.Make (Ridge_importance)
+
+let recursive_select =
+  Ridge_rfe.create
+    ~step:(Modelkit.Recursive_feature_elimination.Count 2)
+    ~feature_count:12
+    (Modelkit.Ridge_regression.create ~alpha:1.0 () |> Result.get_ok)
+  |> Result.get_ok
+  |> Modelkit.Pipeline.Supervised.transformer ~name:"recursive_select"
+       (module Ridge_rfe)
+  |> Result.get_ok
+```
+
+A fractional step is resolved once against the original input width; the fraction must be strictly between zero and one. Weakest features are removed first, equal importances remove the lower original column index first, and selected output columns retain input order. Ranking `1` denotes a selected feature, while larger values denote earlier elimination. Every round receives a logical child seed and any explicitly routed sample weights. The fitted selector exposes its selected indices, ranking, final-estimator importances, and final estimator.
+
+Cross-validated recursive elimination reuses the same adapted estimator and elimination steps, but learns the output width from untouched validation rows:
+
+```ocaml
+module Ridge_rfecv = Modelkit.Recursive_feature_elimination_cv.Regression.Make (Ridge_importance)
+
+let splitter =
+  Modelkit.K_fold.create ~folds:5 ~shuffle:true ()
+  |> Result.get_ok
+  |> Modelkit.Cross_validation.target_independent_splitter (module Modelkit.K_fold)
+
+let recursive_select_cv =
+  Ridge_rfecv.create
+    ~min_feature_count:4
+    ~step:(Modelkit.Recursive_feature_elimination.Count 2)
+    ~max_fits:150
+    ~splitter
+    ~scorer:Modelkit.Regression_scorer.neg_mean_squared_error
+    (Modelkit.Ridge_regression.create ~alpha:1.0 () |> Result.get_ok)
+  |> Result.get_ok
+  |> Modelkit.Pipeline.Supervised.metadata_transformer ~name:"recursive_select_cv"
+       (module Ridge_rfecv)
+  |> Result.get_ok
+```
+
+Each validation fold fits its elimination path only on that fold's training rows and scores each visited width on its test rows. Fold paths can run through a supplied `Execution.t`, while estimator fits within one path remain sequential to avoid nested oversubscription. Feature counts are reported in ascending order; the smaller width wins an exact mean-score tie. The conservative `max_fits` check reserves every fold path plus the longest possible final refit before fitting begins. Groups and sample weights are routed through the metadata-aware pipeline stage. Classification variants currently accept label-response scorers; probability-response scoring needs a future importance-estimator response protocol.
+
+Sequential selection does not require an importance adapter. It greedily compares ordinary estimator candidates on fixed validation folds:
+
+```ocaml
+module Ridge_sfs = Modelkit.Sequential_feature_selection.Regression.Make (Modelkit.Ridge_regression)
+
+let sequential_select =
+  Ridge_sfs.create
+    ~direction:Modelkit.Sequential_feature_selection.Forward
+    ~feature_count:12
+    ~max_fits:500
+    ~splitter
+    ~scorer:Modelkit.Regression_scorer.neg_mean_squared_error
+    (Modelkit.Ridge_regression.create ~alpha:1.0 () |> Result.get_ok)
+  |> Result.get_ok
+  |> Modelkit.Pipeline.Supervised.metadata_transformer ~name:"sequential_select"
+       (module Ridge_sfs)
+  |> Result.get_ok
+```
+
+Forward selection begins empty and adds the candidate with the best mean validation score; backward selection begins with every column and removes the candidate whose removal scores best. The lower original candidate index wins an exact tie, and output columns retain input order. Candidates within one round may run through a bounded `Execution.t`, while their folds remain sequential. `max_fits` checks the exact number of candidate-fold fits before fitting begins. The fitted selector stores the chosen feature schema rather than a final estimator because its job is to transform input for the next pipeline stage. Groups reach the splitter and fold-local sample weights reach both estimators and scorers. Inputs are currently finite dense matrices; classification supports label-response scorers, while probability-response scoring, sparse input, and artifact/cache codecs remain planned work.
+
+Every new estimator runs through pipelines, cross-validation, scoring, and grid search, and every metric and solver is checked against committed scikit-learn reference fixtures. Dense univariate and model-based selectors check scores or coefficient importances, thresholds, selected indices, and transformed matrices against `sklearn.feature_selection`; recursive elimination checks elimination rankings and final-estimator importances against `sklearn.feature_selection.RFE`, while its cross-validated variant additionally checks every fold score, mean, standard deviation, and selected width against `sklearn.feature_selection.RFECV`; forward and backward sequential selection check regression and multiclass subsets and transformed matrices against `sklearn.feature_selection.SequentialFeatureSelector`; learning-curve training sizes and scores are checked against `sklearn.model_selection.learning_curve`; fold-local scaled ridge validation-curve scores are checked against `sklearn.model_selection.validation_curve`; grouped permutation scores and corrected p-values are checked against `sklearn.model_selection.permutation_test_score`. The comparative benchmarks under `dev/benchmarks/` are development evidence only; they record convergence parity across data shapes together with a throughput gap on wide designs that later releases will address.
+
+Learning-curve schedules accept absolute counts or fractions of the smallest base training fold and optionally shuffle nested prefixes deterministically. Validation curves preserve caller-typed values while applying an immutable setter and pipeline builder, evaluate every value on one shared split, and report per-fold plus aggregate train/test scores without selecting or refitting a winner. Permutation tests evaluate one higher-is-better scorer on shared folds, shuffle targets globally or strictly within dataset groups, and report the observed score, ordered null scores, and corrected upper-tail p-value. Curves, permutation tests, cross-validated recursive elimination, and sequential selection can reject an excessive fit plan before fitting. The [nested-CV example](examples/nested_cv.ml) keeps every inner search inside its corresponding outer training fold before evaluating the selected model on untouched outer rows, then demonstrates a separately reserved final holdout.
+
+Planned for later versions: sparse feature input to estimators, additional artifact and cache codecs, tree and ensemble models, and accelerated numerical backends. The artifact format remains experimental during 0.x, with a committed golden reader for each released schema.
 
 ## Development
 
@@ -104,7 +249,7 @@ The four opam files must be locked together so that the in-tree `modelkit` depen
 
 The ordinary Dune workspace uses the repository-local opam switch automatically. Reproducible locks are platform-specific because compiler and system dependency packages differ by host.
 
-The full test suite combines named unit tests, deterministic generated properties, metamorphic invariants, executable documentation, a compiled end-to-end example, artifact golden-reader and adversarial-input tests, a compile-time public API consumer, a reusable numerical-backend conformance suite, and a source-neutral adapter conformance suite shared by every adapter package. Run the current supervised workflow from a source checkout with `opam exec -- dune exec examples/evaluation.exe`.
+The full test suite combines named unit tests, deterministic generated properties, metamorphic invariants, executable documentation, runnable end-to-end and nested-CV examples, artifact golden-reader and adversarial-input tests, a compile-time public API consumer, public estimator/transformer/scorer conformance reports with deliberately invalid external examples, a reusable numerical-backend conformance suite, and a source-neutral adapter conformance suite shared by every adapter package. Run the current supervised workflow from a source checkout with `opam exec -- dune exec examples/evaluation.exe`, or run the complete model-selection recipe with `opam exec -- dune exec examples/nested_cv.exe`.
 
 GitHub Actions is configured to run the build, complete test suite, package build, and documentation generation on Linux x86-64, macOS arm64, and Windows x86-64 with OCaml 5.2, 5.3, and 5.5. The Linux and macOS jobs build and test all four packages; the Windows jobs build and test only the portable `modelkit` and `modelkit-parallel` packages because the Raven adapters cannot be built there at the current pin. These jobs use committed reference data and do not install or execute Python.
 
@@ -130,7 +275,7 @@ python dev/fixtures/generate.py
 python dev/benchmarks/run.py
 ```
 
-The committed smoke benchmark validates the measurement workflow only. The development preprocessing, dense-linear-model, regularized-linear, SGD-regression, SGD-classification, ridge-classifier, multinomial-logistic, generalized-linear-model, splitter, metrics, sequential and bounded-parallel cross-validation, finite grid-search, adapter-admission, sparse-kernel, and solver-shape benchmarks compare ModelKit operations with pinned scikit-learn and SciPy references on deterministic workloads. Build the corresponding OCaml worker and select a scenario under `dev/benchmarks/scenarios/`; the parallel cross-validation scenario records sequential and four-worker results for both runtimes so speedup, efficiency, wall time, and peak RSS can be compared. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for declared parity tolerances, scope, raw-result links, and limitations. Any published comparison will first be reproduced on independent CI targets.
+The committed smoke benchmark validates the measurement workflow only. The development preprocessing, transform-cache, dense-linear-model, regularized-linear, SGD-regression, SGD-classification, ridge-classifier, multinomial-logistic, generalized-linear-model, splitter, metrics, sequential and bounded-parallel cross-validation, finite grid-search, adapter-admission, sparse-kernel, and solver-shape benchmarks compare ModelKit operations with pinned scikit-learn and SciPy references on deterministic workloads. Build the corresponding OCaml worker and select a scenario under `dev/benchmarks/scenarios/`; the parallel cross-validation scenario records sequential and four-worker results for both runtimes so speedup, efficiency, wall time, and peak RSS can be compared. These reports are explicitly ineligible to support performance claims. See [the benchmark methodology](dev/benchmarks/README.md) for declared parity tolerances, scope, raw-result links, and limitations. Any published comparison will first be reproduced on independent CI targets.
 
 ## Project Policies
 

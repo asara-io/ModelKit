@@ -1,0 +1,16 @@
+{
+  "claim_eligible": false,
+  "dataset": {
+    "features": 10,
+    "samples": 2000,
+    "seed": 1729
+  },
+  "folds": 5,
+  "measured_runs": 3,
+  "permutations": 20,
+  "ridge_alpha": 0.5,
+  "scenario": "permutation_test_dense_v1",
+  "thread_limit": 1,
+  "warmup_runs": 1,
+  "workload": "permutation_test"
+}

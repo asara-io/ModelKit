@@ -1,4 +1,6 @@
 open Modelkit_data
+open Modelkit_metadata
+module Callback = Modelkit_callback.Callback
 open Modelkit_protocols
 open Modelkit_pipeline
 open Modelkit_metrics
@@ -34,6 +36,20 @@ module Cross_validation = struct
   }
 
   type 'model report = { report_folds : 'model fold array }
+  type classification_response = Labels | Probabilities
+
+  type 'prediction prediction_fold = {
+    prediction_fold_index : int;
+    prediction_fit_time : float;
+    predict_time : float;
+    prediction_test_indices : int array;
+    prediction_result : ('prediction, failure) result;
+  }
+
+  type 'prediction prediction_report = {
+    prediction_report_folds : 'prediction prediction_fold array;
+    assembled_predictions : ('prediction, failure array) result;
+  }
 
   type 'target splitter = {
     run_splitter :
@@ -92,7 +108,28 @@ module Cross_validation = struct
         else count)
       0 report.report_folds
 
-  let contextualize fold error = Error.with_context (Error.Fold fold) error
+  let copy_prediction_fold fold =
+    {
+      fold with
+      prediction_test_indices = Array.copy fold.prediction_test_indices;
+    }
+
+  let prediction_folds report =
+    Array.map copy_prediction_fold report.prediction_report_folds
+
+  let successful_prediction_fold_count report =
+    Array.fold_left
+      (fun count fold ->
+        match fold.prediction_result with Ok _ -> count + 1 | Error _ -> count)
+      0 report.prediction_report_folds
+
+  let out_of_fold_predictions report =
+    Result.map_error Array.copy report.assembled_predictions
+
+  let[@warning "-4"] contextualize fold error =
+    match Error.context error with
+    | Error.Fold index :: _ when index = fold -> error
+    | _ -> Error.with_context (Error.Fold fold) error
 
   let scorer_error fold scorer error =
     error
@@ -131,6 +168,30 @@ module Cross_validation = struct
       in
       loop 0
 
+  let validate_custom_sample_weight dataset scorers =
+    match Dataset.sample_weight dataset with
+    | None -> Ok ()
+    | Some _ ->
+        Array.fold_left
+          (fun result scorer ->
+            let ( let* ) = Result.bind in
+            let* () = result in
+            match
+              (Scorer.capabilities scorer).Capability.scorer_sample_weight
+            with
+            | Capability.Supported -> Ok ()
+            | Capability.Unsupported ->
+                Error
+                  (validation ~name:"custom scorer capability"
+                     ~reason:
+                       (Format.sprintf
+                          "scorer %S declares sample weights unsupported"
+                          (Scorer.name scorer))
+                     ~remediation:
+                       "omit dataset weights or use a scorer that declares \
+                        weight support"))
+          (Ok ()) scorers
+
   let empty_scores ~return_train_score:_ names =
     Array.map
       (fun name -> { name; train_score = None; test_score = None })
@@ -147,107 +208,414 @@ module Cross_validation = struct
     let result = operation () in
     (Sys.time () -. started, result)
 
-  let run ~return_train_score ~return_models ~return_indices ~failure_policy
-      ~fit_seed ~execution ~splitter ~scorer_names ~seed ~score_model pipeline
-      dataset =
-    let ( let* ) = Result.bind in
-    let* () = validate_scorers scorer_names in
-    let splitter_rng =
-      Seed.derive seed ~operation:"cross-validation-splitter" ~index:0
-      |> Rng.create
-    in
-    let* view_pairs =
-      splitter.run_splitter ~rng:splitter_rng ~groups:(Dataset.groups dataset)
-        ~x:(Dataset.features dataset) ~y:(Dataset.target dataset)
-    in
-    let* splits =
-      let rec validate index reversed =
-        if index = Array.length view_pairs then
-          Ok (Array.of_list (List.rev reversed))
+  let validate_prediction_coverage ~rows splits =
+    if Array.length splits = 0 then
+      Error
+        (validation ~name:"out-of-fold test coverage"
+           ~reason:"the splitter produced no folds"
+           ~remediation:
+             "use a splitter whose test folds partition every source row")
+    else
+      let counts = Array.make rows 0 in
+      Array.iter
+        (fun split ->
+          Array.iter
+            (fun row -> counts.(row) <- counts.(row) + 1)
+            (Row_view.indices (Split.test split)))
+        splits;
+      let rec check row =
+        if row = rows then Ok ()
         else
-          let train, test = view_pairs.(index) in
-          match Split.of_views ~train ~test with
-          | Ok split -> validate (index + 1) (split :: reversed)
-          | Error error -> Error (contextualize index error)
+          match counts.(row) with
+          | 1 -> check (row + 1)
+          | 0 ->
+              Error
+                (validation ~name:"out-of-fold test coverage"
+                   ~reason:(Format.sprintf "source row %d is never tested" row)
+                   ~remediation:
+                     "use a splitter whose test folds partition every source \
+                      row")
+          | count ->
+              Error
+                (validation ~name:"out-of-fold test coverage"
+                   ~reason:
+                     (Format.sprintf "source row %d is tested %d times" row
+                        count)
+                   ~remediation:
+                     "use a non-repeated splitter with disjoint test folds")
       in
-      validate 0 []
-    in
-    let evaluate ~index:fold_index split =
-      let train_indices, test_indices = retain_indices return_indices split in
-      match Split.materialize dataset split with
-      | Error error ->
+      check 0
+
+  let run_prediction ~failure_policy ~fit_seed ~execution ~metadata ~splitter
+      ~seed ~predict_fold ~assemble pipeline dataset =
+    let ( let* ) = Result.bind in
+    let rows = Dataset.sample_count dataset in
+    let* () = Metadata.validate ~rows metadata in
+    Callback.run
+      ~outcome:(fun report ->
+        match report.assembled_predictions with
+        | Ok _ -> Callback.Succeeded
+        | Error failures -> Callback.Failed failures.(0).error)
+      (Metadata.callback metadata)
+      ~operation:Callback.Cross_validation
+      (fun () ->
+        let splitter_rng =
+          Seed.derive seed ~operation:"cross-val-predict-splitter" ~index:0
+          |> Rng.create
+        in
+        let* view_pairs =
+          splitter.run_splitter ~rng:splitter_rng
+            ~groups:(Dataset.groups dataset) ~x:(Dataset.features dataset)
+            ~y:(Dataset.target dataset)
+        in
+        let* splits =
+          let rec validate index reversed =
+            if index = Array.length view_pairs then
+              Ok (Array.of_list (List.rev reversed))
+            else
+              let train, test = view_pairs.(index) in
+              match Split.of_views ~train ~test with
+              | Ok split -> validate (index + 1) (split :: reversed)
+              | Error error -> Error (contextualize index error)
+          in
+          validate 0 []
+        in
+        let* () = validate_prediction_coverage ~rows splits in
+        let failed ~fold_index ~fit_time ~predict_time ~test_indices phase error
+            =
           let error = contextualize fold_index error in
-          if failure_policy = Abort then Error error
+          if failure_policy = Abort || Callback.is_control_error error then
+            Error error
           else
             Ok
               {
-                fold_index;
-                fit_time = 0.0;
-                score_time = 0.0;
-                scores = empty_scores ~return_train_score scorer_names;
-                model = None;
-                train_indices;
-                test_indices;
-                failures = [| { phase = Materialization; error } |];
+                prediction_fold_index = fold_index;
+                prediction_fit_time = fit_time;
+                predict_time;
+                prediction_test_indices = test_indices;
+                prediction_result = Error { phase; error };
               }
-      | Ok (train, test) -> (
-          let fold_rng =
-            Seed.derive fit_seed ~operation:"cross-validation-fold"
-              ~index:fold_index
-            |> Rng.create
+        in
+        let evaluate metadata ~index:fold_index split =
+          let test_indices = Row_view.indices (Split.test split) in
+          let materialized =
+            let* train, test = Split.materialize dataset split in
+            let* train_metadata =
+              Metadata.select metadata (Split.train split)
+            in
+            let* test_metadata = Metadata.select metadata (Split.test split) in
+            Ok (train, test, train_metadata, test_metadata)
           in
-          let fit_time, fitted =
-            timed (fun () ->
-                Pipeline.fit (Pipeline.clone pipeline)
-                  ?sample_weight:(Dataset.sample_weight train)
-                  ~rng:fold_rng
-                  ~feature_schema:(Dataset.feature_schema train)
-                  ~x:(Dataset.features train) ~y:(Dataset.target train) ())
+          match materialized with
+          | Error error ->
+              failed ~fold_index ~fit_time:0.0 ~predict_time:0.0 ~test_indices
+                Materialization error
+          | Ok (train, test, train_metadata, test_metadata) -> (
+              let fold_rng =
+                Seed.derive fit_seed ~operation:"cross-val-predict-fold"
+                  ~index:fold_index
+                |> Rng.create
+              in
+              let fit_time, fitted =
+                timed (fun () ->
+                    Pipeline.fit_with_metadata (Pipeline.clone pipeline)
+                      ~metadata:train_metadata ~rng:fold_rng
+                      ~feature_schema:(Dataset.feature_schema train)
+                      ~x:(Dataset.features train) ~y:(Dataset.target train) ())
+              in
+              match fitted with
+              | Error error ->
+                  failed ~fold_index ~fit_time ~predict_time:0.0 ~test_indices
+                    Fitting error
+              | Ok fitted -> (
+                  let predict_time, prediction =
+                    timed (fun () ->
+                        predict_fold ~fold_index ~metadata:test_metadata fitted
+                          test)
+                  in
+                  match prediction with
+                  | Error error ->
+                      failed ~fold_index ~fit_time ~predict_time ~test_indices
+                        (Prediction Test) error
+                  | Ok prediction ->
+                      Ok
+                        {
+                          prediction_fold_index = fold_index;
+                          prediction_fit_time = fit_time;
+                          predict_time;
+                          prediction_test_indices = test_indices;
+                          prediction_result = Ok prediction;
+                        }))
+        in
+        let run_fold metadata ~index split =
+          let metadata = Metadata.scope (Error.Fold index) metadata in
+          Callback.run
+            ~outcome:(fun fold ->
+              match fold.prediction_result with
+              | Ok _ -> Callback.Succeeded
+              | Error failure -> Callback.Failed failure.error)
+            (Metadata.callback metadata)
+            ~operation:Callback.Fold
+            (fun () -> evaluate metadata ~index split)
+          |> Result.map_error (contextualize index)
+        in
+        let* prediction_report_folds =
+          match Metadata.callback metadata with
+          | None -> Execution.map execution ~f:(run_fold metadata) splits
+          | Some callback ->
+              let batch_size = max 1 (Execution.concurrency execution) in
+              let rec batches offset reversed =
+                if offset = Array.length splits then
+                  Ok (Array.of_list (List.rev reversed))
+                else
+                  let count = min batch_size (Array.length splits - offset) in
+                  let batch = Array.sub splits offset count in
+                  let* outcomes =
+                    Execution.map execution batch ~f:(fun ~index split ->
+                        let buffered, flush = Callback.buffer callback in
+                        let scoped =
+                          Metadata.with_callback metadata (Some buffered)
+                        in
+                        let result =
+                          run_fold scoped ~index:(offset + index) split
+                        in
+                        Ok (result, flush))
+                  in
+                  let* reversed =
+                    Array.fold_left
+                      (fun accumulated (result, flush) ->
+                        let* accumulated = accumulated in
+                        let* () = flush () in
+                        let* fold = result in
+                        Ok (fold :: accumulated))
+                      (Ok reversed) outcomes
+                  in
+                  batches (offset + count) reversed
+              in
+              batches 0 []
+        in
+        let assembled_predictions = assemble prediction_report_folds in
+        Ok { prediction_report_folds; assembled_predictions })
+
+  let run ~return_train_score ~return_models ~return_indices ~failure_policy
+      ~fit_seed ~execution ~metadata ~splitter ~scorer_names ~seed ~score_model
+      pipeline dataset =
+    let ( let* ) = Result.bind in
+    let* () = validate_scorers scorer_names in
+    let* () = Metadata.validate ~rows:(Dataset.sample_count dataset) metadata in
+    Callback.run
+      ~outcome:(fun report ->
+        let failure =
+          Array.to_list report.report_folds
+          |> List.find_map (fun fold ->
+              if Array.length fold.failures = 0 then None
+              else Some fold.failures.(0).error)
+        in
+        match failure with
+        | None -> Callback.Succeeded
+        | Some error -> Callback.Failed error)
+      (Metadata.callback metadata)
+      ~operation:Callback.Cross_validation
+      (fun () ->
+        let splitter_rng =
+          Seed.derive seed ~operation:"cross-validation-splitter" ~index:0
+          |> Rng.create
+        in
+        let* view_pairs =
+          splitter.run_splitter ~rng:splitter_rng
+            ~groups:(Dataset.groups dataset) ~x:(Dataset.features dataset)
+            ~y:(Dataset.target dataset)
+        in
+        let* splits =
+          let rec validate index reversed =
+            if index = Array.length view_pairs then
+              Ok (Array.of_list (List.rev reversed))
+            else
+              let train, test = view_pairs.(index) in
+              match Split.of_views ~train ~test with
+              | Ok split -> validate (index + 1) (split :: reversed)
+              | Error error -> Error (contextualize index error)
           in
-          match fitted with
+          validate 0 []
+        in
+        let evaluate metadata ~index:fold_index split =
+          let train_indices, test_indices =
+            retain_indices return_indices split
+          in
+          let materialized =
+            let* train, test = Split.materialize dataset split in
+            let* train_metadata =
+              Metadata.select metadata (Split.train split)
+            in
+            let* test_metadata = Metadata.select metadata (Split.test split) in
+            Ok (train, test, train_metadata, test_metadata)
+          in
+          match materialized with
           | Error error ->
               let error = contextualize fold_index error in
-              if failure_policy = Abort then Error error
+              if failure_policy = Abort || Callback.is_control_error error then
+                Error error
               else
                 Ok
                   {
                     fold_index;
-                    fit_time;
+                    fit_time = 0.0;
                     score_time = 0.0;
                     scores = empty_scores ~return_train_score scorer_names;
                     model = None;
                     train_indices;
                     test_indices;
-                    failures = [| { phase = Fitting; error } |];
+                    failures = [| { phase = Materialization; error } |];
                   }
-          | Ok fitted ->
-              let score_time, scored =
-                timed (fun () ->
-                    score_model ~fold_index ~return_train_score ~failure_policy
-                      fitted train test)
+          | Ok (train, test, train_metadata, test_metadata) -> (
+              let fold_rng =
+                Seed.derive fit_seed ~operation:"cross-validation-fold"
+                  ~index:fold_index
+                |> Rng.create
               in
-              let* scores, failures = scored in
-              Ok
-                {
-                  fold_index;
-                  fit_time;
-                  score_time;
-                  scores;
-                  model = (if return_models then Some fitted else None);
-                  train_indices;
-                  test_indices;
-                  failures;
-                })
-    in
-    let* report_folds = Execution.map execution ~f:evaluate splits in
-    Ok { report_folds }
+              let fit_time, fitted =
+                timed (fun () ->
+                    Pipeline.fit_with_metadata (Pipeline.clone pipeline)
+                      ~metadata:train_metadata ~rng:fold_rng
+                      ~feature_schema:(Dataset.feature_schema train)
+                      ~x:(Dataset.features train) ~y:(Dataset.target train) ())
+              in
+              match fitted with
+              | Error error ->
+                  let error = contextualize fold_index error in
+                  if failure_policy = Abort || Callback.is_control_error error
+                  then Error error
+                  else
+                    Ok
+                      {
+                        fold_index;
+                        fit_time;
+                        score_time = 0.0;
+                        scores = empty_scores ~return_train_score scorer_names;
+                        model = None;
+                        train_indices;
+                        test_indices;
+                        failures = [| { phase = Fitting; error } |];
+                      }
+              | Ok fitted ->
+                  let score_time, scored =
+                    timed (fun () ->
+                        score_model ~fold_index ~return_train_score
+                          ~failure_policy ~train_metadata ~test_metadata fitted
+                          train test)
+                  in
+                  let* scores, failures = scored in
+                  Ok
+                    {
+                      fold_index;
+                      fit_time;
+                      score_time;
+                      scores;
+                      model = (if return_models then Some fitted else None);
+                      train_indices;
+                      test_indices;
+                      failures;
+                    })
+        in
+        let run_fold metadata ~index split =
+          let metadata = Metadata.scope (Error.Fold index) metadata in
+          Callback.run
+            ~outcome:(fun fold ->
+              if Array.length fold.failures = 0 then Callback.Succeeded
+              else Callback.Failed fold.failures.(0).error)
+            (Metadata.callback metadata)
+            ~operation:Callback.Fold
+            (fun () -> evaluate metadata ~index split)
+          |> Result.map_error (contextualize index)
+        in
+        let* report_folds =
+          match Metadata.callback metadata with
+          | None -> Execution.map execution ~f:(run_fold metadata) splits
+          | Some callback ->
+              let batch_size = max 1 (Execution.concurrency execution) in
+              let rec batches offset reversed =
+                if offset = Array.length splits then
+                  Ok (Array.of_list (List.rev reversed))
+                else
+                  let count = min batch_size (Array.length splits - offset) in
+                  let batch = Array.sub splits offset count in
+                  let* outcomes =
+                    Execution.map execution batch ~f:(fun ~index split ->
+                        let buffered, flush = Callback.buffer callback in
+                        let scoped =
+                          Metadata.with_callback metadata (Some buffered)
+                        in
+                        let result =
+                          run_fold scoped ~index:(offset + index) split
+                        in
+                        Ok (result, flush))
+                  in
+                  let* reversed =
+                    Array.fold_left
+                      (fun accumulated (result, flush) ->
+                        let* accumulated = accumulated in
+                        let* () = flush () in
+                        let* fold = result in
+                        Ok (fold :: accumulated))
+                      (Ok reversed) outcomes
+                  in
+                  batches (offset + count) reversed
+              in
+              batches 0 []
+        in
+        Ok { report_folds })
 
   let failure ~phase error = { phase; error }
 
   let finish_scoring failure_policy scores failures =
-    match (failure_policy, failures) with
-    | Abort, first :: _ -> Error first.error
-    | (Abort | Record), _ -> Ok (scores, Array.of_list failures)
+    match
+      List.find_opt
+        (fun failure -> Callback.is_control_error failure.error)
+        failures
+    with
+    | Some failure -> Error failure.error
+    | None -> (
+        match (failure_policy, failures) with
+        | Abort, first :: _ -> Error first.error
+        | (Abort | Record), _ -> Ok (scores, Array.of_list failures))
+
+  let prediction_length_error ~name ~expected ~observed =
+    Error.make
+      ~remediation:"return exactly one prediction for every selected test row"
+      (Error.Shape_mismatch
+         { name; expected = [ expected ]; observed = [ observed ] })
+
+  let collected_prediction_failures folds =
+    Array.fold_left
+      (fun reversed fold ->
+        match fold.prediction_result with
+        | Ok _ -> reversed
+        | Error failure -> failure :: reversed)
+      [] folds
+    |> List.rev |> Array.of_list
+
+  let successful_predictions folds =
+    let failures = collected_prediction_failures folds in
+    if Array.length failures = 0 then Ok () else Error failures
+
+  let assemble_regression ~rows folds =
+    let ( let* ) = Result.bind in
+    let* () = successful_predictions folds in
+    let values = Array.make rows 0.0 in
+    Array.iter
+      (fun fold ->
+        match fold.prediction_result with
+        | Error _ -> assert false
+        | Ok prediction ->
+            let predicted = Target.regression_values prediction in
+            Array.iteri
+              (fun position row ->
+                values.(row) <- Vector.get predicted position)
+              fold.prediction_test_indices)
+      folds;
+    match Target.regression (Vector.of_array values) with
+    | Ok prediction -> Ok prediction
+    | Error _ -> assert false
 
   module Regression = struct
     type model =
@@ -256,9 +624,9 @@ module Cross_validation = struct
     let score_partition ~fold_index ~partition scorers dataset prediction =
       Array.map
         (fun scorer ->
-          let name = Regression_scorer.name scorer in
+          let name = Scorer.name scorer in
           let result =
-            Regression_scorer.score scorer
+            Scorer.score scorer
               ?sample_weight:(Dataset.sample_weight dataset)
               ~truth:(Dataset.target dataset) ~prediction ()
             |> Result.map_error (scorer_error fold_index name)
@@ -273,9 +641,9 @@ module Cross_validation = struct
         scorers
 
     let score_model scorers ~fold_index ~return_train_score ~failure_policy
-        fitted train test =
-      let predict partition dataset =
-        Pipeline.predict fitted
+        ~train_metadata ~test_metadata fitted train test =
+      let predict partition metadata dataset =
+        Pipeline.predict_with_metadata fitted ~metadata
           ~feature_schema:(Dataset.feature_schema dataset)
           ~x:(Dataset.features dataset)
         |> Result.map_error (contextualize fold_index)
@@ -288,7 +656,7 @@ module Cross_validation = struct
         (result, failures)
       in
       let train_prediction, train_prediction_failures =
-        if return_train_score then predict Train train
+        if return_train_score then predict Train train_metadata train
         else
           ( Error
               (validation ~name:"unused training prediction"
@@ -297,7 +665,9 @@ module Cross_validation = struct
                    "request train scores to compute training predictions"),
             [] )
       in
-      let test_prediction, test_prediction_failures = predict Test test in
+      let test_prediction, test_prediction_failures =
+        predict Test test_metadata test
+      in
       let train_results =
         match train_prediction with
         | Ok prediction ->
@@ -317,7 +687,7 @@ module Cross_validation = struct
       let scores =
         Array.mapi
           (fun index scorer ->
-            let name = Regression_scorer.name scorer in
+            let name = Scorer.name scorer in
             let train_score =
               if not return_train_score then None
               else
@@ -354,13 +724,70 @@ module Cross_validation = struct
 
     let cross_validate ?(return_train_score = false) ?(return_models = false)
         ?(return_indices = false) ?(failure_policy = Abort) ?fit_seed
-        ?(execution = Execution.sequential) ~splitter ~scorers ~seed pipeline
-        dataset =
+        ?(execution = Execution.sequential) ?metadata ?(custom_scorers = [||])
+        ~splitter ~scorers ~seed pipeline dataset =
+      let ( let* ) = Result.bind in
+      let metadata =
+        match metadata with
+        | Some metadata -> metadata
+        | None -> Metadata.of_dataset dataset
+      in
       let fit_seed = Option.value fit_seed ~default:seed in
-      let scorer_names = Array.map Regression_scorer.name scorers in
+      let scorers =
+        Array.append
+          (Array.map Regression_scorer.as_scorer scorers)
+          custom_scorers
+      in
+      let* () =
+        Array.fold_left
+          (fun result scorer ->
+            let* () = result in
+            match (Scorer.capabilities scorer).Capability.scorer_prediction with
+            | Capability.Direct -> Ok ()
+            | Capability.Labels | Capability.Positive_probabilities _
+            | Capability.Class_probabilities ->
+                Error
+                  (validation ~name:"regression custom scorer capability"
+                     ~reason:
+                       "a regression scorer requested a classification response"
+                     ~remediation:
+                       "declare Capability.Direct for regression predictions"))
+          (Ok ()) custom_scorers
+      in
+      let* () = validate_custom_sample_weight dataset custom_scorers in
+      let scorer_names = Array.map Scorer.name scorers in
       run ~return_train_score ~return_models ~return_indices ~failure_policy
-        ~fit_seed ~execution ~splitter ~scorer_names ~seed
+        ~fit_seed ~execution ~metadata ~splitter ~scorer_names ~seed
         ~score_model:(score_model scorers) pipeline dataset
+
+    let cross_val_predict ?(failure_policy = Abort) ?fit_seed
+        ?(execution = Execution.sequential) ?metadata ~splitter ~seed pipeline
+        dataset =
+      let metadata =
+        match metadata with
+        | Some metadata -> metadata
+        | None -> Metadata.of_dataset dataset
+      in
+      let fit_seed = Option.value fit_seed ~default:seed in
+      let predict_fold ~fold_index:_ ~metadata fitted test =
+        let ( let* ) = Result.bind in
+        let expected = Dataset.sample_count test in
+        let* prediction =
+          Pipeline.predict_with_metadata fitted ~metadata
+            ~feature_schema:(Dataset.feature_schema test)
+            ~x:(Dataset.features test)
+        in
+        let observed = Target.length prediction in
+        if observed = expected then Ok prediction
+        else
+          Error
+            (prediction_length_error ~name:"out-of-fold regression prediction"
+               ~expected ~observed)
+      in
+      run_prediction ~failure_policy ~fit_seed ~execution ~metadata ~splitter
+        ~seed ~predict_fold
+        ~assemble:(assemble_regression ~rows:(Dataset.sample_count dataset))
+        pipeline dataset
   end
 
   (* Classification evaluation shared by the binary and multiclass variants:
@@ -401,11 +828,11 @@ module Cross_validation = struct
       probabilities : (Matrix.t * int array, Error.t) result option;
     }
 
-    let probability_data ~fold_index fitted dataset =
+    let probability_data ~fold_index ~metadata fitted dataset =
       let ( let* ) = Result.bind in
       (let* classes = Pipeline.classes fitted in
        let* probabilities =
-         Pipeline.predict_proba fitted
+         Pipeline.predict_proba_with_metadata fitted ~metadata
            ~feature_schema:(Dataset.feature_schema dataset)
            ~x:(Dataset.features dataset)
        in
@@ -413,11 +840,11 @@ module Cross_validation = struct
        Ok (probabilities, classes))
       |> Result.map_error (contextualize fold_index)
 
-    let responses ~fold_index scorers fitted dataset =
+    let responses ~fold_index ~metadata scorers fitted dataset =
       let labels =
         if Array.exists Scoring.needs_labels scorers then
           Some
-            (Pipeline.predict fitted
+            (Pipeline.predict_with_metadata fitted ~metadata
                ~feature_schema:(Dataset.feature_schema dataset)
                ~x:(Dataset.features dataset)
             |> Result.map_error (contextualize fold_index))
@@ -425,7 +852,7 @@ module Cross_validation = struct
       in
       let probabilities =
         if Array.exists Scoring.needs_probabilities scorers then
-          Some (probability_data ~fold_index fitted dataset)
+          Some (probability_data ~fold_index ~metadata fitted dataset)
         else None
       in
       { labels; probabilities }
@@ -491,13 +918,16 @@ module Cross_validation = struct
         scorers
 
     let score_model scorers ~fold_index ~return_train_score ~failure_policy
-        fitted train test =
+        ~train_metadata ~test_metadata fitted train test =
       let train_responses =
         if return_train_score then
-          Some (responses ~fold_index scorers fitted train)
+          Some
+            (responses ~fold_index ~metadata:train_metadata scorers fitted train)
         else None
       in
-      let test_responses = responses ~fold_index scorers fitted test in
+      let test_responses =
+        responses ~fold_index ~metadata:test_metadata scorers fitted test
+      in
       let train_results =
         Option.map
           (score_partition ~fold_index ~partition:Train scorers train)
@@ -536,12 +966,17 @@ module Cross_validation = struct
 
     let cross_validate ?(return_train_score = false) ?(return_models = false)
         ?(return_indices = false) ?(failure_policy = Abort) ?fit_seed
-        ?(execution = Execution.sequential) ~splitter ~scorers ~seed pipeline
-        dataset =
+        ?(execution = Execution.sequential) ?metadata ~splitter ~scorers ~seed
+        pipeline dataset =
+      let metadata =
+        match metadata with
+        | Some metadata -> metadata
+        | None -> Metadata.of_dataset dataset
+      in
       let fit_seed = Option.value fit_seed ~default:seed in
       let scorer_names = Array.map Scoring.name scorers in
       run ~return_train_score ~return_models ~return_indices ~failure_policy
-        ~fit_seed ~execution ~splitter ~scorer_names ~seed
+        ~fit_seed ~execution ~metadata ~splitter ~scorer_names ~seed
         ~score_model:(score_model scorers) pipeline dataset
   end
 
@@ -560,18 +995,21 @@ module Cross_validation = struct
     else Ok ()
 
   module Binary_scoring = struct
-    type scorer = Binary_classification_scorer.t
+    type scorer = (Target.classification Target.t, Binary_prediction.t) Scorer.t
     type prediction = Binary_prediction.t
 
-    let name = Binary_classification_scorer.name
+    let name = Scorer.name
 
     let needs_labels scorer =
-      Binary_classification_scorer.response scorer
-      = Binary_classification_scorer.Labels
+      (Scorer.capabilities scorer).Capability.scorer_prediction
+      = Capability.Labels
 
     let needs_probabilities scorer =
-      Binary_classification_scorer.response scorer
-      = Binary_classification_scorer.Positive_probabilities
+      match (Scorer.capabilities scorer).Capability.scorer_prediction with
+      | Capability.Positive_probabilities _ -> true
+      | Capability.Direct | Capability.Labels | Capability.Class_probabilities
+        ->
+          false
 
     let validate_classes classes probabilities =
       if Array.length classes <> 2 then
@@ -599,18 +1037,21 @@ module Cross_validation = struct
       match (needs_labels scorer, labels, probabilities) with
       | true, Some labels, _ -> Binary_prediction.create ~labels ()
       | false, _, Some (probabilities, classes) -> (
-          let params = Binary_classification_scorer.params scorer in
-          match
-            find_class_column classes
-              params.Binary_classification_scorer.positive_label
-          with
+          let positive_label =
+            match (Scorer.capabilities scorer).Capability.scorer_prediction with
+            | Capability.Positive_probabilities label -> label
+            | Capability.Direct | Capability.Labels
+            | Capability.Class_probabilities ->
+                assert false
+          in
+          match find_class_column classes positive_label with
           | None ->
               Error
                 (validation ~name:"positive probability class"
                    ~reason:
                      (Format.sprintf
                         "label %d is absent from the declared class order"
-                        params.Binary_classification_scorer.positive_label)
+                        positive_label)
                    ~remediation:
                      "configure the scorer positive label to match the \
                       classifier")
@@ -622,22 +1063,24 @@ module Cross_validation = struct
               Binary_prediction.create ~positive_probabilities ())
       | true, None, _ | false, _, None -> assert false
 
-    let score = Binary_classification_scorer.score
+    let score = Scorer.score
   end
 
   module Multiclass_scoring = struct
-    type scorer = Multiclass_classification_scorer.t
+    type scorer =
+      (Target.classification Target.t, Multiclass_prediction.t) Scorer.t
+
     type prediction = Multiclass_prediction.t
 
-    let name = Multiclass_classification_scorer.name
+    let name = Scorer.name
 
     let needs_labels scorer =
-      Multiclass_classification_scorer.response scorer
-      = Multiclass_classification_scorer.Labels
+      (Scorer.capabilities scorer).Capability.scorer_prediction
+      = Capability.Labels
 
     let needs_probabilities scorer =
-      Multiclass_classification_scorer.response scorer
-      = Multiclass_classification_scorer.Class_probabilities
+      (Scorer.capabilities scorer).Capability.scorer_prediction
+      = Capability.Class_probabilities
 
     let validate_classes classes probabilities =
       let sorted = Array.copy classes in
@@ -666,13 +1109,2159 @@ module Cross_validation = struct
           Multiclass_prediction.create ~classes ~probabilities ()
       | true, None, _ | false, _, None -> assert false
 
-    let score = Multiclass_classification_scorer.score
+    let score = Scorer.score
   end
 
-  module Binary_classification = Classification_evaluation (Binary_scoring)
+  let sorted_unique_labels target =
+    let values = Target.classification_values target in
+    Array.sort Int.compare values;
+    if Array.length values = 0 then [||]
+    else
+      let reversed = ref [ values.(0) ] in
+      for index = 1 to Array.length values - 1 do
+        if values.(index) <> values.(index - 1) then
+          reversed := values.(index) :: !reversed
+      done;
+      Array.of_list (List.rev !reversed)
 
-  module Multiclass_classification =
-    Classification_evaluation (Multiclass_scoring)
+  let validate_prediction_classes ~binary classes =
+    let count = Array.length classes in
+    if (binary && count = 2) || ((not binary) && count >= 2) then Ok ()
+    else
+      Error
+        (validation ~name:"out-of-fold classification classes"
+           ~reason:
+             (if binary then
+                Format.sprintf "binary data contains %d distinct classes" count
+              else
+                Format.sprintf
+                  "classification data contains %d distinct classes" count)
+           ~remediation:
+             (if binary then "provide targets containing exactly two classes"
+              else "provide targets containing at least two classes"))
+
+  let class_index classes =
+    let index = Hashtbl.create (Array.length classes) in
+    Array.iteri (fun column label -> Hashtbl.add index label column) classes;
+    index
+
+  let validate_predicted_labels ~classes prediction =
+    let index = class_index classes in
+    let labels = Target.classification_values prediction in
+    let rec check row =
+      if row = Array.length labels then Ok ()
+      else if Hashtbl.mem index labels.(row) then check (row + 1)
+      else
+        Error
+          (compatibility ~component:"out-of-fold classifier labels"
+             ~reason:
+               (Format.sprintf
+                  "predicted label %d at row %d is absent from the dataset"
+                  labels.(row) row)
+             ~remediation:
+               "return labels drawn from the complete dataset class set")
+    in
+    check 0
+
+  let align_probability_columns ~classes ~fold_classes probabilities =
+    let ( let* ) = Result.bind in
+    let rows = Matrix.rows probabilities in
+    let* () = validate_probability_columns fold_classes probabilities in
+    let global = class_index classes in
+    let destinations = Array.make (Array.length fold_classes) 0 in
+    let seen = Hashtbl.create (Array.length fold_classes) in
+    let rec map_columns column =
+      if column = Array.length fold_classes then Ok ()
+      else
+        let label = fold_classes.(column) in
+        if Hashtbl.mem seen label then
+          Error
+            (compatibility ~component:"out-of-fold probability class order"
+               ~reason:
+                 (Format.sprintf "class label %d is declared more than once"
+                    label)
+               ~remediation:"declare each fitted class exactly once")
+        else
+          match Hashtbl.find_opt global label with
+          | None ->
+              Error
+                (compatibility ~component:"out-of-fold probability class order"
+                   ~reason:
+                     (Format.sprintf
+                        "fitted class label %d is absent from the dataset" label)
+                   ~remediation:
+                     "declare only classes present in the complete dataset")
+          | Some destination ->
+              Hashtbl.add seen label ();
+              destinations.(column) <- destination;
+              map_columns (column + 1)
+    in
+    let* () = map_columns 0 in
+    let sources = Array.make (Array.length classes) (-1) in
+    Array.iteri
+      (fun source destination -> sources.(destination) <- source)
+      destinations;
+    Matrix.init ~rows ~columns:(Array.length classes) (fun row column ->
+        let source = sources.(column) in
+        if source < 0 then 0.0 else Matrix.get probabilities row source)
+    |> Result.map_error (fun error ->
+        Error.of_data_error
+          ~remediation:"return a valid classifier probability matrix" error)
+
+  let assemble_classification ~response ~classes ~rows folds =
+    let ( let* ) = Result.bind in
+    let* () = successful_predictions folds in
+    match response with
+    | Labels -> (
+        let labels = Array.make rows 0 in
+        Array.iter
+          (fun fold ->
+            match fold.prediction_result with
+            | Error _ -> assert false
+            | Ok prediction ->
+                let predicted =
+                  Multiclass_prediction.labels prediction
+                  |> Option.get |> Target.classification_values
+                in
+                Array.iteri
+                  (fun position row -> labels.(row) <- predicted.(position))
+                  fold.prediction_test_indices)
+          folds;
+        Multiclass_prediction.create ~labels:(Target.classification labels) ()
+        |> function
+        | Ok prediction -> Ok prediction
+        | Error _ -> assert false)
+    | Probabilities -> (
+        let row_predictions = Array.make rows None in
+        let row_positions = Array.make rows 0 in
+        Array.iter
+          (fun fold ->
+            match fold.prediction_result with
+            | Error _ -> assert false
+            | Ok prediction ->
+                let predicted =
+                  Multiclass_prediction.probabilities prediction |> Option.get
+                in
+                Array.iteri
+                  (fun position row ->
+                    row_predictions.(row) <- Some predicted;
+                    row_positions.(row) <- position)
+                  fold.prediction_test_indices)
+          folds;
+        let probabilities =
+          match
+            Matrix.init ~rows ~columns:(Array.length classes) (fun row column ->
+                Matrix.get
+                  (Option.get row_predictions.(row))
+                  row_positions.(row) column)
+          with
+          | Ok probabilities -> probabilities
+          | Error _ -> assert false
+        in
+        Multiclass_prediction.create ~classes ~probabilities () |> function
+        | Ok prediction -> Ok prediction
+        | Error _ -> assert false)
+
+  let classification_cross_val_predict ~binary ?(failure_policy = Abort)
+      ?fit_seed ?(execution = Execution.sequential) ?metadata ~response
+      ~splitter ~seed pipeline dataset =
+    let ( let* ) = Result.bind in
+    let classes = sorted_unique_labels (Dataset.target dataset) in
+    let* () = validate_prediction_classes ~binary classes in
+    let metadata =
+      match metadata with
+      | Some metadata -> metadata
+      | None -> Metadata.of_dataset dataset
+    in
+    let fit_seed = Option.value fit_seed ~default:seed in
+    let predict_fold ~fold_index:_ ~metadata fitted test =
+      let expected = Dataset.sample_count test in
+      match response with
+      | Labels ->
+          let* labels =
+            Pipeline.predict_with_metadata fitted ~metadata
+              ~feature_schema:(Dataset.feature_schema test)
+              ~x:(Dataset.features test)
+          in
+          let observed = Target.length labels in
+          let* () =
+            if observed = expected then Ok ()
+            else
+              Error
+                (prediction_length_error
+                   ~name:"out-of-fold classification labels" ~expected ~observed)
+          in
+          let* () = validate_predicted_labels ~classes labels in
+          Multiclass_prediction.create ~labels ()
+      | Probabilities ->
+          let* fold_classes = Pipeline.classes fitted in
+          let* probabilities =
+            Pipeline.predict_proba_with_metadata fitted ~metadata
+              ~feature_schema:(Dataset.feature_schema test)
+              ~x:(Dataset.features test)
+          in
+          let observed = Matrix.rows probabilities in
+          let* () =
+            if observed = expected then Ok ()
+            else
+              Error
+                (prediction_length_error ~name:"out-of-fold class probabilities"
+                   ~expected ~observed)
+          in
+          let* probabilities =
+            align_probability_columns ~classes ~fold_classes probabilities
+          in
+          Multiclass_prediction.create ~classes ~probabilities ()
+    in
+    run_prediction ~failure_policy ~fit_seed ~execution ~metadata ~splitter
+      ~seed ~predict_fold
+      ~assemble:
+        (assemble_classification ~response ~classes
+           ~rows:(Dataset.sample_count dataset))
+      pipeline dataset
+
+  module Binary_classification = struct
+    include Classification_evaluation (Binary_scoring)
+
+    let cross_validate_first_class = cross_validate
+
+    let cross_validate ?return_train_score ?return_models ?return_indices
+        ?failure_policy ?fit_seed ?execution ?metadata ?(custom_scorers = [||])
+        ~splitter ~scorers ~seed pipeline dataset =
+      let ( let* ) = Result.bind in
+      let* () =
+        Array.fold_left
+          (fun result scorer ->
+            let* () = result in
+            match (Scorer.capabilities scorer).Capability.scorer_prediction with
+            | Capability.Labels | Capability.Positive_probabilities _ -> Ok ()
+            | Capability.Direct | Capability.Class_probabilities ->
+                Error
+                  (validation ~name:"binary custom scorer capability"
+                     ~reason:
+                       "the scorer requested a response unavailable to binary \
+                        evaluation"
+                     ~remediation:
+                       "declare Labels or Positive_probabilities with the \
+                        positive class label"))
+          (Ok ()) custom_scorers
+      in
+      let* () = validate_custom_sample_weight dataset custom_scorers in
+      let scorers =
+        Array.append
+          (Array.map Binary_classification_scorer.as_scorer scorers)
+          custom_scorers
+      in
+      cross_validate_first_class ?return_train_score ?return_models
+        ?return_indices ?failure_policy ?fit_seed ?execution ?metadata ~splitter
+        ~scorers ~seed pipeline dataset
+
+    let cross_val_predict = classification_cross_val_predict ~binary:true
+  end
+
+  module Multiclass_classification = struct
+    include Classification_evaluation (Multiclass_scoring)
+
+    let cross_validate_first_class = cross_validate
+
+    let cross_validate ?return_train_score ?return_models ?return_indices
+        ?failure_policy ?fit_seed ?execution ?metadata ?(custom_scorers = [||])
+        ~splitter ~scorers ~seed pipeline dataset =
+      let ( let* ) = Result.bind in
+      let* () =
+        Array.fold_left
+          (fun result scorer ->
+            let* () = result in
+            match (Scorer.capabilities scorer).Capability.scorer_prediction with
+            | Capability.Labels | Capability.Class_probabilities -> Ok ()
+            | Capability.Direct | Capability.Positive_probabilities _ ->
+                Error
+                  (validation ~name:"multiclass custom scorer capability"
+                     ~reason:
+                       "the scorer requested a response unavailable to \
+                        multiclass evaluation"
+                     ~remediation:"declare Labels or Class_probabilities"))
+          (Ok ()) custom_scorers
+      in
+      let* () = validate_custom_sample_weight dataset custom_scorers in
+      let scorers =
+        Array.append
+          (Array.map Multiclass_classification_scorer.as_scorer scorers)
+          custom_scorers
+      in
+      cross_validate_first_class ?return_train_score ?return_models
+        ?return_indices ?failure_policy ?fit_seed ?execution ?metadata ~splitter
+        ~scorers ~seed pipeline dataset
+
+    let cross_val_predict = classification_cross_val_predict ~binary:false
+  end
+end
+
+module Recursive_feature_elimination_cv = struct
+  type score = {
+    feature_count : int;
+    fold_scores : float array;
+    mean_score : float;
+    standard_deviation : float;
+  }
+
+  let validation ~remediation name reason =
+    Error (Error.make ~remediation (Error.Validation { name; reason }))
+
+  module type TASK = sig
+    type kind
+    type prediction
+    type scorer
+
+    val scorer_name : scorer -> string
+    val clone_scorer : scorer -> scorer
+    val validate_scorer : scorer -> (unit, Error.t) result
+
+    val score :
+      scorer ->
+      ?sample_weight:Sample_weight.t ->
+      truth:kind Target.t ->
+      prediction:prediction ->
+      unit ->
+      (float, Error.t) result
+  end
+
+  module Make
+      (Task : TASK)
+      (Estimator :
+        IMPORTANCE_ESTIMATOR
+          with type target = Task.kind Target.t
+           and type prediction = Task.prediction
+           and type rng = Rng.t) =
+  struct
+    module Rfe =
+      Modelkit_feature_selection.Recursive_feature_elimination.Make (Estimator)
+
+    type params = {
+      min_feature_count : int;
+      step : Modelkit_feature_selection.Recursive_feature_elimination.step;
+      max_fits : int option;
+      scorer_name : string;
+      estimator_params : Estimator.params;
+    }
+
+    type t = {
+      specification_params : params;
+      estimator_specification : Estimator.t;
+      path_specification : Rfe.t;
+      splitter : Task.kind Target.t Cross_validation.splitter;
+      scorer : Task.scorer;
+      execution : Execution.t;
+    }
+
+    type fitted = {
+      fitted_params_value : params;
+      fitted_rfe : Rfe.fitted;
+      cv_scores : score array;
+      selected_feature_count : int;
+      fit_count : int;
+    }
+
+    type target = Task.kind Target.t
+    type rng = Rng.t
+
+    let ( let* ) = Result.bind
+
+    let validation ~remediation name reason =
+      Error (Error.make ~remediation (Error.Validation { name; reason }))
+
+    let validate_max_fits = function
+      | None -> Ok ()
+      | Some count when count > 0 -> Ok ()
+      | Some _ ->
+          validation ~remediation:"choose a strictly positive fit bound"
+            "recursive feature elimination CV max_fits" "must be positive"
+
+    let create ?(min_feature_count = 1)
+        ?(step =
+          Modelkit_feature_selection.Recursive_feature_elimination.Count 1)
+        ?max_fits ?(execution = Execution.sequential) ~splitter ~scorer
+        estimator =
+      let* () = validate_max_fits max_fits in
+      let* () = Task.validate_scorer scorer in
+      let* path_specification =
+        Rfe.create ~step ~feature_count:min_feature_count estimator
+      in
+      Ok
+        ({
+           specification_params =
+             {
+               min_feature_count;
+               step;
+               max_fits;
+               scorer_name = Task.scorer_name scorer;
+               estimator_params = Estimator.params estimator;
+             };
+           estimator_specification = estimator;
+           path_specification;
+           splitter;
+           scorer;
+           execution;
+         }
+          : t)
+
+    let clone (specification : t) =
+      let estimator = Estimator.clone specification.estimator_specification in
+      let path_specification =
+        Rfe.create ~step:specification.specification_params.step
+          ~feature_count:specification.specification_params.min_feature_count
+          estimator
+        |> Result.get_ok
+      in
+      ({
+         specification_params =
+           {
+             specification.specification_params with
+             scorer_name = Task.scorer_name specification.scorer;
+             estimator_params = Estimator.params estimator;
+           };
+         estimator_specification = estimator;
+         path_specification;
+         splitter = specification.splitter;
+         scorer = Task.clone_scorer specification.scorer;
+         execution = specification.execution;
+       }
+        : t)
+
+    let params (specification : t) = specification.specification_params
+
+    let fit_request _ =
+      Metadata.Request.create ~sample_weight:Metadata.Request.Optional
+        ~groups:Metadata.Request.Optional ()
+
+    let transform_request _ = Metadata.Request.none
+
+    let resolved_step step columns =
+      match step with
+      | Modelkit_feature_selection.Recursive_feature_elimination.Count count ->
+          count
+      | Modelkit_feature_selection.Recursive_feature_elimination.Fraction
+          fraction ->
+          Int.max 1
+            (int_of_float (Float.floor (fraction *. Float.of_int columns)))
+
+    let path_counts ~columns ~minimum ~step =
+      let step = resolved_step step columns in
+      let rec build reversed current =
+        if current = minimum then Array.of_list (List.rev (current :: reversed))
+        else build (current :: reversed) (Int.max minimum (current - step))
+      in
+      build [] columns
+
+    let fit_upper_bound ~path_length ~folds =
+      let multiplier = folds + 1 in
+      if path_length > max_int / multiplier then
+        validation
+          ~remediation:
+            "use fewer folds, a larger elimination step, or a narrower input"
+          "recursive feature elimination CV fit plan"
+          "fit count exceeds the platform integer range"
+      else Ok (path_length * multiplier)
+
+    let enforce_fit_bound specification planned =
+      match specification.specification_params.max_fits with
+      | None -> Ok ()
+      | Some maximum when planned <= maximum -> Ok ()
+      | Some maximum ->
+          validation
+            ~remediation:
+              "raise max_fits or reduce folds, input width, or elimination \
+               rounds"
+            "recursive feature elimination CV fit plan"
+            (Printf.sprintf "upper bound %d exceeds max_fits %d" planned maximum)
+
+    let contextualize_fold fold error =
+      Error.with_context (Error.Fold fold) error
+
+    let subset_matrix x selected =
+      Matrix.init ~rows:(Matrix.rows x) ~columns:(Array.length selected)
+        (fun row output_column -> Matrix.get x row selected.(output_column))
+      |> Result.map_error (fun error ->
+          Error.of_data_error
+            ~remediation:
+              "provide representable recursive-elimination CV matrix dimensions"
+            error)
+
+    let dataset metadata ~feature_schema ~x ~target =
+      let* () = Metadata.validate ~rows:(Matrix.rows x) metadata in
+      let* () =
+        Feature_schema.validate_matrix feature_schema x
+        |> Result.map_error (fun error ->
+            Error.of_data_error
+              ~remediation:"provide features matching the declared schema" error)
+      in
+      Dataset.create ~finiteness:Dataset.Require_finite
+        ?feature_names:(Feature_schema.names feature_schema)
+        ?sample_weight:(Metadata.sample_weight metadata)
+        ?groups:(Metadata.groups metadata) ~x ~y:target ()
+      |> Result.map_error (fun error ->
+          Error.of_data_error
+            ~remediation:
+              "provide finite, aligned data for recursive feature elimination \
+               CV"
+            error)
+
+    let validated_splits specification ~rng dataset =
+      let splitter_rng =
+        Rng.create
+          (Seed.derive (Rng.to_seed rng)
+             ~operation:"recursive-feature-elimination-cv-splitter" ~index:0)
+      in
+      let* pairs =
+        specification.splitter.Cross_validation.run_splitter ~rng:splitter_rng
+          ~groups:(Dataset.groups dataset) ~x:(Dataset.features dataset)
+          ~y:(Dataset.target dataset)
+      in
+      if Array.length pairs = 0 then
+        validation ~remediation:"use a splitter that produces at least one fold"
+          "recursive feature elimination CV splits"
+          "the splitter produced no folds"
+      else
+        let rec loop index reversed =
+          if index = Array.length pairs then
+            Ok (Array.of_list (List.rev reversed))
+          else
+            let train, test = pairs.(index) in
+            let* split =
+              Split.of_views ~train ~test
+              |> Result.map_error (contextualize_fold index)
+            in
+            loop (index + 1) (split :: reversed)
+        in
+        loop 0 []
+
+    let score_path specification ~root_seed ~fold_index ~expected_counts train
+        test =
+      let fold_rng =
+        Rng.create
+          (Seed.derive root_seed
+             ~operation:"recursive-feature-elimination-cv-fold"
+             ~index:fold_index)
+      in
+      let* path, _ranking =
+        Rfe.Internal.fit_path
+          (Rfe.clone specification.path_specification)
+          ?sample_weight:(Dataset.sample_weight train)
+          ~rng:fold_rng
+          ~feature_schema:(Dataset.feature_schema train)
+          ~x:(Dataset.features train)
+          ~y:(Some (Dataset.target train))
+          ()
+      in
+      let* () =
+        if Array.length path = Array.length expected_counts then Ok ()
+        else
+          Error
+            (Error.make
+               ~remediation:
+                 "report one fitted point for every recursive elimination width"
+               (Error.Compatibility
+                  {
+                    component = "recursive feature elimination path";
+                    reason = "returned an unexpected number of fitted points";
+                  }))
+      in
+      let rec score_points index reversed =
+        if index = Array.length path then Ok (Array.of_list (List.rev reversed))
+        else
+          let point = path.(index) in
+          let selected = Rfe.Internal.selected_indices point in
+          let* () =
+            if Array.length selected = expected_counts.(index) then Ok ()
+            else
+              Error
+                (Error.make
+                   ~remediation:
+                     "preserve the declared recursive elimination path widths"
+                   (Error.Compatibility
+                      {
+                        component = "recursive feature elimination path";
+                        reason = "returned an unexpected fitted feature width";
+                      }))
+          in
+          let* test_x = subset_matrix (Dataset.features test) selected in
+          let point_schema = Rfe.Internal.feature_schema point in
+          let* prediction =
+            Estimator.predict
+              (Rfe.Internal.estimator point)
+              ~feature_schema:point_schema ~x:test_x
+          in
+          let* value =
+            Task.score specification.scorer
+              ?sample_weight:(Dataset.sample_weight test)
+              ~truth:(Dataset.target test) ~prediction ()
+            |> Result.map_error
+                 (Error.with_context
+                    (Error.Stage
+                       (Printf.sprintf "%s with %d features"
+                          specification.specification_params.scorer_name
+                          expected_counts.(index))))
+          in
+          score_points (index + 1) (value :: reversed)
+      in
+      score_points 0 [] |> Result.map_error (contextualize_fold fold_index)
+
+    let summarize counts fold_scores =
+      let path_length = Array.length counts in
+      let folds = Array.length fold_scores in
+      let rec build output reversed =
+        if output = path_length then Ok (Array.of_list (List.rev reversed))
+        else
+          let path_index = path_length - output - 1 in
+          let values =
+            Array.init folds (fun fold -> fold_scores.(fold).(path_index))
+          in
+          let* aggregate = Score_aggregation.summarize values in
+          build (output + 1)
+            ({
+               feature_count = counts.(path_index);
+               fold_scores = values;
+               mean_score = aggregate.Score_aggregation.mean;
+               standard_deviation =
+                 aggregate.Score_aggregation.standard_deviation;
+             }
+            :: reversed)
+      in
+      build 0 []
+
+    let choose_feature_count scores =
+      let best = ref 0 in
+      for index = 1 to Array.length scores - 1 do
+        if scores.(index).mean_score > scores.(!best).mean_score then
+          best := index
+      done;
+      scores.(!best).feature_count
+
+    let fit (specification : t) ~metadata ~rng ~feature_schema ~x ~y () =
+      let* target =
+        match y with
+        | Some target -> Ok target
+        | None ->
+            validation
+              ~remediation:
+                "package this selector as a supervised metadata transformer \
+                 and provide training targets"
+              "recursive feature elimination CV target" "is required"
+      in
+      let* dataset = dataset metadata ~feature_schema ~x ~target in
+      let columns = Matrix.columns x in
+      let minimum = specification.specification_params.min_feature_count in
+      let* () =
+        if minimum <= columns then Ok ()
+        else
+          validation
+            ~remediation:
+              "choose a minimum feature count no greater than the input width"
+            "recursive feature elimination CV min_feature_count"
+            (Printf.sprintf "is %d for an input with %d features" minimum
+               columns)
+      in
+      let counts =
+        path_counts ~columns ~minimum
+          ~step:specification.specification_params.step
+      in
+      let* splits = validated_splits specification ~rng dataset in
+      let* upper_bound =
+        fit_upper_bound ~path_length:(Array.length counts)
+          ~folds:(Array.length splits)
+      in
+      let* () = enforce_fit_bound specification upper_bound in
+      let root_seed = Rng.to_seed rng in
+      let* fold_scores =
+        Execution.map specification.execution splits ~f:(fun ~index split ->
+            let* train, test =
+              Split.materialize dataset split
+              |> Result.map_error (contextualize_fold index)
+            in
+            score_path specification ~root_seed ~fold_index:index
+              ~expected_counts:counts train test)
+      in
+      let* cv_scores = summarize counts fold_scores in
+      let selected_feature_count = choose_feature_count cv_scores in
+      let* final_specification =
+        Rfe.create ~step:specification.specification_params.step
+          ~feature_count:selected_feature_count
+          (Estimator.clone specification.estimator_specification)
+      in
+      let refit_rng =
+        Rng.create
+          (Seed.derive root_seed
+             ~operation:"recursive-feature-elimination-cv-refit" ~index:0)
+      in
+      let* fitted_rfe =
+        Rfe.fit final_specification
+          ?sample_weight:(Metadata.sample_weight metadata)
+          ~rng:refit_rng ~feature_schema ~x ~y:(Some target) ()
+      in
+      let refit_count =
+        Array.length
+          (path_counts ~columns ~minimum:selected_feature_count
+             ~step:specification.specification_params.step)
+      in
+      let fit_count =
+        (Array.length splits * Array.length counts) + refit_count
+      in
+      let fitted_estimator_params =
+        (Rfe.fitted_params fitted_rfe).Rfe.estimator_params
+      in
+      Ok
+        ({
+           fitted_params_value =
+             {
+               specification.specification_params with
+               estimator_params = fitted_estimator_params;
+             };
+           fitted_rfe;
+           cv_scores;
+           selected_feature_count;
+           fit_count;
+         }
+          : fitted)
+
+    let transform (fitted : fitted) ~metadata ~feature_schema ~x =
+      let* () = Metadata.validate ~rows:(Matrix.rows x) metadata in
+      Rfe.transform fitted.fitted_rfe ~feature_schema ~x
+
+    let fitted_params (fitted : fitted) = fitted.fitted_params_value
+    let input_schema (fitted : fitted) = Rfe.input_schema fitted.fitted_rfe
+    let output_schema (fitted : fitted) = Rfe.output_schema fitted.fitted_rfe
+
+    let cv_results (fitted : fitted) =
+      Array.map
+        (fun score -> { score with fold_scores = Array.copy score.fold_scores })
+        fitted.cv_scores
+
+    let selected_feature_count (fitted : fitted) = fitted.selected_feature_count
+
+    let selected_indices (fitted : fitted) =
+      Rfe.selected_indices fitted.fitted_rfe
+
+    let ranking (fitted : fitted) = Rfe.ranking fitted.fitted_rfe
+
+    let final_importances (fitted : fitted) =
+      Rfe.final_importances fitted.fitted_rfe
+
+    let fitted_estimator (fitted : fitted) =
+      Rfe.fitted_estimator fitted.fitted_rfe
+
+    let fit_count (fitted : fitted) = fitted.fit_count
+  end
+
+  module Regression = struct
+    module Task = struct
+      type kind = Target.regression
+      type prediction = Target.regression Target.t
+      type scorer = Regression_scorer.t
+
+      let scorer_name = Regression_scorer.name
+      let clone_scorer = Regression_scorer.clone
+      let validate_scorer _ = Ok ()
+      let score = Regression_scorer.score
+    end
+
+    module Make = Make (Task)
+  end
+
+  module Binary_classification = struct
+    module Task = struct
+      type kind = Target.classification
+      type prediction = Target.classification Target.t
+      type scorer = Binary_classification_scorer.t
+
+      let scorer_name = Binary_classification_scorer.name
+      let clone_scorer = Binary_classification_scorer.clone
+
+      let validate_scorer scorer =
+        match Binary_classification_scorer.response scorer with
+        | Binary_classification_scorer.Labels -> Ok ()
+        | Binary_classification_scorer.Positive_probabilities ->
+            validation
+              ~remediation:
+                "use a label-response scorer with the importance estimator \
+                 protocol"
+              "recursive feature elimination CV binary scorer"
+              "positive-probability responses are not available"
+
+      let score scorer ?sample_weight ~truth ~prediction () =
+        Result.bind (Binary_prediction.create ~labels:prediction ())
+          (fun prediction ->
+            Binary_classification_scorer.score scorer ?sample_weight ~truth
+              ~prediction ())
+    end
+
+    module Make = Make (Task)
+  end
+
+  module Multiclass_classification = struct
+    module Task = struct
+      type kind = Target.classification
+      type prediction = Target.classification Target.t
+      type scorer = Multiclass_classification_scorer.t
+
+      let scorer_name = Multiclass_classification_scorer.name
+      let clone_scorer = Multiclass_classification_scorer.clone
+
+      let validate_scorer scorer =
+        match Multiclass_classification_scorer.response scorer with
+        | Multiclass_classification_scorer.Labels -> Ok ()
+        | Multiclass_classification_scorer.Class_probabilities ->
+            validation
+              ~remediation:
+                "use a label-response scorer with the importance estimator \
+                 protocol"
+              "recursive feature elimination CV multiclass scorer"
+              "class-probability responses are not available"
+
+      let score scorer ?sample_weight ~truth ~prediction () =
+        Result.bind (Multiclass_prediction.create ~labels:prediction ())
+          (fun prediction ->
+            Multiclass_classification_scorer.score scorer ?sample_weight ~truth
+              ~prediction ())
+    end
+
+    module Make = Make (Task)
+  end
+end
+
+module Sequential_feature_selection = struct
+  type direction = Forward | Backward
+
+  let validation ~remediation name reason =
+    Error (Error.make ~remediation (Error.Validation { name; reason }))
+
+  module type TASK = sig
+    type kind
+    type prediction
+    type scorer
+
+    val scorer_name : scorer -> string
+    val clone_scorer : scorer -> scorer
+    val validate_scorer : scorer -> (unit, Error.t) result
+
+    val score :
+      scorer ->
+      ?sample_weight:Sample_weight.t ->
+      truth:kind Target.t ->
+      prediction:prediction ->
+      unit ->
+      (float, Error.t) result
+  end
+
+  module Make
+      (Task : TASK)
+      (Estimator :
+        ESTIMATOR
+          with type target = Task.kind Target.t
+           and type prediction = Task.prediction
+           and type rng = Rng.t) =
+  struct
+    type params = {
+      feature_count : int;
+      direction : direction;
+      max_fits : int option;
+      scorer_name : string;
+      estimator_params : Estimator.params;
+    }
+
+    type t = {
+      specification_params : params;
+      estimator_specification : Estimator.t;
+      splitter : Task.kind Target.t Cross_validation.splitter;
+      scorer : Task.scorer;
+      execution : Execution.t;
+    }
+
+    type fitted = {
+      fitted_params_value : params;
+      selected : int array;
+      input_schema_value : Feature_schema.t;
+      output_schema_value : Feature_schema.t;
+      fit_count_value : int;
+    }
+
+    type target = Task.kind Target.t
+    type rng = Rng.t
+
+    let ( let* ) = Result.bind
+
+    let validation ~remediation name reason =
+      Error (Error.make ~remediation (Error.Validation { name; reason }))
+
+    let validate_feature_count count =
+      if count > 0 then Ok ()
+      else
+        validation ~remediation:"choose a strictly positive selected width"
+          "sequential feature selection feature_count" "must be positive"
+
+    let validate_max_fits = function
+      | None -> Ok ()
+      | Some count when count > 0 -> Ok ()
+      | Some _ ->
+          validation ~remediation:"choose a strictly positive fit bound"
+            "sequential feature selection max_fits" "must be positive"
+
+    let create ?(direction = Forward) ?max_fits
+        ?(execution = Execution.sequential) ~feature_count ~splitter ~scorer
+        estimator =
+      let* () = validate_feature_count feature_count in
+      let* () = validate_max_fits max_fits in
+      let* () = Task.validate_scorer scorer in
+      Ok
+        ({
+           specification_params =
+             {
+               feature_count;
+               direction;
+               max_fits;
+               scorer_name = Task.scorer_name scorer;
+               estimator_params = Estimator.params estimator;
+             };
+           estimator_specification = estimator;
+           splitter;
+           scorer;
+           execution;
+         }
+          : t)
+
+    let clone (specification : t) =
+      let estimator = Estimator.clone specification.estimator_specification in
+      ({
+         specification_params =
+           {
+             specification.specification_params with
+             scorer_name = Task.scorer_name specification.scorer;
+             estimator_params = Estimator.params estimator;
+           };
+         estimator_specification = estimator;
+         splitter = specification.splitter;
+         scorer = Task.clone_scorer specification.scorer;
+         execution = specification.execution;
+       }
+        : t)
+
+    let params (specification : t) = specification.specification_params
+
+    let fit_request _ =
+      Metadata.Request.create ~sample_weight:Metadata.Request.Optional
+        ~groups:Metadata.Request.Optional ()
+
+    let transform_request _ = Metadata.Request.none
+
+    let subset_schema schema selected =
+      match Feature_schema.names schema with
+      | None ->
+          Feature_schema.anonymous ~feature_count:(Array.length selected)
+          |> Result.map_error (fun error ->
+              Error.of_data_error
+                ~remediation:"provide a representable selected feature count"
+                error)
+      | Some names ->
+          let values =
+            Array.map
+              (fun column ->
+                Feature_names.get names column |> Feature_name.to_string)
+              selected
+          in
+          Feature_names.create ~expected_count:(Array.length values) values
+          |> Result.map Feature_schema.named
+          |> Result.map_error (fun error ->
+              Error.of_data_error
+                ~remediation:"provide valid selected feature names" error)
+
+    let subset_matrix x selected =
+      Matrix.init ~rows:(Matrix.rows x) ~columns:(Array.length selected)
+        (fun row output_column -> Matrix.get x row selected.(output_column))
+      |> Result.map_error (fun error ->
+          Error.of_data_error
+            ~remediation:
+              "provide representable sequential-selection matrix dimensions"
+            error)
+
+    let validate_finite x =
+      let rows = Matrix.rows x in
+      let columns = Matrix.columns x in
+      let rec loop row column =
+        if row = rows then Ok ()
+        else if column = columns then loop (row + 1) 0
+        else
+          let value = Matrix.get x row column in
+          if Float.is_finite value then loop row (column + 1)
+          else
+            Error
+              (Error.of_data_error
+                 ~remediation:"provide finite dense feature values"
+                 (Data_error.Non_finite
+                    {
+                      name = "sequential feature selection features";
+                      index = (row * columns) + column;
+                      value;
+                    }))
+      in
+      loop 0 0
+
+    let dataset metadata ~feature_schema ~x ~target =
+      let* () = Metadata.validate ~rows:(Matrix.rows x) metadata in
+      let* () =
+        Feature_schema.validate_matrix feature_schema x
+        |> Result.map_error (fun error ->
+            Error.of_data_error
+              ~remediation:"provide features matching the declared schema" error)
+      in
+      Dataset.create ~finiteness:Dataset.Require_finite
+        ?feature_names:(Feature_schema.names feature_schema)
+        ?sample_weight:(Metadata.sample_weight metadata)
+        ?groups:(Metadata.groups metadata) ~x ~y:target ()
+      |> Result.map_error (fun error ->
+          Error.of_data_error
+            ~remediation:
+              "provide finite, aligned data for sequential feature selection"
+            error)
+
+    let contextualize_fold fold error =
+      Error.with_context (Error.Fold fold) error
+
+    let validated_splits specification ~rng dataset =
+      let splitter_rng =
+        Rng.create
+          (Seed.derive (Rng.to_seed rng)
+             ~operation:"sequential-feature-selection-splitter" ~index:0)
+      in
+      let* pairs =
+        specification.splitter.Cross_validation.run_splitter ~rng:splitter_rng
+          ~groups:(Dataset.groups dataset) ~x:(Dataset.features dataset)
+          ~y:(Dataset.target dataset)
+      in
+      if Array.length pairs = 0 then
+        validation ~remediation:"use a splitter that produces at least one fold"
+          "sequential feature selection splits" "the splitter produced no folds"
+      else
+        let rec loop index reversed =
+          if index = Array.length pairs then
+            Ok (Array.of_list (List.rev reversed))
+          else
+            let train, test = pairs.(index) in
+            let* split =
+              Split.of_views ~train ~test
+              |> Result.map_error (contextualize_fold index)
+            in
+            let* materialized =
+              Split.materialize dataset split
+              |> Result.map_error (contextualize_fold index)
+            in
+            loop (index + 1) (materialized :: reversed)
+        in
+        loop 0 []
+
+    let checked_add left right =
+      if right > max_int - left then
+        validation
+          ~remediation:
+            "choose a narrower input, a closer selected width, or fewer folds"
+          "sequential feature selection fit plan"
+          "candidate count exceeds the platform integer range"
+      else Ok (left + right)
+
+    let candidate_evaluations direction ~columns ~selected_count =
+      let rec forward active total =
+        if active = selected_count then Ok total
+        else
+          let* total = checked_add total (columns - active) in
+          forward (active + 1) total
+      in
+      let rec backward active total =
+        if active = selected_count then Ok total
+        else
+          let* total = checked_add total active in
+          backward (active - 1) total
+      in
+      if selected_count = columns then Ok 0
+      else
+        match direction with
+        | Forward -> forward 0 0
+        | Backward -> backward columns 0
+
+    let planned_fits ~candidate_evaluations ~folds =
+      if candidate_evaluations > max_int / folds then
+        validation
+          ~remediation:
+            "choose fewer folds, a narrower input, or a closer selected width"
+          "sequential feature selection fit plan"
+          "fit count exceeds the platform integer range"
+      else Ok (candidate_evaluations * folds)
+
+    let enforce_fit_bound specification planned =
+      match specification.specification_params.max_fits with
+      | None -> Ok ()
+      | Some maximum when planned <= maximum -> Ok ()
+      | Some maximum ->
+          validation
+            ~remediation:
+              "raise max_fits or reduce folds, input width, or selection rounds"
+            "sequential feature selection fit plan"
+            (Printf.sprintf "requires %d fits, exceeding max_fits %d" planned
+               maximum)
+
+    let candidate_indices direction active =
+      let wanted = match direction with Forward -> false | Backward -> true in
+      Array.init (Array.length active) Fun.id
+      |> Array.to_list
+      |> List.filter (fun feature -> active.(feature) = wanted)
+      |> Array.of_list
+
+    let selected_with_candidate direction active candidate =
+      Array.init (Array.length active) Fun.id
+      |> Array.to_list
+      |> List.filter (fun feature ->
+          if feature = candidate then direction = Forward else active.(feature))
+      |> Array.of_list
+
+    let validate_estimator_schema expected fitted =
+      let observed = Estimator.feature_schema fitted in
+      if Feature_schema.equal expected observed then Ok ()
+      else
+        Error
+          (Error.make
+             ~remediation:
+               "ensure the estimator reports its fitted candidate schema"
+             (Error.Compatibility
+                {
+                  component = "sequential feature selection estimator";
+                  reason = "reported a different fitted feature schema";
+                }))
+
+    let fit_seed root_seed ~round ~candidate ~fold =
+      let round_seed =
+        Seed.derive root_seed ~operation:"sequential-feature-selection-round"
+          ~index:round
+      in
+      let candidate_seed =
+        Seed.derive round_seed
+          ~operation:"sequential-feature-selection-candidate" ~index:candidate
+      in
+      Seed.derive candidate_seed ~operation:"sequential-feature-selection-fold"
+        ~index:fold
+
+    let evaluate_candidate specification ~root_seed ~round ~candidate ~selected
+        ~selected_schema folds =
+      let rec evaluate_fold fold reversed =
+        if fold = Array.length folds then
+          let values = Array.of_list (List.rev reversed) in
+          let* aggregate = Score_aggregation.summarize values in
+          Ok aggregate.Score_aggregation.mean
+        else
+          let train, test = folds.(fold) in
+          let* train_x = subset_matrix (Dataset.features train) selected in
+          let* test_x = subset_matrix (Dataset.features test) selected in
+          let rng = Rng.create (fit_seed root_seed ~round ~candidate ~fold) in
+          let* fitted =
+            Estimator.fit
+              (Estimator.clone specification.estimator_specification)
+              ?sample_weight:(Dataset.sample_weight train)
+              ~rng ~feature_schema:selected_schema ~x:train_x
+              ~y:(Dataset.target train) ()
+            |> Result.map_error (contextualize_fold fold)
+          in
+          let* () =
+            validate_estimator_schema selected_schema fitted
+            |> Result.map_error (contextualize_fold fold)
+          in
+          let* prediction =
+            Estimator.predict fitted ~feature_schema:selected_schema ~x:test_x
+            |> Result.map_error (contextualize_fold fold)
+          in
+          let* score =
+            Task.score specification.scorer
+              ?sample_weight:(Dataset.sample_weight test)
+              ~truth:(Dataset.target test) ~prediction ()
+            |> Result.map_error
+                 (Error.with_context
+                    (Error.Stage specification.specification_params.scorer_name))
+            |> Result.map_error (contextualize_fold fold)
+          in
+          evaluate_fold (fold + 1) (score :: reversed)
+      in
+      evaluate_fold 0 []
+      |> Result.map_error (Error.with_context (Error.Candidate candidate))
+
+    let choose_candidate candidates scores =
+      let best = ref 0 in
+      for index = 1 to Array.length scores - 1 do
+        if scores.(index) > scores.(!best) then best := index
+      done;
+      candidates.(!best)
+
+    let fit (specification : t) ~metadata ~rng ~feature_schema ~x ~y () =
+      let* target =
+        match y with
+        | Some target -> Ok target
+        | None ->
+            validation
+              ~remediation:
+                "package this selector as a supervised metadata transformer \
+                 and provide training targets"
+              "sequential feature selection target" "is required"
+      in
+      let* dataset = dataset metadata ~feature_schema ~x ~target in
+      let columns = Matrix.columns x in
+      let selected_count = specification.specification_params.feature_count in
+      let* () =
+        if selected_count <= columns then Ok ()
+        else
+          validation
+            ~remediation:
+              "choose a selected-feature count no greater than the input width"
+            "sequential feature selection feature_count"
+            (Printf.sprintf "is %d for an input with %d features" selected_count
+               columns)
+      in
+      let* folds = validated_splits specification ~rng dataset in
+      let* evaluations =
+        candidate_evaluations specification.specification_params.direction
+          ~columns ~selected_count
+      in
+      let* planned =
+        planned_fits ~candidate_evaluations:evaluations
+          ~folds:(Array.length folds)
+      in
+      let* () = enforce_fit_bound specification planned in
+      let direction = specification.specification_params.direction in
+      let identity = selected_count = columns in
+      let active =
+        Array.make columns
+          (identity
+          || match direction with Forward -> false | Backward -> true)
+      in
+      let initial_count =
+        if identity then columns
+        else match direction with Forward -> 0 | Backward -> columns
+      in
+      let root_seed = Rng.to_seed rng in
+      let rec select round active_count =
+        if active_count = selected_count then Ok ()
+        else
+          let candidates = candidate_indices direction active in
+          let* scores =
+            Execution.map specification.execution candidates
+              ~f:(fun ~index:_ candidate ->
+                let selected =
+                  selected_with_candidate direction active candidate
+                in
+                let* selected_schema = subset_schema feature_schema selected in
+                evaluate_candidate specification ~root_seed ~round ~candidate
+                  ~selected ~selected_schema folds)
+          in
+          let chosen = choose_candidate candidates scores in
+          active.(chosen) <- direction = Forward;
+          let next_count =
+            match direction with
+            | Forward -> active_count + 1
+            | Backward -> active_count - 1
+          in
+          select (round + 1) next_count
+      in
+      let* () = select 0 initial_count in
+      let selected =
+        Array.init columns Fun.id |> Array.to_list
+        |> List.filter (fun feature -> active.(feature))
+        |> Array.of_list
+      in
+      let* output_schema = subset_schema feature_schema selected in
+      Ok
+        ({
+           fitted_params_value = specification.specification_params;
+           selected;
+           input_schema_value = feature_schema;
+           output_schema_value = output_schema;
+           fit_count_value = planned;
+         }
+          : fitted)
+
+    let transform (fitted : fitted) ~metadata ~feature_schema ~x =
+      let* () = Metadata.validate ~rows:(Matrix.rows x) metadata in
+      let* () =
+        if Feature_schema.equal fitted.input_schema_value feature_schema then
+          Ok ()
+        else
+          Error
+            (Error.make
+               ~remediation:"provide features with the fitted input schema"
+               (Error.Feature_schema_mismatch
+                  {
+                    expected = fitted.input_schema_value;
+                    observed = feature_schema;
+                  }))
+      in
+      let* () =
+        Feature_schema.validate_matrix feature_schema x
+        |> Result.map_error (fun error ->
+            Error.of_data_error
+              ~remediation:"provide features matching the declared schema" error)
+      in
+      let* () = validate_finite x in
+      subset_matrix x fitted.selected
+
+    let fitted_params (fitted : fitted) = fitted.fitted_params_value
+    let input_schema (fitted : fitted) = fitted.input_schema_value
+    let output_schema (fitted : fitted) = fitted.output_schema_value
+    let selected_indices (fitted : fitted) = Array.copy fitted.selected
+    let fit_count (fitted : fitted) = fitted.fit_count_value
+  end
+
+  module Regression = struct
+    module Task = struct
+      type kind = Target.regression
+      type prediction = Target.regression Target.t
+      type scorer = Regression_scorer.t
+
+      let scorer_name = Regression_scorer.name
+      let clone_scorer = Regression_scorer.clone
+      let validate_scorer _ = Ok ()
+      let score = Regression_scorer.score
+    end
+
+    module Make = Make (Task)
+  end
+
+  module Binary_classification = struct
+    module Task = struct
+      type kind = Target.classification
+      type prediction = Target.classification Target.t
+      type scorer = Binary_classification_scorer.t
+
+      let scorer_name = Binary_classification_scorer.name
+      let clone_scorer = Binary_classification_scorer.clone
+
+      let validate_scorer scorer =
+        match Binary_classification_scorer.response scorer with
+        | Binary_classification_scorer.Labels -> Ok ()
+        | Binary_classification_scorer.Positive_probabilities ->
+            validation
+              ~remediation:
+                "use a label-response scorer with the estimator protocol"
+              "sequential feature selection binary scorer"
+              "positive-probability responses are not available"
+
+      let score scorer ?sample_weight ~truth ~prediction () =
+        Result.bind (Binary_prediction.create ~labels:prediction ())
+          (fun prediction ->
+            Binary_classification_scorer.score scorer ?sample_weight ~truth
+              ~prediction ())
+    end
+
+    module Make = Make (Task)
+  end
+
+  module Multiclass_classification = struct
+    module Task = struct
+      type kind = Target.classification
+      type prediction = Target.classification Target.t
+      type scorer = Multiclass_classification_scorer.t
+
+      let scorer_name = Multiclass_classification_scorer.name
+      let clone_scorer = Multiclass_classification_scorer.clone
+
+      let validate_scorer scorer =
+        match Multiclass_classification_scorer.response scorer with
+        | Multiclass_classification_scorer.Labels -> Ok ()
+        | Multiclass_classification_scorer.Class_probabilities ->
+            validation
+              ~remediation:
+                "use a label-response scorer with the estimator protocol"
+              "sequential feature selection multiclass scorer"
+              "class-probability responses are not available"
+
+      let score scorer ?sample_weight ~truth ~prediction () =
+        Result.bind (Multiclass_prediction.create ~labels:prediction ())
+          (fun prediction ->
+            Multiclass_classification_scorer.score scorer ?sample_weight ~truth
+              ~prediction ())
+    end
+
+    module Make = Make (Task)
+  end
+end
+
+module Learning_curve = struct
+  type training_size = Count of int | Fraction of float
+
+  type schedule = {
+    lc_requested_sizes : training_size array;
+    lc_shuffle : bool;
+    lc_max_fits : int option;
+  }
+
+  let invalid reason =
+    Error
+      (Error.make
+         ~remediation:
+           "provide a non-empty, strictly increasing schedule within every \
+            training fold"
+         (Error.Validation { name = "learning-curve schedule"; reason }))
+
+  let schedule ?(shuffle = false) ?max_fits sizes =
+    let rec validate index =
+      if index = Array.length sizes then Ok ()
+      else
+        match sizes.(index) with
+        | Count count when count > 0 -> validate (index + 1)
+        | Count _ -> invalid "training row counts must be positive"
+        | Fraction fraction
+          when Float.is_finite fraction && fraction > 0.0 && fraction <= 1.0 ->
+            validate (index + 1)
+        | Fraction _ ->
+            invalid "training fractions must be finite and in (0, 1]"
+    in
+    if Array.length sizes = 0 then invalid "at least one size is required"
+    else if Option.fold ~none:false ~some:(fun value -> value < 1) max_fits then
+      invalid "max_fits must be positive"
+    else
+      Result.map
+        (fun () ->
+          {
+            lc_requested_sizes = Array.copy sizes;
+            lc_shuffle = shuffle;
+            lc_max_fits = max_fits;
+          })
+        (validate 0)
+
+  let requested_sizes schedule = Array.copy schedule.lc_requested_sizes
+  let shuffle schedule = schedule.lc_shuffle
+  let max_fits schedule = schedule.lc_max_fits
+
+  type 'model point = {
+    training_samples : int;
+    evaluation : 'model Cross_validation.report;
+  }
+
+  type 'model report = { learning_points : 'model point array }
+
+  let points report = Array.copy report.learning_points
+
+  let data result =
+    Result.map_error
+      (fun error ->
+        Error.of_data_error
+          ~remediation:"supply aligned rows with positive total sample weight"
+          error)
+      result
+
+  let validate_view dataset metadata view =
+    let ( let* ) = Result.bind in
+    let* _ = Metadata.select metadata view in
+    match Dataset.sample_weight dataset with
+    | None -> Ok ()
+    | Some weight ->
+        Result.map (fun _ -> ()) (data (Sample_weight.select weight view))
+
+  let resolve_sizes schedule capacity =
+    let resolved =
+      Array.map
+        (function
+          | Count count -> count
+          | Fraction fraction ->
+              int_of_float (floor (fraction *. float_of_int capacity)))
+        schedule.lc_requested_sizes
+    in
+    let rec validate index previous =
+      if index = Array.length resolved then Ok resolved
+      else
+        let current = resolved.(index) in
+        if current < 1 then invalid "a training fraction resolves to zero rows"
+        else if current > capacity then
+          invalid
+            (Format.sprintf
+               "training size %d exceeds the smallest base fold size %d" current
+               capacity)
+        else if current <= previous then
+          invalid
+            "sizes must resolve to a strictly increasing sequence of row counts"
+        else validate (index + 1) current
+    in
+    validate 0 0
+
+  let fit_bound schedule ~sizes ~folds =
+    if sizes > max_int / folds then
+      invalid "planned fit count exceeds the integer limit"
+    else
+      let fits = sizes * folds in
+      match schedule.lc_max_fits with
+      | Some maximum when fits > maximum ->
+          invalid
+            (Format.sprintf "planned fit count %d exceeds max_fits %d" fits
+               maximum)
+      | None | Some _ -> Ok ()
+
+  let distinct_labels values =
+    let labels = Array.copy values in
+    Array.sort Int.compare labels;
+    if Array.length labels = 0 then [||]
+    else
+      let reversed = ref [ labels.(0) ] in
+      for index = 1 to Array.length labels - 1 do
+        if labels.(index) <> labels.(index - 1) then
+          reversed := labels.(index) :: !reversed
+      done;
+      Array.of_list (List.rev !reversed)
+
+  type prepared_fold = {
+    prepared_order : int array;
+    prepared_test : Row_view.t;
+  }
+
+  type prepared = {
+    prepared_sizes : int array;
+    prepared_folds : prepared_fold array;
+  }
+
+  let prepare ~schedule ~splitter ~seed ~metadata dataset =
+    let ( let* ) = Result.bind in
+    let rows = Dataset.sample_count dataset in
+    let* () = Metadata.validate ~rows metadata in
+    let splitter_rng =
+      Seed.derive seed ~operation:"cross-validation-splitter" ~index:0
+      |> Rng.create
+    in
+    let* base_pairs =
+      splitter.Cross_validation.run_splitter ~rng:splitter_rng
+        ~groups:(Dataset.groups dataset) ~x:(Dataset.features dataset)
+        ~y:(Dataset.target dataset)
+    in
+    let folds = Array.length base_pairs in
+    let* () =
+      if folds = 0 then invalid "at least one validation fold is required"
+      else Ok ()
+    in
+    let capacity =
+      Array.fold_left
+        (fun minimum (train, _) -> min minimum (Row_view.length train))
+        max_int base_pairs
+    in
+    let* sizes = resolve_sizes schedule capacity in
+    let* () = fit_bound schedule ~sizes:(Array.length sizes) ~folds in
+    let rec prepare_fold fold_index reversed =
+      if fold_index = folds then Ok (Array.of_list (List.rev reversed))
+      else
+        let train, test = base_pairs.(fold_index) in
+        let checked =
+          let* _ = Split.of_views ~train ~test in
+          let* () =
+            if
+              Row_view.source_size train <> rows
+              || Row_view.source_size test <> rows
+            then invalid "fold source size differs from the dataset"
+            else Ok ()
+          in
+          let* () = validate_view dataset metadata test in
+          let order = Row_view.indices train in
+          (if schedule.lc_shuffle then
+             let rng =
+               Seed.derive seed ~operation:"learning-curve-training-rows"
+                 ~index:fold_index
+               |> Rng.create
+             in
+             Splitter_internal.shuffle rng order);
+          let rec validate_sizes size_index =
+            if size_index = Array.length sizes then Ok ()
+            else
+              let* selected =
+                data
+                  (Row_view.create ~source_size:rows
+                     (Array.sub order 0 sizes.(size_index)))
+              in
+              let* () = validate_view dataset metadata selected in
+              validate_sizes (size_index + 1)
+          in
+          let* () = validate_sizes 0 in
+          Ok { prepared_order = order; prepared_test = test }
+        in
+        let* prepared =
+          Result.map_error (Error.with_context (Error.Fold fold_index)) checked
+        in
+        prepare_fold (fold_index + 1) (prepared :: reversed)
+    in
+    let* prepared_folds = prepare_fold 0 [] in
+    Ok { prepared_sizes = sizes; prepared_folds }
+
+  let pairs_for_size prepared ~size_index =
+    let rows = Row_view.source_size prepared.prepared_folds.(0).prepared_test in
+    let samples = prepared.prepared_sizes.(size_index) in
+    let rec create fold_index reversed =
+      if fold_index = Array.length prepared.prepared_folds then
+        Ok (Array.of_list (List.rev reversed))
+      else
+        let fold = prepared.prepared_folds.(fold_index) in
+        match
+          data
+            (Row_view.create ~source_size:rows
+               (Array.sub fold.prepared_order 0 samples))
+        with
+        | Ok train ->
+            create (fold_index + 1) ((train, fold.prepared_test) :: reversed)
+        | Error error ->
+            Error (Error.with_context (Error.Fold fold_index) error)
+    in
+    create 0 []
+
+  let evaluate ?(return_indices = false)
+      ?(failure_policy = Cross_validation.Record)
+      ?(execution = Execution.sequential) ?metadata ~schedule ~splitter
+      ~scorer_names ~scorers ~seed ~cross_validate pipeline dataset =
+    let ( let* ) = Result.bind in
+    let metadata =
+      Option.value metadata ~default:(Metadata.of_dataset dataset)
+    in
+    let* () = Cross_validation.validate_scorers scorer_names in
+    let* prepared = prepare ~schedule ~splitter ~seed ~metadata dataset in
+    let rec run size_index reversed =
+      if size_index = Array.length prepared.prepared_sizes then
+        Ok { learning_points = Array.of_list (List.rev reversed) }
+      else
+        let training_samples = prepared.prepared_sizes.(size_index) in
+        let* pairs = pairs_for_size prepared ~size_index in
+        let fixed_splitter =
+          {
+            Cross_validation.run_splitter =
+              (fun ~rng:_ ~groups:_ ~x:_ ~y:_ -> Ok pairs);
+          }
+        in
+        let stage =
+          Error.Stage
+            (Format.sprintf "learning curve with %d training rows"
+               training_samples)
+        in
+        let scoped_metadata = Metadata.scope stage metadata in
+        let fit_seed =
+          Seed.derive seed ~operation:"learning-curve-size" ~index:size_index
+        in
+        let* evaluation =
+          cross_validate ~return_train_score:true ~return_models:false
+            ~return_indices ~failure_policy ~fit_seed ~execution
+            ~metadata:scoped_metadata ~splitter:fixed_splitter ~scorers ~seed
+            pipeline dataset
+          |> Result.map_error (Error.with_context stage)
+        in
+        run (size_index + 1) ({ training_samples; evaluation } :: reversed)
+    in
+    run 0 []
+
+  let validate_class_count ~binary labels =
+    let count = Array.length (distinct_labels labels) in
+    if (binary && count = 2) || ((not binary) && count >= 2) then Ok ()
+    else
+      invalid
+        (if binary then
+           Format.sprintf "binary data contains %d distinct classes" count
+         else
+           Format.sprintf "classification data contains %d distinct classes"
+             count)
+
+  module Regression = struct
+    type model = Cross_validation.Regression.model
+
+    let evaluate ?return_indices ?failure_policy ?execution ?metadata ~schedule
+        ~splitter ~scorers ~seed pipeline dataset =
+      evaluate ?return_indices ?failure_policy ?execution ?metadata ~schedule
+        ~splitter
+        ~scorer_names:(Array.map Regression_scorer.name scorers)
+        ~scorers ~seed
+        ~cross_validate:(fun
+            ~return_train_score
+            ~return_models
+            ~return_indices
+            ~failure_policy
+            ~fit_seed
+            ~execution
+            ~metadata
+            ~splitter
+            ~scorers
+            ~seed
+            pipeline
+            dataset
+          ->
+          Cross_validation.Regression.cross_validate ~return_train_score
+            ~return_models ~return_indices ~failure_policy ~fit_seed ~execution
+            ~metadata ~splitter ~scorers ~seed pipeline dataset)
+        pipeline dataset
+  end
+
+  module Binary_classification = struct
+    type model = Cross_validation.Binary_classification.model
+
+    let evaluate ?return_indices ?failure_policy ?execution ?metadata ~schedule
+        ~splitter ~scorers ~seed pipeline dataset =
+      let ( let* ) = Result.bind in
+      let labels = Target.classification_values (Dataset.target dataset) in
+      let* () = validate_class_count ~binary:true labels in
+      evaluate ?return_indices ?failure_policy ?execution ?metadata ~schedule
+        ~splitter
+        ~scorer_names:(Array.map Binary_classification_scorer.name scorers)
+        ~scorers ~seed
+        ~cross_validate:(fun
+            ~return_train_score
+            ~return_models
+            ~return_indices
+            ~failure_policy
+            ~fit_seed
+            ~execution
+            ~metadata
+            ~splitter
+            ~scorers
+            ~seed
+            pipeline
+            dataset
+          ->
+          Cross_validation.Binary_classification.cross_validate
+            ~return_train_score ~return_models ~return_indices ~failure_policy
+            ~fit_seed ~execution ~metadata ~splitter ~scorers ~seed pipeline
+            dataset)
+        pipeline dataset
+  end
+
+  module Multiclass_classification = struct
+    type model = Cross_validation.Multiclass_classification.model
+
+    let evaluate ?return_indices ?failure_policy ?execution ?metadata ~schedule
+        ~splitter ~scorers ~seed pipeline dataset =
+      let ( let* ) = Result.bind in
+      let labels = Target.classification_values (Dataset.target dataset) in
+      let* () = validate_class_count ~binary:false labels in
+      evaluate ?return_indices ?failure_policy ?execution ?metadata ~schedule
+        ~splitter
+        ~scorer_names:(Array.map Multiclass_classification_scorer.name scorers)
+        ~scorers ~seed
+        ~cross_validate:(fun
+            ~return_train_score
+            ~return_models
+            ~return_indices
+            ~failure_policy
+            ~fit_seed
+            ~execution
+            ~metadata
+            ~splitter
+            ~scorers
+            ~seed
+            pipeline
+            dataset
+          ->
+          Cross_validation.Multiclass_classification.cross_validate
+            ~return_train_score ~return_models ~return_indices ~failure_policy
+            ~fit_seed ~execution ~metadata ~splitter ~scorers ~seed pipeline
+            dataset)
+        pipeline dataset
+  end
+end
+
+module Search_checkpoint = struct
+  module Wire = Modelkit_checkpoint_codec
+
+  type entry = {
+    stage : string;
+    candidate_index : int;
+    configuration_id : string;
+    evaluation : (unit Cross_validation.report, Error.t) result;
+  }
+
+  type snapshot = {
+    specification_id : string;
+    identity : string option;
+    plans : (string * string) array;
+    entries : entry array;
+  }
+
+  type 'configuration t = {
+    identify : 'configuration -> string;
+    mutable state : snapshot;
+    busy : bool Atomic.t;
+    cached : (string * int, entry) Hashtbl.t;
+    mutable reversed_entries : entry list;
+  }
+
+  let incompatible reason =
+    Error
+      (Error.make
+         (Error.Compatibility { component = "search checkpoint"; reason })
+         ~remediation:
+           "resume with identical data, splits, seeds, options, and versioned \
+            specifications, or start a new checkpoint")
+
+  let copy_evaluation evaluation =
+    Result.map
+      (fun report ->
+        { Cross_validation.report_folds = Cross_validation.folds report })
+      evaluation
+
+  let copy_entry entry =
+    { entry with evaluation = copy_evaluation entry.evaluation }
+
+  let copy state =
+    {
+      state with
+      plans = Array.copy state.plans;
+      entries = Array.map copy_entry state.entries;
+    }
+
+  let snapshot session =
+    copy
+      {
+        session.state with
+        entries = Array.of_list (List.rev session.reversed_entries);
+      }
+
+  let completed state = Array.map copy_entry state.entries
+
+  let create ?resume ~specification_id ~configuration_id () =
+    if String.trim specification_id = "" then
+      incompatible "specification ID must not be blank"
+    else
+      match resume with
+      | Some state when state.specification_id <> specification_id ->
+          incompatible "specification ID differs"
+      | None | Some _ ->
+          let state =
+            Option.fold
+              ~none:
+                {
+                  specification_id;
+                  identity = None;
+                  plans = [||];
+                  entries = [||];
+                }
+              ~some:copy resume
+          in
+          let cached = Hashtbl.create (Array.length state.entries) in
+          Array.iter
+            (fun entry ->
+              Hashtbl.add cached (entry.stage, entry.candidate_index) entry)
+            state.entries;
+          Ok
+            {
+              identify = configuration_id;
+              busy = Atomic.make false;
+              cached;
+              reversed_entries = List.rev (Array.to_list state.entries);
+              state = { state with entries = [||] };
+            }
+
+  let report_without_models report =
+    let report_folds =
+      Cross_validation.folds report
+      |> Array.map (fun fold ->
+          {
+            Cross_validation.fold_index = fold.Cross_validation.fold_index;
+            fit_time = fold.Cross_validation.fit_time;
+            score_time = fold.Cross_validation.score_time;
+            scores = fold.Cross_validation.scores;
+            model = None;
+            train_indices = fold.Cross_validation.train_indices;
+            test_indices = fold.Cross_validation.test_indices;
+            failures = fold.Cross_validation.failures;
+          })
+    in
+    { Cross_validation.report_folds }
+
+  let find session stage index =
+    Option.bind session (fun session ->
+        Hashtbl.find_opt session.cached (stage, index))
+
+  let record session entry =
+    match session with
+    | None -> ()
+    | Some session ->
+        if
+          Option.is_none (find (Some session) entry.stage entry.candidate_index)
+        then (
+          let entry = copy_entry entry in
+          Hashtbl.add session.cached (entry.stage, entry.candidate_index) entry;
+          session.reversed_entries <- entry :: session.reversed_entries)
+
+  let plan session stage identity =
+    match session with
+    | None -> Ok ()
+    | Some session -> (
+        match
+          Array.find_opt (fun (key, _) -> key = stage) session.state.plans
+        with
+        | Some (_, previous) when previous <> identity ->
+            incompatible
+              "candidate configurations or parameter encodings differ"
+        | Some _ -> Ok ()
+        | None ->
+            session.state <-
+              {
+                session.state with
+                plans = Array.append session.state.plans [| (stage, identity) |];
+              };
+            Ok ())
+
+  let partition emit = function
+    | Cross_validation.Train -> Wire.int emit 0
+    | Cross_validation.Test -> Wire.int emit 1
+
+  let read_partition reader =
+    match Wire.read_int reader with
+    | 0 -> Cross_validation.Train
+    | 1 -> Cross_validation.Test
+    | _ -> Wire.invalid ()
+
+  let failure emit failure =
+    (match failure.Cross_validation.phase with
+    | Cross_validation.Materialization -> Wire.int emit 0
+    | Cross_validation.Fitting -> Wire.int emit 1
+    | Cross_validation.Prediction part ->
+        Wire.int emit 2;
+        partition emit part
+    | Cross_validation.Scoring { partition = part; scorer } ->
+        Wire.int emit 3;
+        partition emit part;
+        Wire.token emit scorer);
+    Wire.error emit failure.Cross_validation.error
+
+  let read_failure reader =
+    let phase =
+      match Wire.read_int reader with
+      | 0 -> Cross_validation.Materialization
+      | 1 -> Cross_validation.Fitting
+      | 2 -> Cross_validation.Prediction (read_partition reader)
+      | 3 ->
+          let partition = read_partition reader in
+          let scorer = Wire.read_token reader in
+          Cross_validation.Scoring { partition; scorer }
+      | _ -> Wire.invalid ()
+    in
+    let error = Wire.read_error reader in
+    { Cross_validation.phase; error }
+
+  let score emit score =
+    Wire.token emit score.Cross_validation.name;
+    Wire.option (Wire.result Wire.float) emit score.Cross_validation.train_score;
+    Wire.option (Wire.result Wire.float) emit score.Cross_validation.test_score
+
+  let read_score reader =
+    let name = Wire.read_token reader in
+    let train_score =
+      Wire.read_option (Wire.read_result Wire.read_float) reader
+    in
+    let test_score =
+      Wire.read_option (Wire.read_result Wire.read_float) reader
+    in
+    { Cross_validation.name; train_score; test_score }
+
+  let fold emit fold =
+    Wire.int emit fold.Cross_validation.fold_index;
+    Wire.float emit fold.Cross_validation.fit_time;
+    Wire.float emit fold.Cross_validation.score_time;
+    Wire.array score emit fold.Cross_validation.scores;
+    Wire.option (Wire.array Wire.int) emit fold.Cross_validation.train_indices;
+    Wire.option (Wire.array Wire.int) emit fold.Cross_validation.test_indices;
+    Wire.array failure emit fold.Cross_validation.failures
+
+  let read_fold reader =
+    let fold_index = Wire.read_int reader in
+    let fit_time = Wire.read_float reader in
+    let score_time = Wire.read_float reader in
+    if
+      fold_index < 0
+      || (not (Float.is_finite fit_time && Float.is_finite score_time))
+      || fit_time < 0. || score_time < 0.
+    then Wire.invalid ();
+    let scores = Wire.read_array read_score reader in
+    let train_indices =
+      Wire.read_option (Wire.read_array Wire.read_int) reader
+    in
+    let test_indices =
+      Wire.read_option (Wire.read_array Wire.read_int) reader
+    in
+    let failures = Wire.read_array read_failure reader in
+    {
+      Cross_validation.fold_index;
+      fit_time;
+      score_time;
+      scores;
+      train_indices;
+      test_indices;
+      failures;
+      model = None;
+    }
+
+  let evaluation emit report =
+    Wire.array fold emit report.Cross_validation.report_folds
+
+  let read_evaluation reader =
+    let report_folds = Wire.read_array read_fold reader in
+    Array.iteri
+      (fun i fold ->
+        if fold.Cross_validation.fold_index <> i then Wire.invalid ())
+      report_folds;
+    { Cross_validation.report_folds }
+
+  let entry emit entry =
+    Wire.token emit entry.stage;
+    Wire.int emit entry.candidate_index;
+    Wire.token emit entry.configuration_id;
+    Wire.result evaluation emit entry.evaluation
+
+  let read_entry reader =
+    let stage = Wire.read_token reader in
+    let candidate_index = Wire.read_int reader in
+    if candidate_index < 0 then Wire.invalid ();
+    let configuration_id = Wire.read_token reader in
+    let evaluation = Wire.read_result read_evaluation reader in
+    { stage; candidate_index; configuration_id; evaluation }
+
+  let pair emit (left, right) =
+    Wire.token emit left;
+    Wire.token emit right
+
+  let read_pair reader =
+    let left = Wire.read_token reader in
+    let right = Wire.read_token reader in
+    (left, right)
+
+  let payload emit state =
+    Wire.token emit "modelkit-search-checkpoint-v1";
+    Wire.token emit state.specification_id;
+    Wire.option Wire.token emit state.identity;
+    Wire.array pair emit state.plans;
+    Wire.array entry emit state.entries
+
+  let encode state =
+    Wire.protect (fun () ->
+        let payload = Wire.encode payload state in
+        Bytes.of_string
+          (Wire.encode
+             (fun emit () ->
+               Wire.token emit payload;
+               Wire.token emit (Digest.to_hex (Digest.string payload)))
+             ()))
+
+  let decode bytes =
+    Wire.protect (fun () ->
+        if Bytes.length bytes > Wire.limit then Wire.invalid ();
+        let outer = Wire.reader (Bytes.to_string bytes) in
+        let payload = Wire.read_token outer in
+        let digest = Wire.read_token outer in
+        Wire.finish outer;
+        if digest <> Digest.to_hex (Digest.string payload) then Wire.invalid ();
+        let reader = Wire.reader payload in
+        if Wire.read_token reader <> "modelkit-search-checkpoint-v1" then
+          Wire.invalid ();
+        let specification_id = Wire.read_token reader in
+        let identity = Wire.read_option Wire.read_token reader in
+        let plans = Wire.read_array read_pair reader in
+        let entries = Wire.read_array read_entry reader in
+        Wire.finish reader;
+        let keys = Hashtbl.create (Array.length plans) in
+        Array.iter
+          (fun (key, _) ->
+            if Hashtbl.mem keys key then Wire.invalid ();
+            Hashtbl.add keys key ())
+          plans;
+        let seen = Hashtbl.create (Array.length entries) in
+        Array.iter
+          (fun entry ->
+            let key = (entry.stage, entry.candidate_index) in
+            if (not (Hashtbl.mem keys entry.stage)) || Hashtbl.mem seen key then
+              Wire.invalid ();
+            Hashtbl.add seen key ())
+          entries;
+        if
+          String.trim specification_id = ""
+          || identity = None
+             && (Array.length plans > 0 || Array.length entries > 0)
+        then Wire.invalid ();
+        { specification_id; identity; plans; entries })
+
+  let vector emit values =
+    Wire.int emit (Vector.length values);
+    for i = 0 to Vector.length values - 1 do
+      Wire.float emit (Vector.get values i)
+    done
+
+  let weights emit value = vector emit (Sample_weight.to_vector value)
+  let groups emit value = Wire.array Wire.int emit (Groups.to_array value)
+
+  let regression emit target =
+    Wire.token emit "regression";
+    vector emit (Target.regression_values target)
+
+  let classification emit target =
+    Wire.token emit "classification";
+    Wire.array Wire.int emit (Target.classification_values target)
+
+  let with_run session ~algorithm ~settings ~seed ~metadata ~target ~splitter
+      dataset f =
+    match session with
+    | None -> f splitter
+    | Some session ->
+        if not (Atomic.compare_and_set session.busy false true) then
+          incompatible "checkpoint is already in use"
+        else
+          Fun.protect
+            ~finally:(fun () -> Atomic.set session.busy false)
+            (fun () ->
+              let ( let* ) = Result.bind in
+              let rng =
+                Seed.derive seed ~operation:"cross-validation-splitter" ~index:0
+                |> Rng.create
+              in
+              let* pairs =
+                splitter.Cross_validation.run_splitter ~rng
+                  ~groups:(Dataset.groups dataset) ~x:(Dataset.features dataset)
+                  ~y:(Dataset.target dataset)
+              in
+              let identity =
+                Wire.digest
+                  (fun emit () ->
+                    Wire.token emit algorithm;
+                    Wire.token emit settings;
+                    Wire.token emit (Seed.to_string seed);
+                    Wire.schema emit (Dataset.feature_schema dataset);
+                    Wire.bool emit
+                      (Dataset.finiteness dataset = Dataset.Require_finite);
+                    let x = Dataset.features dataset in
+                    Wire.int emit (Matrix.rows x);
+                    Wire.int emit (Matrix.columns x);
+                    for row = 0 to Matrix.rows x - 1 do
+                      for col = 0 to Matrix.columns x - 1 do
+                        Wire.float emit (Matrix.get x row col)
+                      done
+                    done;
+                    target emit (Dataset.target dataset);
+                    Wire.option weights emit (Dataset.sample_weight dataset);
+                    Wire.option groups emit (Dataset.groups dataset);
+                    Wire.option weights emit (Metadata.sample_weight metadata);
+                    Wire.option groups emit (Metadata.groups metadata);
+                    Wire.bool emit (Option.is_some (Metadata.callback metadata));
+                    Wire.array
+                      (fun emit (train, test) ->
+                        Wire.int emit (Row_view.source_size train);
+                        Wire.array Wire.int emit (Row_view.indices train);
+                        Wire.int emit (Row_view.source_size test);
+                        Wire.array Wire.int emit (Row_view.indices test))
+                      emit pairs)
+                  ()
+              in
+              let* () =
+                match session.state.identity with
+                | Some previous when previous <> identity ->
+                    incompatible
+                      "data, splits, seed, task, or search options differ"
+                | Some _ -> Ok ()
+                | None ->
+                    session.state <-
+                      { session.state with identity = Some identity };
+                    Ok ()
+              in
+              f
+                {
+                  Cross_validation.run_splitter =
+                    (fun ~rng:_ ~groups:_ ~x:_ ~y:_ -> Ok pairs);
+                })
 end
 
 module Grid_search = struct
@@ -721,6 +3310,11 @@ module Grid_search = struct
     build_error : Error.t option;
   }
 
+  type 'model refit_policy =
+    | No_refit
+    | Best_score of string
+    | Custom of ('model candidate array -> (int, Error.t) result)
+
   type 'model selected = {
     selected_candidate_index : int;
     selected_model : 'model;
@@ -728,7 +3322,7 @@ module Grid_search = struct
 
   type 'model report = {
     report_candidates : 'model candidate array;
-    report_selection : ('model selected, Error.t) result;
+    report_selection : ('model selected option, Error.t) result;
   }
 
   type 'configuration partial = {
@@ -788,7 +3382,16 @@ module Grid_search = struct
     }
 
   let candidates report = Array.map copy_candidate report.report_candidates
-  let selection report = report.report_selection
+  let refit_result report = report.report_selection
+
+  let selection report =
+    match report.report_selection with
+    | Ok (Some selected) -> Ok selected
+    | Error error -> Error error
+    | Ok None ->
+        Error
+          (validation ~name:"search selection" ~reason:"refitting was disabled"
+             ~remediation:"inspect candidate reports or run with a refit policy")
 
   let expand_axis partial (Axis axis) =
     Array.to_list axis.values
@@ -815,11 +3418,13 @@ module Grid_search = struct
       grid.axes
     |> Array.of_list
 
-  let with_candidate candidate error =
-    Error.with_context (Error.Candidate candidate) error
+  let[@warning "-4"] with_candidate candidate error =
+    match Error.context error with
+    | Error.Candidate index :: _ when index = candidate -> error
+    | _ -> Error.with_context (Error.Candidate candidate) error
 
   let missing_score candidate scorer partition =
-    validation ~name:"grid-search score"
+    validation ~name:"search score"
       ~reason:(Format.sprintf "%s score %S is unavailable" partition scorer)
       ~remediation:"inspect the candidate's fold failures"
     |> with_candidate candidate
@@ -886,7 +3491,7 @@ module Grid_search = struct
     let rec find index =
       if index = Array.length scorer_names then
         Error
-          (validation ~name:"grid-search refit scorer"
+          (validation ~name:"search refit scorer"
              ~reason:(Format.sprintf "scorer %S was not provided" refit)
              ~remediation:"choose one of the configured scorer names")
       else if String.equal scorer_names.(index) refit then Ok index
@@ -896,25 +3501,26 @@ module Grid_search = struct
 
   let rank_candidates primary candidates =
     let eligible =
-      candidates |> Array.to_list
-      |> List.filter_map (fun (candidate : _ candidate) ->
+      candidates
+      |> Array.mapi (fun position candidate ->
           match candidate.scores.(primary).test with
           | Ok summary ->
-              Some (candidate.candidate_index, summary.Score_aggregation.mean)
+              Some
+                ( position,
+                  candidate.candidate_index,
+                  summary.Score_aggregation.mean )
           | Error _ -> None)
-      |> Array.of_list
+      |> Array.to_list |> List.filter_map Fun.id |> Array.of_list
     in
     Array.sort
-      (fun (left_index, left_score) (right_index, right_score) ->
-        let score_order = Float.compare right_score left_score in
-        if score_order <> 0 then score_order
-        else Int.compare left_index right_index)
+      (fun (_, left, left_score) (_, right, right_score) ->
+        let order = Float.compare right_score left_score in
+        if order <> 0 then order else Int.compare left right)
       eligible;
     let ranks = Array.make (Array.length candidates) None in
-    let previous_score = ref None in
-    let previous_rank = ref 0 in
+    let previous_score = ref None and previous_rank = ref 0 in
     Array.iteri
-      (fun position (candidate, score) ->
+      (fun position (candidate, _, score) ->
         let rank =
           match !previous_score with
           | Some previous when Float.compare previous score = 0 ->
@@ -926,183 +3532,2090 @@ module Grid_search = struct
         previous_rank := rank)
       eligible;
     ( Array.mapi
-        (fun index candidate -> { candidate with rank = ranks.(index) })
+        (fun position candidate -> { candidate with rank = ranks.(position) })
         candidates,
-      if Array.length eligible = 0 then None else Some (fst eligible.(0)) )
-
-  let search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
-      ~refit ~seed grid dataset =
-    let ( let* ) = Result.bind in
-    let* primary = validate_refit scorer_names refit in
-    let partials = expand grid in
-    let pipelines = Array.make grid.candidate_count None in
-    let rec evaluate candidate_index reversed =
-      if candidate_index = Array.length partials then
-        Ok (Array.of_list (List.rev reversed))
+      if Array.length eligible = 0 then None
       else
-        let partial = partials.(candidate_index) in
-        let parameters =
-          partial.reversed_parameters |> List.rev |> Array.of_list
+        let position, _, _ = eligible.(0) in
+        Some position )
+
+  let settings ~return_train_score ~failure_policy ~scorer_names ~policy =
+    let module Wire = Modelkit_checkpoint_codec in
+    Wire.encode
+      (fun emit () ->
+        Wire.bool emit return_train_score;
+        Wire.bool emit (failure_policy = Cross_validation.Abort);
+        Wire.array Wire.token emit scorer_names;
+        match policy with
+        | No_refit -> Wire.token emit "none"
+        | Best_score name ->
+            Wire.token emit "best";
+            Wire.token emit name
+        | Custom _ -> Wire.token emit "custom")
+      ()
+
+  let checkpoint_plan checkpoint ~stage ~candidate_id partials =
+    match checkpoint with
+    | None -> Ok (Array.make (Array.length partials) "")
+    | Some session ->
+        let module Wire = Modelkit_checkpoint_codec in
+        let identities =
+          Array.map
+            (fun partial ->
+              match partial.configuration with
+              | Ok configuration ->
+                  session.Search_checkpoint.identify configuration
+              | Error error -> Wire.digest Wire.error error)
+            partials
         in
-        let built =
-          match partial.configuration with
-          | Error error -> Error error
-          | Ok configuration -> grid.build configuration
-        in
-        match built with
-        | Error error ->
-            let error = with_candidate candidate_index error in
-            if failure_policy = Cross_validation.Abort then Error error
-            else
-              let candidate : _ candidate =
-                {
-                  candidate_index;
-                  parameters;
-                  rank = None;
-                  mean_fit_time = 0.0;
-                  mean_score_time = 0.0;
-                  scores =
-                    failed_summaries ~return_train_score scorer_names error;
-                  evaluation = None;
-                  build_error = Some error;
-                }
+        if Array.exists (fun identity -> String.trim identity = "") identities
+        then
+          Search_checkpoint.incompatible "configuration IDs must not be blank"
+        else
+          let identity =
+            Wire.digest
+              (fun emit () ->
+                Wire.int emit (Array.length partials);
+                Array.iteri
+                  (fun position partial ->
+                    Wire.int emit (candidate_id position);
+                    Wire.token emit identities.(position);
+                    Wire.result
+                      (fun emit _ -> Wire.token emit "configured")
+                      emit partial.configuration;
+                    Wire.array
+                      (fun emit parameter ->
+                        Wire.token emit parameter.parameter_name;
+                        match parameter.parameter_value with
+                        | Bool value ->
+                            Wire.int emit 0;
+                            Wire.bool emit value
+                        | Int value ->
+                            Wire.int emit 1;
+                            Wire.int emit value
+                        | Float value ->
+                            Wire.int emit 2;
+                            Wire.float emit value
+                        | String value ->
+                            Wire.int emit 3;
+                            Wire.token emit value)
+                      emit
+                      (Array.of_list (List.rev partial.reversed_parameters)))
+                  partials)
+              ()
+          in
+          Result.map
+            (fun () -> identities)
+            (Search_checkpoint.plan checkpoint stage identity)
+
+  let search_candidates ?checkpoint ?(checkpoint_stage = "candidates")
+      ?(candidate_id = Fun.id) ?(search_callback = true) ~return_train_score
+      ~failure_policy ~cross_validate ~scorer_names ~metadata ~policy ~seed
+      ~operation ~prepare ~build dataset =
+    let ( let* ) = Result.bind in
+    let* primary =
+      match policy with
+      | Best_score refit ->
+          Result.map Option.some (validate_refit scorer_names refit)
+      | No_refit | Custom _ ->
+          Result.map
+            (fun () -> None)
+            (Cross_validation.validate_scorers scorer_names)
+    in
+    let* () = Metadata.validate ~rows:(Dataset.sample_count dataset) metadata in
+    let with_search f =
+      if not search_callback then f ()
+      else
+        Callback.run
+          ~outcome:(fun report ->
+            match report.report_selection with
+            | Ok _ -> Callback.Succeeded
+            | Error error -> Callback.Failed error)
+          (Metadata.callback metadata)
+          ~operation:Callback.Search f
+    in
+    with_search (fun () ->
+        let count, original_at = prepare () in
+        let* partials =
+          match checkpoint with
+          | None -> Ok None
+          | Some _ ->
+              let rec collect position reversed =
+                if position = count then
+                  Ok (Some (Array.of_list (List.rev reversed)))
+                else
+                  let partial = original_at position in
+                  match partial.configuration with
+                  | Error error when Callback.is_control_error error ->
+                      Error (with_candidate (candidate_id position) error)
+                  | Ok _ | Error _ ->
+                      collect (position + 1) (partial :: reversed)
               in
-              evaluate (candidate_index + 1) (candidate :: reversed)
-        | Ok pipeline ->
-            pipelines.(candidate_index) <- Some pipeline;
-            let fit_seed =
-              Seed.derive seed ~operation:"grid-search-candidate"
-                ~index:candidate_index
-            in
-            let* evaluation =
-              cross_validate ~return_train_score ~failure_policy ~fit_seed
-                pipeline dataset
-              |> Result.map_error (with_candidate candidate_index)
-            in
-            let candidate : _ candidate =
-              {
-                candidate_index;
-                parameters;
-                rank = None;
-                mean_fit_time =
-                  mean_time
-                    (fun fold -> fold.Cross_validation.fit_time)
-                    evaluation;
-                mean_score_time =
-                  mean_time
-                    (fun fold -> fold.Cross_validation.score_time)
-                    evaluation;
-                scores =
-                  summarize candidate_index scorer_names ~return_train_score
-                    evaluation;
-                evaluation = Some evaluation;
-                build_error = None;
-              }
-            in
-            evaluate (candidate_index + 1) (candidate :: reversed)
-    in
-    let* evaluated = evaluate 0 [] in
-    let ranked, best = rank_candidates primary evaluated in
-    let unavailable () =
-      validation ~name:"grid-search selection"
-        ~reason:"no candidate produced an aggregatable primary test score"
-        ~remediation:"inspect candidate build, fold, and scorer failures"
-    in
-    match best with
-    | None ->
-        Ok
-          {
-            report_candidates = ranked;
-            report_selection = Error (unavailable ());
-          }
-    | Some candidate_index -> (
-        match pipelines.(candidate_index) with
-        | None -> assert false
-        | Some pipeline -> (
-            let refit_seed =
-              Seed.derive seed ~operation:"grid-search-refit"
-                ~index:candidate_index
-              |> Rng.create
-            in
-            let refitted =
-              Pipeline.fit (Pipeline.clone pipeline)
-                ?sample_weight:(Dataset.sample_weight dataset)
-                ~rng:refit_seed
-                ~feature_schema:(Dataset.feature_schema dataset)
-                ~x:(Dataset.features dataset) ~y:(Dataset.target dataset) ()
-              |> Result.map_error (with_candidate candidate_index)
-            in
-            match (failure_policy, refitted) with
-            | Cross_validation.Abort, Error error -> Error error
-            | (Cross_validation.Abort | Cross_validation.Record), Ok model ->
-                Ok
+              collect 0 []
+        in
+        let partial_at =
+          match partials with
+          | None -> original_at
+          | Some values -> Array.get values
+        in
+        let* identities =
+          match partials with
+          | None -> Ok [||]
+          | Some values ->
+              checkpoint_plan checkpoint ~stage:checkpoint_stage ~candidate_id
+                values
+        in
+        let pipelines = Array.make count None in
+        let evaluate_candidate position =
+          let candidate_index = candidate_id position in
+          let cached =
+            Search_checkpoint.find checkpoint checkpoint_stage candidate_index
+          in
+          let candidate_metadata =
+            Metadata.scope (Error.Candidate candidate_index) metadata
+          in
+          Callback.run
+            ~outcome:(fun candidate ->
+              match candidate.build_error with
+              | Some error -> Callback.Failed error
+              | None -> (
+                  match
+                    Array.to_list candidate.scores
+                    |> List.find_map (fun score ->
+                        match score.test with
+                        | Ok _ -> None
+                        | Error error -> Some error)
+                  with
+                  | None -> Callback.Succeeded
+                  | Some error -> Callback.Failed error))
+            (Metadata.callback candidate_metadata)
+            ~operation:Callback.Candidate
+            (fun () ->
+              let partial = partial_at position in
+              let parameters =
+                partial.reversed_parameters |> List.rev |> Array.of_list
+              in
+              let built =
+                match cached with
+                | Some { Search_checkpoint.evaluation = Error error; _ } ->
+                    Error error
+                | None | Some { Search_checkpoint.evaluation = Ok _; _ } -> (
+                    match partial.configuration with
+                    | Error error -> Error error
+                    | Ok configuration -> build configuration)
+              in
+              match built with
+              | Error error ->
+                  let error = with_candidate candidate_index error in
+                  if
+                    failure_policy = Cross_validation.Abort
+                    || Callback.is_control_error error
+                  then Error error
+                  else
+                    let candidate : _ candidate =
+                      {
+                        candidate_index;
+                        parameters;
+                        rank = None;
+                        mean_fit_time = 0.0;
+                        mean_score_time = 0.0;
+                        scores =
+                          failed_summaries ~return_train_score scorer_names
+                            error;
+                        evaluation = None;
+                        build_error = Some error;
+                      }
+                    in
+                    Ok candidate
+              | Ok pipeline ->
+                  pipelines.(position) <- Some pipeline;
+                  let fit_seed =
+                    Seed.derive seed ~operation:(operation ^ "-candidate")
+                      ~index:candidate_index
+                  in
+                  let* evaluation =
+                    match cached with
+                    | Some { Search_checkpoint.evaluation = Ok report; _ } ->
+                        Ok (Search_checkpoint.report_without_models report)
+                    | Some { Search_checkpoint.evaluation = Error error; _ } ->
+                        Error error
+                    | None ->
+                        cross_validate ~metadata:candidate_metadata
+                          ~return_train_score ~failure_policy ~fit_seed pipeline
+                          dataset
+                        |> Result.map_error (with_candidate candidate_index)
+                  in
+                  let candidate : _ candidate =
+                    {
+                      candidate_index;
+                      parameters;
+                      rank = None;
+                      mean_fit_time =
+                        mean_time
+                          (fun fold -> fold.Cross_validation.fit_time)
+                          evaluation;
+                      mean_score_time =
+                        mean_time
+                          (fun fold -> fold.Cross_validation.score_time)
+                          evaluation;
+                      scores =
+                        summarize candidate_index scorer_names
+                          ~return_train_score evaluation;
+                      evaluation = Some evaluation;
+                      build_error = None;
+                    }
+                  in
+                  Ok candidate)
+          |> Result.map_error (with_candidate candidate_index)
+        in
+        let rec evaluate candidate_index reversed =
+          if candidate_index = count then Ok (Array.of_list (List.rev reversed))
+          else
+            let* candidate = evaluate_candidate candidate_index in
+            (match checkpoint with
+            | None -> ()
+            | Some _ ->
+                let evaluation =
+                  match (candidate.evaluation, candidate.build_error) with
+                  | Some report, _ ->
+                      Ok (Search_checkpoint.report_without_models report)
+                  | None, Some error -> Error error
+                  | None, None -> assert false
+                in
+                Search_checkpoint.record checkpoint
                   {
-                    report_candidates = ranked;
-                    report_selection =
-                      Ok
-                        {
-                          selected_candidate_index = candidate_index;
-                          selected_model = model;
-                        };
-                  }
-            | Cross_validation.Record, Error error ->
-                Ok
-                  { report_candidates = ranked; report_selection = Error error }
-            ))
+                    Search_checkpoint.stage = checkpoint_stage;
+                    candidate_index = candidate.candidate_index;
+                    configuration_id = identities.(candidate_index);
+                    evaluation;
+                  });
+            evaluate (candidate_index + 1) (candidate :: reversed)
+        in
+        let* evaluated = evaluate 0 [] in
+        let ranked, best =
+          match primary with
+          | Some primary -> rank_candidates primary evaluated
+          | None -> (evaluated, None)
+        in
+        let failure error =
+          if
+            failure_policy = Cross_validation.Abort
+            || Callback.is_control_error error
+          then Error error
+          else Ok { report_candidates = ranked; report_selection = Error error }
+        in
+        let invalid reason =
+          validation ~name:"search selection" ~reason
+            ~remediation:
+              "choose a built candidate with at least one successful \
+               test-score aggregate"
+        in
+        let chosen =
+          match policy with
+          | No_refit -> Ok None
+          | Best_score _ -> (
+              match best with
+              | Some index -> Ok (Some index)
+              | None ->
+                  Error
+                    (invalid
+                       "no candidate produced an aggregatable primary test \
+                        score"))
+          | Custom select ->
+              Result.map Option.some (select (Array.map copy_candidate ranked))
+        in
+        match chosen with
+        | Error error -> failure error
+        | Ok None ->
+            Ok { report_candidates = ranked; report_selection = Ok None }
+        | Ok (Some candidate_index) -> (
+            if candidate_index < 0 || candidate_index >= count then
+              failure
+                (invalid "selector returned an out-of-range candidate index")
+            else
+              let position = candidate_index in
+              let candidate_index = candidate_id position in
+              if
+                not
+                  (Array.exists
+                     (fun score -> Result.is_ok score.test)
+                     ranked.(position).scores)
+              then
+                failure
+                  (invalid
+                     "selected candidate has no successful test-score aggregate"
+                  |> with_candidate candidate_index)
+              else
+                match pipelines.(position) with
+                | None ->
+                    failure
+                      (invalid "selected candidate did not build"
+                      |> with_candidate candidate_index)
+                | Some pipeline -> (
+                    let refit_seed =
+                      Seed.derive seed ~operation:(operation ^ "-refit")
+                        ~index:candidate_index
+                      |> Rng.create
+                    in
+                    let refit_metadata =
+                      Metadata.scope (Error.Candidate candidate_index) metadata
+                    in
+                    let refitted =
+                      Callback.run (Metadata.callback refit_metadata)
+                        ~operation:Callback.Refit (fun () ->
+                          Pipeline.fit_with_metadata (Pipeline.clone pipeline)
+                            ~metadata:refit_metadata ~rng:refit_seed
+                            ~feature_schema:(Dataset.feature_schema dataset)
+                            ~x:(Dataset.features dataset)
+                            ~y:(Dataset.target dataset) ())
+                      |> Result.map_error (with_candidate candidate_index)
+                    in
+                    match refitted with
+                    | Error error -> failure error
+                    | Ok model ->
+                        Ok
+                          {
+                            report_candidates = ranked;
+                            report_selection =
+                              Ok
+                                (Some
+                                   {
+                                     selected_candidate_index = candidate_index;
+                                     selected_model = model;
+                                   });
+                          })))
+
+  let search ?checkpoint ?(operation = "grid-search") ~return_train_score
+      ~failure_policy ~cross_validate ~scorer_names ~metadata ~policy ~seed grid
+      dataset =
+    let prepare () =
+      let partials = expand grid in
+      (Array.length partials, Array.get partials)
+    in
+    search_candidates ?checkpoint ~return_train_score ~failure_policy
+      ~cross_validate ~scorer_names ~metadata ~policy ~seed ~operation ~prepare
+      ~build:grid.build dataset
 
   module Regression = struct
     type model = Cross_validation.Regression.model
 
-    let search ?(return_train_score = false)
+    let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ~grid ~splitter ~scorers ~refit
-        ~seed dataset =
-      let scorer_names = Array.map Regression_scorer.name scorers in
-      let cross_validate ~return_train_score ~failure_policy ~fit_seed pipeline
-          dataset =
-        Cross_validation.Regression.cross_validate ~return_train_score
-          ~failure_policy ~fit_seed ~execution ~splitter ~scorers ~seed pipeline
-          dataset
+        ?(execution = Execution.sequential) ?metadata ?checkpoint
+        ?(custom_scorers = [||]) ~grid ~splitter ~scorers ~policy ~seed dataset
+        =
+      let metadata =
+        match metadata with
+        | Some metadata -> metadata
+        | None -> Metadata.of_dataset dataset
       in
-      search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
-        ~refit ~seed grid dataset
+      let scorer_names =
+        Array.append
+          (Array.map Regression_scorer.name scorers)
+          (Array.map Scorer.name custom_scorers)
+      in
+      let settings =
+        settings ~return_train_score ~failure_policy ~scorer_names ~policy
+      in
+      Search_checkpoint.with_run checkpoint ~algorithm:"grid-search:Regression"
+        ~settings ~seed ~metadata ~target:Search_checkpoint.regression ~splitter
+        dataset (fun splitter ->
+          let cross_validate ~metadata ~return_train_score ~failure_policy
+              ~fit_seed pipeline dataset =
+            Cross_validation.Regression.cross_validate ~return_train_score
+              ~failure_policy ~fit_seed ~execution ~metadata ~splitter ~scorers
+              ~custom_scorers ~seed pipeline dataset
+          in
+          search ?checkpoint ~return_train_score ~failure_policy ~cross_validate
+            ~scorer_names ~metadata ~policy ~seed grid dataset)
+
+    let search ?return_train_score ?failure_policy ?execution ?metadata
+        ?checkpoint ?custom_scorers ~grid ~splitter ~scorers ~refit ~seed
+        dataset =
+      search_with_policy ?return_train_score ?failure_policy ?execution
+        ?metadata ?checkpoint ?custom_scorers ~grid ~splitter ~scorers
+        ~policy:(Best_score refit) ~seed dataset
   end
 
   module Binary_classification = struct
     type model = Cross_validation.Binary_classification.model
 
-    let search ?(return_train_score = false)
+    let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ~grid ~splitter ~scorers ~refit
-        ~seed dataset =
-      let scorer_names = Array.map Binary_classification_scorer.name scorers in
-      let cross_validate ~return_train_score ~failure_policy ~fit_seed pipeline
-          dataset =
-        Cross_validation.Binary_classification.cross_validate
-          ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
-          ~scorers ~seed pipeline dataset
+        ?(execution = Execution.sequential) ?metadata ?checkpoint
+        ?(custom_scorers = [||]) ~grid ~splitter ~scorers ~policy ~seed dataset
+        =
+      let metadata =
+        match metadata with
+        | Some metadata -> metadata
+        | None -> Metadata.of_dataset dataset
       in
-      search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
-        ~refit ~seed grid dataset
+      let scorer_names =
+        Array.append
+          (Array.map Binary_classification_scorer.name scorers)
+          (Array.map Scorer.name custom_scorers)
+      in
+      let settings =
+        settings ~return_train_score ~failure_policy ~scorer_names ~policy
+      in
+      Search_checkpoint.with_run checkpoint
+        ~algorithm:"grid-search:Binary_classification" ~settings ~seed ~metadata
+        ~target:Search_checkpoint.classification ~splitter dataset
+        (fun splitter ->
+          let cross_validate ~metadata ~return_train_score ~failure_policy
+              ~fit_seed pipeline dataset =
+            Cross_validation.Binary_classification.cross_validate
+              ~return_train_score ~failure_policy ~fit_seed ~execution ~metadata
+              ~splitter ~scorers ~custom_scorers ~seed pipeline dataset
+          in
+          search ?checkpoint ~return_train_score ~failure_policy ~cross_validate
+            ~scorer_names ~metadata ~policy ~seed grid dataset)
+
+    let search ?return_train_score ?failure_policy ?execution ?metadata
+        ?checkpoint ?custom_scorers ~grid ~splitter ~scorers ~refit ~seed
+        dataset =
+      search_with_policy ?return_train_score ?failure_policy ?execution
+        ?metadata ?checkpoint ?custom_scorers ~grid ~splitter ~scorers
+        ~policy:(Best_score refit) ~seed dataset
   end
 
   module Multiclass_classification = struct
     type model = Cross_validation.Multiclass_classification.model
 
-    let search ?(return_train_score = false)
+    let search_with_policy ?(return_train_score = false)
         ?(failure_policy = Cross_validation.Record)
-        ?(execution = Execution.sequential) ~grid ~splitter ~scorers ~refit
-        ~seed dataset =
+        ?(execution = Execution.sequential) ?metadata ?checkpoint
+        ?(custom_scorers = [||]) ~grid ~splitter ~scorers ~policy ~seed dataset
+        =
+      let metadata =
+        match metadata with
+        | Some metadata -> metadata
+        | None -> Metadata.of_dataset dataset
+      in
+      let scorer_names =
+        Array.append
+          (Array.map Multiclass_classification_scorer.name scorers)
+          (Array.map Scorer.name custom_scorers)
+      in
+      let settings =
+        settings ~return_train_score ~failure_policy ~scorer_names ~policy
+      in
+      Search_checkpoint.with_run checkpoint
+        ~algorithm:"grid-search:Multiclass_classification" ~settings ~seed
+        ~metadata ~target:Search_checkpoint.classification ~splitter dataset
+        (fun splitter ->
+          let cross_validate ~metadata ~return_train_score ~failure_policy
+              ~fit_seed pipeline dataset =
+            Cross_validation.Multiclass_classification.cross_validate
+              ~return_train_score ~failure_policy ~fit_seed ~execution ~metadata
+              ~splitter ~scorers ~custom_scorers ~seed pipeline dataset
+          in
+          search ?checkpoint ~return_train_score ~failure_policy ~cross_validate
+            ~scorer_names ~metadata ~policy ~seed grid dataset)
+
+    let search ?return_train_score ?failure_policy ?execution ?metadata
+        ?checkpoint ?custom_scorers ~grid ~splitter ~scorers ~refit ~seed
+        dataset =
+      search_with_policy ?return_train_score ?failure_policy ?execution
+        ?metadata ?checkpoint ?custom_scorers ~grid ~splitter ~scorers
+        ~policy:(Best_score refit) ~seed dataset
+  end
+end
+
+module Validation_curve = struct
+  type ('configuration, 'value, 'target, 'prediction) t = {
+    vc_name : string;
+    vc_values : 'value array;
+    vc_grid : ('configuration, 'target, 'prediction) Grid_search.grid;
+    vc_max_fits : int option;
+  }
+
+  let invalid reason =
+    Error
+      (Error.make
+         ~remediation:
+           "provide a nonempty typed parameter sequence and a positive fit \
+            ceiling"
+         (Error.Validation { name = "validation-curve specification"; reason }))
+
+  let create ?max_fits ~name ~base ~values ~encode ~set ~build () =
+    let ( let* ) = Result.bind in
+    if String.trim name = "" then invalid "parameter name must not be blank"
+    else if Array.length values = 0 then
+      invalid "at least one parameter value is required"
+    else if Option.fold ~none:false ~some:(fun value -> value < 1) max_fits then
+      invalid "max_fits must be positive"
+    else
+      let* axis = Grid_search.axis ~name ~values ~encode ~set in
+      let* grid = Grid_search.create ~base ~build [| axis |] in
+      Ok
+        {
+          vc_name = name;
+          vc_values = Array.copy values;
+          vc_grid = grid;
+          vc_max_fits = max_fits;
+        }
+
+  let parameter_name specification = specification.vc_name
+  let parameter_values specification = Array.copy specification.vc_values
+  let max_fits specification = specification.vc_max_fits
+
+  type ('value, 'model) point = {
+    point_index : int;
+    parameter_value : 'value;
+    parameter : Grid_search.parameter;
+    mean_fit_time : float;
+    mean_score_time : float;
+    scores : Grid_search.score_summary array;
+    evaluation : 'model Cross_validation.report option;
+    build_error : Error.t option;
+  }
+
+  type ('value, 'model) report = {
+    validation_points : ('value, 'model) point array;
+  }
+
+  let copy_point point = { point with scores = Array.copy point.scores }
+  let points report = Array.map copy_point report.validation_points
+
+  let data result =
+    Result.map_error
+      (fun error ->
+        Error.of_data_error
+          ~remediation:"supply aligned rows with positive total sample weight"
+          error)
+      result
+
+  let validate_view dataset metadata view =
+    let ( let* ) = Result.bind in
+    let* _ = Metadata.select metadata view in
+    match Dataset.sample_weight dataset with
+    | None -> Ok ()
+    | Some weight ->
+        Result.map (fun _ -> ()) (data (Sample_weight.select weight view))
+
+  let fit_bound specification folds =
+    let values = Array.length specification.vc_values in
+    if values > max_int / folds then
+      invalid "planned fit count exceeds the integer limit"
+    else
+      let fits = values * folds in
+      match specification.vc_max_fits with
+      | Some maximum when fits > maximum ->
+          invalid
+            (Format.sprintf "planned fit count %d exceeds max_fits %d" fits
+               maximum)
+      | None | Some _ -> Ok ()
+
+  let freeze_splitter ~specification ~splitter ~seed ~metadata dataset =
+    let ( let* ) = Result.bind in
+    let rows = Dataset.sample_count dataset in
+    let* () = Metadata.validate ~rows metadata in
+    let rng =
+      Seed.derive seed ~operation:"cross-validation-splitter" ~index:0
+      |> Rng.create
+    in
+    let* pairs =
+      splitter.Cross_validation.run_splitter ~rng
+        ~groups:(Dataset.groups dataset) ~x:(Dataset.features dataset)
+        ~y:(Dataset.target dataset)
+    in
+    let folds = Array.length pairs in
+    let* () =
+      if folds = 0 then invalid "at least one validation fold is required"
+      else Ok ()
+    in
+    let* () = fit_bound specification folds in
+    let rec validate fold_index =
+      if fold_index = folds then Ok ()
+      else
+        let train, test = pairs.(fold_index) in
+        let checked =
+          let* _ = Split.of_views ~train ~test in
+          let* () =
+            if
+              Row_view.source_size train <> rows
+              || Row_view.source_size test <> rows
+            then invalid "fold source size differs from the dataset"
+            else Ok ()
+          in
+          let* () = validate_view dataset metadata train in
+          validate_view dataset metadata test
+        in
+        let* () =
+          Result.map_error (Error.with_context (Error.Fold fold_index)) checked
+        in
+        validate (fold_index + 1)
+    in
+    let* () = validate 0 in
+    Ok
+      {
+        Cross_validation.run_splitter =
+          (fun ~rng:_ ~groups:_ ~x:_ ~y:_ -> Ok pairs);
+      }
+
+  let of_candidate specification candidate =
+    let parameter = candidate.Grid_search.parameters.(0) in
+    {
+      point_index = candidate.Grid_search.candidate_index;
+      parameter_value =
+        specification.vc_values.(candidate.Grid_search.candidate_index);
+      parameter;
+      mean_fit_time = candidate.Grid_search.mean_fit_time;
+      mean_score_time = candidate.Grid_search.mean_score_time;
+      scores = Array.copy candidate.Grid_search.scores;
+      evaluation = candidate.Grid_search.evaluation;
+      build_error = candidate.Grid_search.build_error;
+    }
+
+  let evaluate ?(return_indices = false)
+      ?(failure_policy = Cross_validation.Record)
+      ?(execution = Execution.sequential) ?metadata ~specification ~splitter
+      ~scorer_names ~scorers ~seed ~cross_validate dataset =
+    let ( let* ) = Result.bind in
+    let metadata =
+      Option.value metadata ~default:(Metadata.of_dataset dataset)
+    in
+    let* () = Cross_validation.validate_scorers scorer_names in
+    let* splitter =
+      freeze_splitter ~specification ~splitter ~seed ~metadata dataset
+    in
+    let cross_validate_candidate ~metadata ~return_train_score ~failure_policy
+        ~fit_seed pipeline dataset =
+      cross_validate ~return_train_score ~return_models:false ~return_indices
+        ~failure_policy ~fit_seed ~execution ~metadata ~splitter ~scorers ~seed
+        pipeline dataset
+    in
+    let* report =
+      Grid_search.search ~operation:"validation-curve" ~return_train_score:true
+        ~failure_policy ~cross_validate:cross_validate_candidate ~scorer_names
+        ~metadata ~policy:Grid_search.No_refit ~seed specification.vc_grid
+        dataset
+    in
+    Ok
+      {
+        validation_points =
+          Grid_search.candidates report
+          |> Array.map (of_candidate specification);
+      }
+
+  module Regression = struct
+    type model = Cross_validation.Regression.model
+
+    let evaluate ?return_indices ?failure_policy ?execution ?metadata
+        ~specification ~splitter ~scorers ~seed dataset =
+      evaluate ?return_indices ?failure_policy ?execution ?metadata
+        ~specification ~splitter
+        ~scorer_names:(Array.map Regression_scorer.name scorers)
+        ~scorers ~seed
+        ~cross_validate:(fun
+            ~return_train_score
+            ~return_models
+            ~return_indices
+            ~failure_policy
+            ~fit_seed
+            ~execution
+            ~metadata
+            ~splitter
+            ~scorers
+            ~seed
+            pipeline
+            dataset
+          ->
+          Cross_validation.Regression.cross_validate ~return_train_score
+            ~return_models ~return_indices ~failure_policy ~fit_seed ~execution
+            ~metadata ~splitter ~scorers ~seed pipeline dataset)
+        dataset
+  end
+
+  module Binary_classification = struct
+    type model = Cross_validation.Binary_classification.model
+
+    let evaluate ?return_indices ?failure_policy ?execution ?metadata
+        ~specification ~splitter ~scorers ~seed dataset =
+      evaluate ?return_indices ?failure_policy ?execution ?metadata
+        ~specification ~splitter
+        ~scorer_names:(Array.map Binary_classification_scorer.name scorers)
+        ~scorers ~seed
+        ~cross_validate:(fun
+            ~return_train_score
+            ~return_models
+            ~return_indices
+            ~failure_policy
+            ~fit_seed
+            ~execution
+            ~metadata
+            ~splitter
+            ~scorers
+            ~seed
+            pipeline
+            dataset
+          ->
+          Cross_validation.Binary_classification.cross_validate
+            ~return_train_score ~return_models ~return_indices ~failure_policy
+            ~fit_seed ~execution ~metadata ~splitter ~scorers ~seed pipeline
+            dataset)
+        dataset
+  end
+
+  module Multiclass_classification = struct
+    type model = Cross_validation.Multiclass_classification.model
+
+    let evaluate ?return_indices ?failure_policy ?execution ?metadata
+        ~specification ~splitter ~scorers ~seed dataset =
+      evaluate ?return_indices ?failure_policy ?execution ?metadata
+        ~specification ~splitter
+        ~scorer_names:(Array.map Multiclass_classification_scorer.name scorers)
+        ~scorers ~seed
+        ~cross_validate:(fun
+            ~return_train_score
+            ~return_models
+            ~return_indices
+            ~failure_policy
+            ~fit_seed
+            ~execution
+            ~metadata
+            ~splitter
+            ~scorers
+            ~seed
+            pipeline
+            dataset
+          ->
+          Cross_validation.Multiclass_classification.cross_validate
+            ~return_train_score ~return_models ~return_indices ~failure_policy
+            ~fit_seed ~execution ~metadata ~splitter ~scorers ~seed pipeline
+            dataset)
+        dataset
+  end
+end
+
+module Permutation_test = struct
+  type t = { pt_permutations : int; pt_max_fits : int option }
+
+  let invalid reason =
+    Error
+      (Error.make
+         ~remediation:
+           "provide a positive permutation count and, when used, a positive \
+            total-fit ceiling"
+         (Error.Validation { name = "permutation-test specification"; reason }))
+
+  let create ?(permutations = 100) ?max_fits () =
+    if permutations < 1 then invalid "permutations must be positive"
+    else if permutations > Sys.max_array_length then
+      invalid "permutations exceed the maximum array length"
+    else if Option.fold ~none:false ~some:(fun value -> value < 1) max_fits then
+      invalid "max_fits must be positive"
+    else Ok { pt_permutations = permutations; pt_max_fits = max_fits }
+
+  let permutation_count specification = specification.pt_permutations
+  let max_fits specification = specification.pt_max_fits
+
+  type 'model report = {
+    pt_observed_score : float;
+    pt_permutation_scores : float array;
+    pt_p_value : float;
+    pt_observed_evaluation : 'model Cross_validation.report;
+  }
+
+  let observed_score report = report.pt_observed_score
+  let permutation_scores report = Array.copy report.pt_permutation_scores
+  let p_value report = report.pt_p_value
+  let observed_evaluation report = report.pt_observed_evaluation
+
+  let fit_bound specification folds =
+    let evaluations = specification.pt_permutations + 1 in
+    if evaluations > max_int / folds then
+      invalid "planned fit count exceeds the integer limit"
+    else
+      let fits = evaluations * folds in
+      match specification.pt_max_fits with
+      | Some maximum when fits > maximum ->
+          invalid
+            (Format.sprintf "planned fit count %d exceeds max_fits %d" fits
+               maximum)
+      | None | Some _ -> Ok ()
+
+  let freeze_splitter ~specification ~splitter ~seed ~metadata dataset =
+    let ( let* ) = Result.bind in
+    let rows = Dataset.sample_count dataset in
+    let* () = Metadata.validate ~rows metadata in
+    let rng =
+      Seed.derive seed ~operation:"cross-validation-splitter" ~index:0
+      |> Rng.create
+    in
+    let* pairs =
+      splitter.Cross_validation.run_splitter ~rng
+        ~groups:(Dataset.groups dataset) ~x:(Dataset.features dataset)
+        ~y:(Dataset.target dataset)
+    in
+    let folds = Array.length pairs in
+    let* () =
+      if folds = 0 then invalid "at least one validation fold is required"
+      else Ok ()
+    in
+    let* () = fit_bound specification folds in
+    let rec validate fold_index =
+      if fold_index = folds then Ok ()
+      else
+        let train, test = pairs.(fold_index) in
+        let checked =
+          let* _ = Split.of_views ~train ~test in
+          let* () =
+            if
+              Row_view.source_size train <> rows
+              || Row_view.source_size test <> rows
+            then invalid "fold source size differs from the dataset"
+            else Ok ()
+          in
+          let* () = Validation_curve.validate_view dataset metadata train in
+          Validation_curve.validate_view dataset metadata test
+        in
+        let* () =
+          Result.map_error (Error.with_context (Error.Fold fold_index)) checked
+        in
+        validate (fold_index + 1)
+    in
+    let* () = validate 0 in
+    Ok
+      {
+        Cross_validation.run_splitter =
+          (fun ~rng:_ ~groups:_ ~x:_ ~y:_ -> Ok pairs);
+      }
+
+  let grouped_rows groups rows =
+    let by_group = Hashtbl.create (Groups.distinct_count groups) in
+    let order = ref [] in
+    for row = 0 to rows - 1 do
+      let group = Groups.get groups row in
+      if not (Hashtbl.mem by_group group) then order := group :: !order;
+      let reversed =
+        Option.value (Hashtbl.find_opt by_group group) ~default:[]
+      in
+      Hashtbl.replace by_group group (row :: reversed)
+    done;
+    List.rev !order |> Array.of_list
+    |> Array.map (fun group ->
+        Hashtbl.find by_group group |> List.rev |> Array.of_list)
+
+  let permutation_indices ~seed ~index dataset =
+    let rows = Dataset.sample_count dataset in
+    let indices = Array.init rows Fun.id in
+    let permutation_seed =
+      Seed.derive seed ~operation:"permutation-test-target" ~index
+    in
+    match Dataset.groups dataset with
+    | None ->
+        Splitter_internal.shuffle (Rng.create permutation_seed) indices;
+        indices
+    | Some groups ->
+        grouped_rows groups rows
+        |> Array.iteri (fun group_index positions ->
+            let sources = Array.copy positions in
+            let rng =
+              Seed.derive permutation_seed ~operation:"group" ~index:group_index
+              |> Rng.create
+            in
+            Splitter_internal.shuffle rng sources;
+            Array.iteri
+              (fun position row -> indices.(row) <- sources.(position))
+              positions);
+        indices
+
+  let dataset_with_target dataset target =
+    Dataset.create
+      ~finiteness:(Dataset.finiteness dataset)
+      ?feature_names:(Feature_schema.names (Dataset.feature_schema dataset))
+      ?sample_weight:(Dataset.sample_weight dataset)
+      ?groups:(Dataset.groups dataset) ~x:(Dataset.features dataset) ~y:target
+      ()
+    |> Result.map_error (fun error ->
+        Error.of_data_error ~remediation:"preserve a valid target permutation"
+          error)
+
+  let mean_test_score report =
+    let ( let* ) = Result.bind in
+    let folds = Cross_validation.folds report in
+    let scores = Array.make (Array.length folds) 0.0 in
+    let rec collect index =
+      if index = Array.length folds then
+        let* summary = Score_aggregation.summarize scores in
+        Ok summary.Score_aggregation.mean
+      else
+        let fold = folds.(index) in
+        if Array.length fold.Cross_validation.failures > 0 then
+          Error fold.Cross_validation.failures.(0).Cross_validation.error
+        else if Array.length fold.Cross_validation.scores <> 1 then
+          invalid "cross-validation did not return exactly one scorer"
+        else
+          match
+            fold.Cross_validation.scores.(0).Cross_validation.test_score
+          with
+          | Some (Ok value) ->
+              scores.(index) <- value;
+              collect (index + 1)
+          | Some (Error error) -> Error error
+          | None -> invalid "a validation fold did not return its test score"
+    in
+    collect 0
+
+  let map_with_callbacks execution metadata inputs ~f =
+    match Metadata.callback metadata with
+    | None ->
+        Execution.map execution inputs ~f:(fun ~index input ->
+            f ~metadata ~index input)
+    | Some callback ->
+        let batch_size = max 1 (Execution.concurrency execution) in
+        let rec batches offset reversed =
+          if offset = Array.length inputs then
+            Ok (Array.of_list (List.rev reversed))
+          else
+            let count = min batch_size (Array.length inputs - offset) in
+            let batch = Array.sub inputs offset count in
+            let ( let* ) = Result.bind in
+            let* outcomes =
+              Execution.map execution batch ~f:(fun ~index input ->
+                  let buffered, flush = Callback.buffer callback in
+                  let scoped =
+                    Metadata.with_callback metadata (Some buffered)
+                  in
+                  Ok (f ~metadata:scoped ~index:(offset + index) input, flush))
+            in
+            let* reversed =
+              Array.fold_left
+                (fun accumulated (result, flush) ->
+                  let* accumulated = accumulated in
+                  let* () = flush () in
+                  let* output = result in
+                  Ok (output :: accumulated))
+                (Ok reversed) outcomes
+            in
+            batches (offset + count) reversed
+        in
+        batches 0 []
+
+  let evaluate ?(return_indices = false) ?(execution = Execution.sequential)
+      ?metadata ~specification ~splitter ~scorer_name ~scorer ~seed
+      ~permute_target ~cross_validate pipeline dataset =
+    let ( let* ) = Result.bind in
+    let metadata =
+      Option.value metadata ~default:(Metadata.of_dataset dataset)
+    in
+    let* () = Cross_validation.validate_scorers [| scorer_name |] in
+    let* splitter =
+      freeze_splitter ~specification ~splitter ~seed ~metadata dataset
+    in
+    let evaluate_dataset ~metadata ~index dataset =
+      let fit_seed =
+        Seed.derive seed ~operation:"permutation-test-fit" ~index
+      in
+      let* evaluation =
+        cross_validate ~return_train_score:false ~return_models:false
+          ~return_indices ~failure_policy:Cross_validation.Abort ~fit_seed
+          ~execution:Execution.sequential ~metadata ~splitter
+          ~scorers:[| scorer |] ~seed pipeline dataset
+      in
+      let* score = mean_test_score evaluation in
+      Ok (score, evaluation)
+    in
+    let* observed_score, observed_evaluation =
+      evaluate_dataset ~metadata ~index:0 dataset
+      |> Result.map_error
+           (Error.with_context (Error.Stage "observed permutation-test score"))
+    in
+    let permutation_tasks = Array.init specification.pt_permutations Fun.id in
+    let evaluate_permutation ~metadata ~index:_ permutation_index =
+      let stage =
+        Error.Stage (Format.sprintf "permutation %d" permutation_index)
+      in
+      let scoped_metadata = Metadata.scope stage metadata in
+      let indices =
+        permutation_indices ~seed ~index:permutation_index dataset
+      in
+      let* target = permute_target (Dataset.target dataset) indices in
+      let* permuted = dataset_with_target dataset target in
+      evaluate_dataset ~metadata:scoped_metadata ~index:(permutation_index + 1)
+        permuted
+      |> Result.map fst
+      |> Result.map_error (Error.with_context stage)
+    in
+    let* pt_permutation_scores =
+      map_with_callbacks execution metadata permutation_tasks
+        ~f:evaluate_permutation
+    in
+    let exceedances =
+      Array.fold_left
+        (fun count score ->
+          if score >= observed_score then count + 1 else count)
+        0 pt_permutation_scores
+    in
+    let pt_p_value =
+      Float.of_int (exceedances + 1)
+      /. Float.of_int (specification.pt_permutations + 1)
+    in
+    Ok
+      {
+        pt_observed_score = observed_score;
+        pt_permutation_scores;
+        pt_p_value;
+        pt_observed_evaluation = observed_evaluation;
+      }
+
+  module Regression = struct
+    type model = Cross_validation.Regression.model
+
+    let evaluate ?return_indices ?execution ?metadata ~specification ~splitter
+        ~scorer ~seed pipeline dataset =
+      evaluate ?return_indices ?execution ?metadata ~specification ~splitter
+        ~scorer_name:(Regression_scorer.name scorer)
+        ~scorer ~seed
+        ~permute_target:(fun target indices ->
+          Target.regression_values target |> fun values ->
+          Vector.unsafe_init (Array.length indices) (fun row ->
+              Vector.get values indices.(row))
+          |> Target.regression
+          |> Result.map_error (fun error ->
+              Error.of_data_error
+                ~remediation:"preserve finite permuted regression targets" error))
+        ~cross_validate:(fun
+            ~return_train_score
+            ~return_models
+            ~return_indices
+            ~failure_policy
+            ~fit_seed
+            ~execution
+            ~metadata
+            ~splitter
+            ~scorers
+            ~seed
+            pipeline
+            dataset
+          ->
+          Cross_validation.Regression.cross_validate ~return_train_score
+            ~return_models ~return_indices ~failure_policy ~fit_seed ~execution
+            ~metadata ~splitter ~scorers ~seed pipeline dataset)
+        pipeline dataset
+  end
+
+  module Binary_classification = struct
+    type model = Cross_validation.Binary_classification.model
+
+    let evaluate ?return_indices ?execution ?metadata ~specification ~splitter
+        ~scorer ~seed pipeline dataset =
+      evaluate ?return_indices ?execution ?metadata ~specification ~splitter
+        ~scorer_name:(Binary_classification_scorer.name scorer)
+        ~scorer ~seed
+        ~permute_target:(fun target indices ->
+          let values = Target.classification_values target in
+          Ok
+            (Target.classification
+               (Array.map (fun source -> values.(source)) indices)))
+        ~cross_validate:(fun
+            ~return_train_score
+            ~return_models
+            ~return_indices
+            ~failure_policy
+            ~fit_seed
+            ~execution
+            ~metadata
+            ~splitter
+            ~scorers
+            ~seed
+            pipeline
+            dataset
+          ->
+          Cross_validation.Binary_classification.cross_validate
+            ~return_train_score ~return_models ~return_indices ~failure_policy
+            ~fit_seed ~execution ~metadata ~splitter ~scorers ~seed pipeline
+            dataset)
+        pipeline dataset
+  end
+
+  module Multiclass_classification = struct
+    type model = Cross_validation.Multiclass_classification.model
+
+    let evaluate ?return_indices ?execution ?metadata ~specification ~splitter
+        ~scorer ~seed pipeline dataset =
+      evaluate ?return_indices ?execution ?metadata ~specification ~splitter
+        ~scorer_name:(Multiclass_classification_scorer.name scorer)
+        ~scorer ~seed
+        ~permute_target:(fun target indices ->
+          let values = Target.classification_values target in
+          Ok
+            (Target.classification
+               (Array.map (fun source -> values.(source)) indices)))
+        ~cross_validate:(fun
+            ~return_train_score
+            ~return_models
+            ~return_indices
+            ~failure_policy
+            ~fit_seed
+            ~execution
+            ~metadata
+            ~splitter
+            ~scorers
+            ~seed
+            pipeline
+            dataset
+          ->
+          Cross_validation.Multiclass_classification.cross_validate
+            ~return_train_score ~return_models ~return_indices ~failure_policy
+            ~fit_seed ~execution ~metadata ~splitter ~scorers ~seed pipeline
+            dataset)
+        pipeline dataset
+  end
+end
+
+module Parameter_distribution = struct
+  type 'a t = Choices of 'a array | Sample of (Rng.t -> ('a, Error.t) result)
+
+  let invalid reason =
+    Error
+      (Error.make
+         (Error.Validation { name = "parameter distribution"; reason })
+         ~remediation:
+           "supply nonempty immutable choices or finite ordered distribution \
+            bounds")
+
+  let choice values =
+    if Array.length values = 0 then invalid "choices must not be empty"
+    else Ok (Choices (Array.copy values))
+
+  let custom sampler = Sample sampler
+
+  let rec bounded rng bound =
+    let bits, next = Rng.next_int64 rng in
+    let draw = Int64.shift_right_logical bits 1 in
+    let limit = Int64.sub Int64.max_int (Int64.rem Int64.max_int bound) in
+    if draw >= limit then bounded next bound else (Int64.rem draw bound, next)
+
+  let sample ~rng = function
+    | Choices values ->
+        let index, _ = bounded rng (Int64.of_int (Array.length values)) in
+        Ok values.(Int64.to_int index)
+    | Sample draw -> draw rng
+
+  let uniform ~low ~high () =
+    if not (Float.is_finite low && Float.is_finite high && low < high) then
+      invalid "uniform bounds must be finite with low < high"
+    else
+      Ok
+        (Sample
+           (fun rng ->
+             let u, _ = Rng.next_float rng in
+             let value = ((1. -. u) *. low) +. (u *. high) in
+             Ok (max low (min (Float.next_after high neg_infinity) value))))
+
+  let log_uniform ~low ~high () =
+    if
+      not (Float.is_finite low && Float.is_finite high && low > 0. && low < high)
+    then
+      invalid "log-uniform bounds must be positive and finite with low < high"
+    else
+      Ok
+        (Sample
+           (fun rng ->
+             let u, _ = Rng.next_float rng in
+             let value = exp (((1. -. u) *. log low) +. (u *. log high)) in
+             Ok (max low (min (Float.next_after high neg_infinity) value))))
+
+  let int_uniform ~low ~high () =
+    if low >= high then invalid "integer bounds require low < high"
+    else
+      Ok
+        (Sample
+           (fun rng ->
+             let lower = Int64.of_int low in
+             let width = Int64.sub (Int64.of_int high) lower in
+             let offset, _ = bounded rng width in
+             Ok (Int64.to_int (Int64.add lower offset))))
+end
+
+module Randomized_search = struct
+  type 'configuration axis =
+    | Axis : {
+        sample_name : string;
+        distribution : 'value Parameter_distribution.t;
+        sample_encode : 'value -> Grid_search.parameter_value;
+        sample_set :
+          'configuration -> 'value -> ('configuration, Error.t) result;
+      }
+        -> 'configuration axis
+
+  type ('configuration, 'target, 'prediction) space = {
+    sample_base : 'configuration;
+    sample_build :
+      'configuration -> (('target, 'prediction) Pipeline.t, Error.t) result;
+    sample_axes : 'configuration axis array;
+    sample_count : int;
+    finite_count : int option;
+  }
+
+  type 'configuration sampled_candidate = {
+    sampled_parameters : Grid_search.parameter array;
+    sampled_configuration : ('configuration, Error.t) result;
+  }
+
+  type 'model report = 'model Grid_search.report
+
+  let candidates = Grid_search.candidates
+  let selection = Grid_search.selection
+  let refit_result = Grid_search.refit_result
+
+  let invalid reason =
+    Error
+      (Error.make
+         (Error.Validation { name = "randomized search"; reason })
+         ~remediation:
+           "use unique parameter names, positive iterations, and a finite \
+            choice product that fits an OCaml integer")
+
+  let axis ~name ~distribution ~encode ~set =
+    if String.trim name = "" then invalid "parameter names must not be blank"
+    else
+      Ok
+        (Axis
+           {
+             sample_name = name;
+             distribution;
+             sample_encode = encode;
+             sample_set = set;
+           })
+
+  let create ?(iterations = 10) ~base ~build axes =
+    let ( let* ) = Result.bind in
+    let* () =
+      if iterations > 0 && iterations <= Sys.max_array_length then Ok ()
+      else invalid "iteration count must be positive and fit an array"
+    in
+    let seen = Hashtbl.create (Array.length axes) in
+    let rec names i =
+      if i = Array.length axes then Ok ()
+      else
+        let (Axis axis) = axes.(i) in
+        if Hashtbl.mem seen axis.sample_name then
+          invalid ("duplicate parameter name: " ^ axis.sample_name)
+        else (
+          Hashtbl.add seen axis.sample_name ();
+          names (i + 1))
+    in
+    let* () = names 0 in
+    let finite =
+      Array.for_all
+        (fun (Axis axis) ->
+          match axis.distribution with
+          | Parameter_distribution.Choices _ -> true
+          | Parameter_distribution.Sample _ -> false)
+        axes
+    in
+    let* finite_count =
+      if not finite then Ok None
+      else
+        Array.fold_left
+          (fun result (Axis axis) ->
+            let* count = result in
+            match axis.distribution with
+            | Parameter_distribution.Sample _ -> assert false
+            | Parameter_distribution.Choices values ->
+                if count > max_int / Array.length values then
+                  invalid "finite choice product exceeds the integer limit"
+                else Ok (count * Array.length values))
+          (Ok 1) axes
+        |> Result.map Option.some
+    in
+    let sample_count =
+      Option.fold ~none:iterations ~some:(min iterations) finite_count
+    in
+    Ok
+      {
+        sample_base = base;
+        sample_build = build;
+        sample_axes = Array.copy axes;
+        sample_count;
+        finite_count;
+      }
+
+  let candidate_count space = space.sample_count
+
+  let prepare ~seed space =
+    let index_at =
+      Option.map
+        (fun total ->
+          let swaps = Hashtbl.create space.sample_count in
+          let indices = Array.make space.sample_count 0 in
+          let generated = ref 0 in
+          let rng =
+            ref
+              (Rng.create
+                 (Seed.derive seed ~operation:"randomized-search-choices"
+                    ~index:0))
+          in
+          fun index ->
+            while !generated <= index do
+              let remaining = total - !generated in
+              let value, next =
+                Parameter_distribution.bounded !rng (Int64.of_int remaining)
+              in
+              rng := next;
+              let position = Int64.to_int value in
+              let at index =
+                Option.value (Hashtbl.find_opt swaps index) ~default:index
+              in
+              let selected = at position in
+              let last = at (remaining - 1) in
+              Hashtbl.remove swaps (remaining - 1);
+              if position <> remaining - 1 then
+                Hashtbl.replace swaps position last;
+              indices.(!generated) <- selected;
+              incr generated
+            done;
+            indices.(index))
+        space.finite_count
+    in
+    let partial_at candidate_index =
+      let remaining =
+        ref (Option.fold ~none:0 ~some:(fun at -> at candidate_index) index_at)
+      in
+      let coordinates = Array.make (Array.length space.sample_axes) 0 in
+      (match index_at with
+      | None -> ()
+      | Some _ ->
+          for i = Array.length space.sample_axes - 1 downto 0 do
+            let (Axis axis) = space.sample_axes.(i) in
+            match axis.distribution with
+            | Parameter_distribution.Sample _ -> assert false
+            | Parameter_distribution.Choices values ->
+                coordinates.(i) <- !remaining mod Array.length values;
+                remaining := !remaining / Array.length values
+          done);
+      Array.fold_left
+        (fun (i, partial) (Axis axis) ->
+          match partial.Grid_search.configuration with
+          | Error error when Callback.is_control_error error -> (i + 1, partial)
+          | Ok _ | Error _ ->
+              let draw =
+                match (axis.distribution, index_at) with
+                | Parameter_distribution.Choices values, Some _ ->
+                    Ok values.(coordinates.(i))
+                | ( ( Parameter_distribution.Choices _
+                    | Parameter_distribution.Sample _ ),
+                    None )
+                | Parameter_distribution.Sample _, Some _ ->
+                    let rng =
+                      Seed.derive seed
+                        ~operation:
+                          ("randomized-search-parameter:" ^ axis.sample_name)
+                        ~index:candidate_index
+                      |> Rng.create
+                    in
+                    Parameter_distribution.sample ~rng axis.distribution
+              in
+              let contextual error =
+                error
+                |> Error.with_context (Error.Stage axis.sample_name)
+                |> Grid_search.with_candidate candidate_index
+              in
+              let configuration, reversed_parameters =
+                match draw with
+                | Error error ->
+                    ( (if Callback.is_control_error error then
+                         Error (contextual error)
+                       else
+                         match partial.Grid_search.configuration with
+                         | Error _ as error -> error
+                         | Ok _ -> Error (contextual error)),
+                      partial.Grid_search.reversed_parameters )
+                | Ok value ->
+                    let configuration =
+                      match partial.Grid_search.configuration with
+                      | Error _ as error -> error
+                      | Ok configuration ->
+                          axis.sample_set configuration value
+                          |> Result.map_error contextual
+                    in
+                    ( configuration,
+                      {
+                        Grid_search.parameter_name = axis.sample_name;
+                        parameter_value = axis.sample_encode value;
+                      }
+                      :: partial.Grid_search.reversed_parameters )
+              in
+              (i + 1, { Grid_search.configuration; reversed_parameters }))
+        ( 0,
+          {
+            Grid_search.configuration = Ok space.sample_base;
+            reversed_parameters = [];
+          } )
+        space.sample_axes
+      |> snd
+    in
+    (space.sample_count, partial_at)
+
+  let sample ~seed space =
+    let count, partial_at = prepare ~seed space in
+    Array.init count (fun index ->
+        let partial = partial_at index in
+        {
+          sampled_parameters =
+            List.rev partial.Grid_search.reversed_parameters |> Array.of_list;
+          sampled_configuration = partial.Grid_search.configuration;
+        })
+
+  module Regression = struct
+    type model = Cross_validation.Regression.model
+
+    let search_with_policy ?(return_train_score = false)
+        ?(failure_policy = Cross_validation.Record)
+        ?(execution = Execution.sequential) ?metadata ?checkpoint
+        ?(custom_scorers = [||]) ~space ~splitter ~scorers ~policy ~seed dataset
+        =
+      let metadata =
+        Option.value metadata ~default:(Metadata.of_dataset dataset)
+      in
+      let scorer_names =
+        Array.append
+          (Array.map Regression_scorer.name scorers)
+          (Array.map Scorer.name custom_scorers)
+      in
+      let settings =
+        Grid_search.settings ~return_train_score ~failure_policy ~scorer_names
+          ~policy
+      in
+      Search_checkpoint.with_run checkpoint
+        ~algorithm:"randomized-search:Regression" ~settings ~seed ~metadata
+        ~target:Search_checkpoint.regression ~splitter dataset (fun splitter ->
+          let cross_validate ~metadata ~return_train_score ~failure_policy
+              ~fit_seed pipeline dataset =
+            Cross_validation.Regression.cross_validate ~metadata
+              ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
+              ~scorers ~custom_scorers ~seed pipeline dataset
+          in
+          Grid_search.search_candidates ?checkpoint ~return_train_score
+            ~failure_policy ~cross_validate ~scorer_names ~metadata ~policy
+            ~seed ~operation:"randomized-search"
+            ~prepare:(fun () -> prepare ~seed space)
+            ~build:space.sample_build dataset)
+
+    let search ?return_train_score ?failure_policy ?execution ?metadata
+        ?checkpoint ?custom_scorers ~space ~splitter ~scorers ~refit ~seed
+        dataset =
+      search_with_policy ?return_train_score ?failure_policy ?execution
+        ?metadata ?checkpoint ?custom_scorers ~space ~splitter ~scorers
+        ~policy:(Grid_search.Best_score refit) ~seed dataset
+  end
+
+  module Binary_classification = struct
+    type model = Cross_validation.Binary_classification.model
+
+    let search_with_policy ?(return_train_score = false)
+        ?(failure_policy = Cross_validation.Record)
+        ?(execution = Execution.sequential) ?metadata ?checkpoint
+        ?(custom_scorers = [||]) ~space ~splitter ~scorers ~policy ~seed dataset
+        =
+      let metadata =
+        Option.value metadata ~default:(Metadata.of_dataset dataset)
+      in
+      let scorer_names =
+        Array.append
+          (Array.map Binary_classification_scorer.name scorers)
+          (Array.map Scorer.name custom_scorers)
+      in
+      let settings =
+        Grid_search.settings ~return_train_score ~failure_policy ~scorer_names
+          ~policy
+      in
+      Search_checkpoint.with_run checkpoint
+        ~algorithm:"randomized-search:Binary_classification" ~settings ~seed
+        ~metadata ~target:Search_checkpoint.classification ~splitter dataset
+        (fun splitter ->
+          let cross_validate ~metadata ~return_train_score ~failure_policy
+              ~fit_seed pipeline dataset =
+            Cross_validation.Binary_classification.cross_validate ~metadata
+              ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
+              ~scorers ~custom_scorers ~seed pipeline dataset
+          in
+          Grid_search.search_candidates ?checkpoint ~return_train_score
+            ~failure_policy ~cross_validate ~scorer_names ~metadata ~policy
+            ~seed ~operation:"randomized-search"
+            ~prepare:(fun () -> prepare ~seed space)
+            ~build:space.sample_build dataset)
+
+    let search ?return_train_score ?failure_policy ?execution ?metadata
+        ?checkpoint ?custom_scorers ~space ~splitter ~scorers ~refit ~seed
+        dataset =
+      search_with_policy ?return_train_score ?failure_policy ?execution
+        ?metadata ?checkpoint ?custom_scorers ~space ~splitter ~scorers
+        ~policy:(Grid_search.Best_score refit) ~seed dataset
+  end
+
+  module Multiclass_classification = struct
+    type model = Cross_validation.Multiclass_classification.model
+
+    let search_with_policy ?(return_train_score = false)
+        ?(failure_policy = Cross_validation.Record)
+        ?(execution = Execution.sequential) ?metadata ?checkpoint
+        ?(custom_scorers = [||]) ~space ~splitter ~scorers ~policy ~seed dataset
+        =
+      let metadata =
+        Option.value metadata ~default:(Metadata.of_dataset dataset)
+      in
+      let scorer_names =
+        Array.append
+          (Array.map Multiclass_classification_scorer.name scorers)
+          (Array.map Scorer.name custom_scorers)
+      in
+      let settings =
+        Grid_search.settings ~return_train_score ~failure_policy ~scorer_names
+          ~policy
+      in
+      Search_checkpoint.with_run checkpoint
+        ~algorithm:"randomized-search:Multiclass_classification" ~settings ~seed
+        ~metadata ~target:Search_checkpoint.classification ~splitter dataset
+        (fun splitter ->
+          let cross_validate ~metadata ~return_train_score ~failure_policy
+              ~fit_seed pipeline dataset =
+            Cross_validation.Multiclass_classification.cross_validate ~metadata
+              ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
+              ~scorers ~custom_scorers ~seed pipeline dataset
+          in
+          Grid_search.search_candidates ?checkpoint ~return_train_score
+            ~failure_policy ~cross_validate ~scorer_names ~metadata ~policy
+            ~seed ~operation:"randomized-search"
+            ~prepare:(fun () -> prepare ~seed space)
+            ~build:space.sample_build dataset)
+
+    let search ?return_train_score ?failure_policy ?execution ?metadata
+        ?checkpoint ?custom_scorers ~space ~splitter ~scorers ~refit ~seed
+        dataset =
+      search_with_policy ?return_train_score ?failure_policy ?execution
+        ?metadata ?checkpoint ?custom_scorers ~space ~splitter ~scorers
+        ~policy:(Grid_search.Best_score refit) ~seed dataset
+  end
+end
+
+module Successive_halving = struct
+  type budget = { schedule : int array; factor : int; max_fits : int option }
+
+  type ('configuration, 'target, 'prediction) candidates = {
+    count : int;
+    prepare : Seed.t -> int -> 'configuration Grid_search.partial;
+    build :
+      'configuration -> (('target, 'prediction) Pipeline.t, Error.t) result;
+  }
+
+  type 'model round = {
+    round_index : int;
+    training_samples : int;
+    candidates : 'model Grid_search.candidate array;
+    promoted_candidate_indices : int array;
+  }
+
+  type 'model report = {
+    completed_rounds : 'model round array;
+    final_report : 'model Grid_search.report;
+  }
+
+  let invalid reason =
+    Error
+      (Grid_search.validation ~name:"successive halving" ~reason
+         ~remediation:
+           "supply feasible training-row budgets, folds, and candidate \
+            specifications")
+
+  let budget ?max_fits ~min_samples ~max_samples ~factor () =
+    if min_samples < 1 || max_samples < min_samples || factor < 2 then
+      invalid "require 1 <= min_samples <= max_samples and factor >= 2"
+    else if Option.fold ~none:false ~some:(fun value -> value < 1) max_fits then
+      invalid "max_fits must be positive"
+    else
+      let rec schedule value reversed =
+        if value = max_samples then Array.of_list (List.rev (value :: reversed))
+        else
+          schedule
+            (if value > max_samples / factor then max_samples
+             else value * factor)
+            (value :: reversed)
+      in
+      Ok { schedule = schedule min_samples []; factor; max_fits }
+
+  let resources budget = Array.copy budget.schedule
+
+  let of_grid grid =
+    {
+      count = Grid_search.candidate_count grid;
+      prepare =
+        (fun _ ->
+          let partials = Grid_search.expand grid in
+          Array.get partials);
+      build = grid.Grid_search.build;
+    }
+
+  let of_randomized space =
+    {
+      count = Randomized_search.candidate_count space;
+      prepare = (fun seed -> snd (Randomized_search.prepare ~seed space));
+      build = space.Randomized_search.sample_build;
+    }
+
+  let rounds report =
+    Array.map
+      (fun round ->
+        {
+          round with
+          candidates = Array.map Grid_search.copy_candidate round.candidates;
+          promoted_candidate_indices =
+            Array.copy round.promoted_candidate_indices;
+        })
+      report.completed_rounds
+
+  let selection report = Grid_search.selection report.final_report
+  let refit_result report = Grid_search.refit_result report.final_report
+  let survivors count factor = 1 + ((count - 1) / factor)
+
+  let fit_bound budget count folds policy =
+    let ( let* ) = Result.bind in
+    let rec sum index count total =
+      if index = Array.length budget.schedule then Ok total
+      else if count > (max_int - total) / folds then
+        invalid "planned fit count exceeds the integer limit"
+      else
+        sum (index + 1) (survivors count budget.factor) (total + (count * folds))
+    in
+    let* total =
+      sum 0 count
+        (match policy with
+        | Grid_search.No_refit -> 0
+        | Grid_search.Best_score _ | Grid_search.Custom _ -> 1)
+    in
+    match budget.max_fits with
+    | Some maximum when total > maximum ->
+        invalid "planned fit count exceeds max_fits"
+    | None | Some _ -> Ok ()
+
+  let data result =
+    Result.map_error
+      (fun error ->
+        Error.of_data_error
+          ~remediation:"supply aligned rows with positive total sample weight"
+          error)
+      result
+
+  let validate_view dataset metadata view =
+    let ( let* ) = Result.bind in
+    let* _ = Metadata.select metadata view in
+    match Dataset.sample_weight dataset with
+    | None -> Ok ()
+    | Some weight ->
+        Result.map (fun _ -> ()) (data (Sample_weight.select weight view))
+
+  let partitions ~budget ~splitter ~labels ~seed ~metadata dataset =
+    let ( let* ) = Result.bind in
+    let rows = Dataset.sample_count dataset in
+    let rng =
+      Seed.derive seed ~operation:"cross-validation-splitter" ~index:0
+      |> Rng.create
+    in
+    let* pairs =
+      splitter.Cross_validation.run_splitter ~rng
+        ~groups:(Dataset.groups dataset) ~x:(Dataset.features dataset)
+        ~y:(Dataset.target dataset)
+    in
+    let* () =
+      if Array.length pairs = 0 then
+        invalid "at least one validation fold is required"
+      else Ok ()
+    in
+    let classes =
+      match labels with
+      | None -> [||]
+      | Some values ->
+          Array.to_list values |> List.sort_uniq Int.compare |> Array.of_list
+    in
+    let* () =
+      if Array.length classes > budget.schedule.(0) then
+        invalid "minimum training budget cannot cover every class"
+      else Ok ()
+    in
+    let validate_classes indices =
+      match labels with
+      | None -> Ok ()
+      | Some values ->
+          let seen = Hashtbl.create (Array.length classes) in
+          Array.iter (fun row -> Hashtbl.replace seen values.(row) ()) indices;
+          if Hashtbl.length seen = Array.length classes then Ok ()
+          else
+            invalid
+              "every base training and validation fold must contain every class"
+    in
+    let rec prepare index reversed =
+      if index = Array.length pairs then Ok (Array.of_list (List.rev reversed))
+      else
+        let train, test = pairs.(index) in
+        let checked =
+          let* _ = Split.of_views ~train ~test in
+          let* () =
+            if
+              Row_view.source_size train <> rows
+              || Row_view.source_size test <> rows
+            then invalid "fold source size differs from the dataset"
+            else Ok ()
+          in
+          let order = Row_view.indices train in
+          let* () =
+            if
+              Array.length order
+              < budget.schedule.(Array.length budget.schedule - 1)
+            then invalid "maximum training budget exceeds a base training fold"
+            else Ok ()
+          in
+          let* () = validate_classes order in
+          let* () = validate_classes (Row_view.indices test) in
+          let* () = validate_view dataset metadata test in
+          let rng =
+            Seed.derive seed ~operation:"halving-training-rows" ~index
+            |> Rng.create
+          in
+          Splitter_internal.shuffle rng order;
+          let order =
+            match labels with
+            | None -> order
+            | Some values ->
+                let seen = Hashtbl.create (Array.length classes) in
+                let first, rest =
+                  Array.to_list order
+                  |> List.partition (fun row ->
+                      if Hashtbl.mem seen values.(row) then false
+                      else (
+                        Hashtbl.add seen values.(row) ();
+                        true))
+                in
+                Array.of_list (first @ rest)
+          in
+          let* views =
+            Array.fold_left
+              (fun result resource ->
+                let* reversed = result in
+                let* train =
+                  data
+                    (Row_view.create ~source_size:rows
+                       (Array.sub order 0 resource))
+                in
+                let* () = validate_view dataset metadata train in
+                Ok ((train, test) :: reversed))
+              (Ok []) budget.schedule
+          in
+          Ok (Array.of_list (List.rev views))
+        in
+        let* views =
+          Result.map_error (Error.with_context (Error.Fold index)) checked
+        in
+        prepare (index + 1) (views :: reversed)
+    in
+    prepare 0 []
+
+  let run ?checkpoint ~return_train_score ~failure_policy ~metadata ~budget
+      ~candidates:source ~splitter ~scorer_names ~cross_validate ~labels
+      ~promotion_score ~policy ~seed dataset =
+    let ( let* ) = Result.bind in
+    let* primary = Grid_search.validate_refit scorer_names promotion_score in
+    let* () =
+      match policy with
+      | Grid_search.Best_score name ->
+          Result.map
+            (fun _ -> ())
+            (Grid_search.validate_refit scorer_names name)
+      | Grid_search.No_refit | Grid_search.Custom _ -> Ok ()
+    in
+    let* () = Metadata.validate ~rows:(Dataset.sample_count dataset) metadata in
+    Callback.run
+      (Metadata.callback metadata)
+      ~operation:Callback.Search
+      ~outcome:(fun report ->
+        match refit_result report with
+        | Ok _ -> Callback.Succeeded
+        | Error error -> Callback.Failed error)
+      (fun () ->
+        let* partitions =
+          partitions ~budget ~splitter ~labels ~seed ~metadata dataset
+        in
+        let* () =
+          fit_bound budget source.count (Array.length partitions) policy
+        in
+        let at = source.prepare seed in
+        let cache = Array.make source.count None in
+        let partial index =
+          match cache.(index) with
+          | Some value -> value
+          | None ->
+              let value = at index in
+              cache.(index) <- Some value;
+              value
+        in
+        let rec loop index active reversed =
+          let final = index + 1 = Array.length budget.schedule in
+          let pairs = Array.map (fun views -> views.(index)) partitions in
+          let splitter =
+            {
+              Cross_validation.run_splitter =
+                (fun ~rng:_ ~groups:_ ~x:_ ~y:_ -> Ok pairs);
+            }
+          in
+          let metadata =
+            Metadata.scope
+              (Error.Stage ("halving round " ^ string_of_int index))
+              metadata
+          in
+          let* report =
+            Grid_search.search_candidates ?checkpoint
+              ~checkpoint_stage:(string_of_int index)
+              ~candidate_id:(Array.get active) ~search_callback:false
+              ~return_train_score ~failure_policy
+              ~cross_validate:(cross_validate splitter) ~scorer_names ~metadata
+              ~policy:(if final then policy else Grid_search.No_refit)
+              ~seed ~operation:"halving-search"
+              ~prepare:(fun () ->
+                (Array.length active, fun position -> partial active.(position)))
+              ~build:source.build dataset
+          in
+          let ranked, _ =
+            Grid_search.rank_candidates primary
+              report.Grid_search.report_candidates
+          in
+          let eligible =
+            Array.to_list ranked
+            |> List.filter (fun candidate ->
+                Option.is_some candidate.Grid_search.rank)
+            |> List.sort (fun left right ->
+                let order =
+                  compare left.Grid_search.rank right.Grid_search.rank
+                in
+                if order <> 0 then order
+                else
+                  Int.compare left.Grid_search.candidate_index
+                    right.Grid_search.candidate_index)
+          in
+          let rec take count = function
+            | [] -> []
+            | _ when count = 0 -> []
+            | head :: tail ->
+                head.Grid_search.candidate_index :: take (count - 1) tail
+          in
+          let promoted =
+            if final then [||]
+            else
+              Array.of_list
+                (take (survivors (Array.length active) budget.factor) eligible)
+          in
+          let round =
+            {
+              round_index = index;
+              training_samples = budget.schedule.(index);
+              candidates = ranked;
+              promoted_candidate_indices = promoted;
+            }
+          in
+          let reversed = round :: reversed in
+          let finish report =
+            Ok
+              {
+                completed_rounds = Array.of_list (List.rev reversed);
+                final_report = report;
+              }
+          in
+          let* () =
+            match Metadata.callback metadata with
+            | None -> Ok ()
+            | Some callback ->
+                Callback.progress
+                  (Callback.for_operation Callback.Search callback)
+                  ~completed:(index + 1)
+                  ~total:(Array.length budget.schedule)
+                  ()
+          in
+          if final then finish report
+          else if Array.length promoted = 0 then
+            let error =
+              match
+                invalid "no candidate has an aggregatable promotion score"
+              with
+              | Error error -> error
+              | Ok _ -> assert false
+            in
+            if failure_policy = Cross_validation.Abort then Error error
+            else
+              finish { report with Grid_search.report_selection = Error error }
+          else
+            let active = Array.copy promoted in
+            Array.sort Int.compare active;
+            loop (index + 1) active reversed
+        in
+        loop 0 (Array.init source.count Fun.id) [])
+
+  module Regression = struct
+    type model = Cross_validation.Regression.model
+
+    let search_with_policy ?(return_train_score = false)
+        ?(failure_policy = Cross_validation.Record)
+        ?(execution = Execution.sequential) ?metadata ?checkpoint ~budget
+        ~candidates ~splitter ~scorers ~promotion_score ~policy ~seed dataset =
+      let labels = None in
+      let metadata =
+        Option.value metadata ~default:(Metadata.of_dataset dataset)
+      in
+      let scorer_names = Array.map Regression_scorer.name scorers in
+      let settings =
+        Modelkit_checkpoint_codec.encode
+          (fun emit () ->
+            Modelkit_checkpoint_codec.token emit
+              (Grid_search.settings ~return_train_score ~failure_policy
+                 ~scorer_names ~policy);
+            Modelkit_checkpoint_codec.token emit promotion_score;
+            Modelkit_checkpoint_codec.array Modelkit_checkpoint_codec.int emit
+              budget.schedule;
+            Modelkit_checkpoint_codec.int emit budget.factor;
+            Modelkit_checkpoint_codec.option Modelkit_checkpoint_codec.int emit
+              budget.max_fits)
+          ()
+      in
+      Search_checkpoint.with_run checkpoint
+        ~algorithm:"halving-search:Regression" ~settings ~seed ~metadata
+        ~target:Search_checkpoint.regression ~splitter dataset (fun splitter ->
+          let cross_validate splitter ~metadata ~return_train_score
+              ~failure_policy ~fit_seed pipeline dataset =
+            Cross_validation.Regression.cross_validate ~return_indices:true
+              ~metadata ~return_train_score ~failure_policy ~fit_seed ~execution
+              ~splitter ~scorers ~seed pipeline dataset
+          in
+          run ?checkpoint ~return_train_score ~failure_policy ~metadata ~budget
+            ~candidates ~splitter ~scorer_names ~cross_validate ~labels
+            ~promotion_score ~policy ~seed dataset)
+
+    let search ?return_train_score ?failure_policy ?execution ?metadata
+        ?checkpoint ~budget ~candidates ~splitter ~scorers ~refit ~seed dataset
+        =
+      search_with_policy ?return_train_score ?failure_policy ?execution
+        ?metadata ?checkpoint ~budget ~candidates ~splitter ~scorers
+        ~promotion_score:refit ~policy:(Grid_search.Best_score refit) ~seed
+        dataset
+  end
+
+  module Binary_classification = struct
+    type model = Cross_validation.Binary_classification.model
+
+    let search_with_policy ?(return_train_score = false)
+        ?(failure_policy = Cross_validation.Record)
+        ?(execution = Execution.sequential) ?metadata ?checkpoint ~budget
+        ~candidates ~splitter ~scorers ~promotion_score ~policy ~seed dataset =
+      let ( let* ) = Result.bind in
+      let values = Target.classification_values (Dataset.target dataset) in
+      let classes =
+        List.sort_uniq Int.compare (Array.to_list values) |> List.length
+      in
+      let* () =
+        if classes <> 2 then
+          invalid "Binary_classification requires exactly two classes"
+        else Ok ()
+      in
+      let labels = Some values in
+      let metadata =
+        Option.value metadata ~default:(Metadata.of_dataset dataset)
+      in
+      let scorer_names = Array.map Binary_classification_scorer.name scorers in
+      let settings =
+        Modelkit_checkpoint_codec.encode
+          (fun emit () ->
+            Modelkit_checkpoint_codec.token emit
+              (Grid_search.settings ~return_train_score ~failure_policy
+                 ~scorer_names ~policy);
+            Modelkit_checkpoint_codec.token emit promotion_score;
+            Modelkit_checkpoint_codec.array Modelkit_checkpoint_codec.int emit
+              budget.schedule;
+            Modelkit_checkpoint_codec.int emit budget.factor;
+            Modelkit_checkpoint_codec.option Modelkit_checkpoint_codec.int emit
+              budget.max_fits)
+          ()
+      in
+      Search_checkpoint.with_run checkpoint
+        ~algorithm:"halving-search:Binary_classification" ~settings ~seed
+        ~metadata ~target:Search_checkpoint.classification ~splitter dataset
+        (fun splitter ->
+          let cross_validate splitter ~metadata ~return_train_score
+              ~failure_policy ~fit_seed pipeline dataset =
+            Cross_validation.Binary_classification.cross_validate
+              ~return_indices:true ~metadata ~return_train_score ~failure_policy
+              ~fit_seed ~execution ~splitter ~scorers ~seed pipeline dataset
+          in
+          run ?checkpoint ~return_train_score ~failure_policy ~metadata ~budget
+            ~candidates ~splitter ~scorer_names ~cross_validate ~labels
+            ~promotion_score ~policy ~seed dataset)
+
+    let search ?return_train_score ?failure_policy ?execution ?metadata
+        ?checkpoint ~budget ~candidates ~splitter ~scorers ~refit ~seed dataset
+        =
+      search_with_policy ?return_train_score ?failure_policy ?execution
+        ?metadata ?checkpoint ~budget ~candidates ~splitter ~scorers
+        ~promotion_score:refit ~policy:(Grid_search.Best_score refit) ~seed
+        dataset
+  end
+
+  module Multiclass_classification = struct
+    type model = Cross_validation.Multiclass_classification.model
+
+    let search_with_policy ?(return_train_score = false)
+        ?(failure_policy = Cross_validation.Record)
+        ?(execution = Execution.sequential) ?metadata ?checkpoint ~budget
+        ~candidates ~splitter ~scorers ~promotion_score ~policy ~seed dataset =
+      let ( let* ) = Result.bind in
+      let values = Target.classification_values (Dataset.target dataset) in
+      let classes =
+        List.sort_uniq Int.compare (Array.to_list values) |> List.length
+      in
+      let* () =
+        if classes < 3 then
+          invalid "Multiclass_classification requires at least three classes"
+        else Ok ()
+      in
+      let labels = Some values in
+      let metadata =
+        Option.value metadata ~default:(Metadata.of_dataset dataset)
+      in
       let scorer_names =
         Array.map Multiclass_classification_scorer.name scorers
       in
-      let cross_validate ~return_train_score ~failure_policy ~fit_seed pipeline
-          dataset =
-        Cross_validation.Multiclass_classification.cross_validate
-          ~return_train_score ~failure_policy ~fit_seed ~execution ~splitter
-          ~scorers ~seed pipeline dataset
+      let settings =
+        Modelkit_checkpoint_codec.encode
+          (fun emit () ->
+            Modelkit_checkpoint_codec.token emit
+              (Grid_search.settings ~return_train_score ~failure_policy
+                 ~scorer_names ~policy);
+            Modelkit_checkpoint_codec.token emit promotion_score;
+            Modelkit_checkpoint_codec.array Modelkit_checkpoint_codec.int emit
+              budget.schedule;
+            Modelkit_checkpoint_codec.int emit budget.factor;
+            Modelkit_checkpoint_codec.option Modelkit_checkpoint_codec.int emit
+              budget.max_fits)
+          ()
       in
-      search ~return_train_score ~failure_policy ~cross_validate ~scorer_names
-        ~refit ~seed grid dataset
+      Search_checkpoint.with_run checkpoint
+        ~algorithm:"halving-search:Multiclass_classification" ~settings ~seed
+        ~metadata ~target:Search_checkpoint.classification ~splitter dataset
+        (fun splitter ->
+          let cross_validate splitter ~metadata ~return_train_score
+              ~failure_policy ~fit_seed pipeline dataset =
+            Cross_validation.Multiclass_classification.cross_validate
+              ~return_indices:true ~metadata ~return_train_score ~failure_policy
+              ~fit_seed ~execution ~splitter ~scorers ~seed pipeline dataset
+          in
+          run ?checkpoint ~return_train_score ~failure_policy ~metadata ~budget
+            ~candidates ~splitter ~scorer_names ~cross_validate ~labels
+            ~promotion_score ~policy ~seed dataset)
+
+    let search ?return_train_score ?failure_policy ?execution ?metadata
+        ?checkpoint ~budget ~candidates ~splitter ~scorers ~refit ~seed dataset
+        =
+      search_with_policy ?return_train_score ?failure_policy ?execution
+        ?metadata ?checkpoint ~budget ~candidates ~splitter ~scorers
+        ~promotion_score:refit ~policy:(Grid_search.Best_score refit) ~seed
+        dataset
   end
 end

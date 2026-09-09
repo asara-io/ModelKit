@@ -69,6 +69,27 @@ let fitted_ridge_pipeline () =
 
 let test_regression_round_trip () =
   let x, schema, fitted = fitted_ridge_pipeline () in
+  let support = Pipeline.artifact_report fitted in
+  Alcotest.(check bool)
+    "portable artifact supported" true
+    (Pipeline.portable_artifact_supported support);
+  let components =
+    Array.append
+      (Pipeline.artifact_transformers support)
+      [| Pipeline.artifact_estimator support |]
+  in
+  Array.iter
+    (fun component ->
+      Alcotest.(check bool)
+        "component codec" true
+        (component.Pipeline.serialization_support = Pipeline.Portable_artifact);
+      match component.Pipeline.provenance with
+      | None -> Alcotest.fail "missing built-in component provenance"
+      | Some provenance ->
+          Alcotest.(check string)
+            "component package" "modelkit"
+            (Pipeline.provenance_package provenance))
+    components;
   let metadata =
     Artifact.metadata ~training_rows:5 ~root_seed:(Seed.of_int 2048)
       ~sample_weighted:false
@@ -79,6 +100,15 @@ let test_regression_round_trip () =
   let encoded = Artifact.encode_regression ~metadata fitted |> get in
   let loaded = Artifact.decode_regression encoded |> get in
   let restored = Artifact.model loaded in
+  let restored_terminal =
+    Pipeline.artifact_report restored |> Pipeline.artifact_estimator
+  in
+  (match restored_terminal.Pipeline.provenance with
+  | None -> Alcotest.fail "decoded component provenance is absent"
+  | Some provenance ->
+      Alcotest.(check string)
+        "decoded producer version" "0.5.0"
+        (Pipeline.provenance_version provenance));
   let before = Pipeline.predict fitted ~feature_schema:schema ~x |> get in
   let after = Pipeline.predict restored ~feature_schema:schema ~x |> get in
   check_regression_predictions "regression predictions" before after;
@@ -86,7 +116,7 @@ let test_regression_round_trip () =
     "training rows" (Some 5)
     (Artifact.metadata_of_loaded loaded |> Artifact.training_rows);
   Alcotest.(check string)
-    "producer version" "0.4.1"
+    "producer version" "0.5.0"
     (Artifact.producer_version loaded);
   Alcotest.(check string)
     "canonical bytes survive another write" (Bytes.to_string encoded)
@@ -313,9 +343,19 @@ let test_golden_reader_and_component_versions () =
   Alcotest.(check string)
     "golden producer version" "0.3.0"
     (Artifact.producer_version loaded);
+  let golden_terminal =
+    Artifact.model loaded |> Pipeline.artifact_report
+    |> Pipeline.artifact_estimator
+  in
+  (match golden_terminal.Pipeline.provenance with
+  | None -> Alcotest.fail "golden component provenance is absent"
+  | Some provenance ->
+      Alcotest.(check string)
+        "golden component producer" "0.3.0"
+        (Pipeline.provenance_version provenance));
   let rewritten = Artifact.encode_regression (Artifact.model loaded) |> get in
   Alcotest.(check string)
-    "rewritten producer version" "0.4.1"
+    "rewritten producer version" "0.5.0"
     (Artifact.decode_regression rewritten |> get |> Artifact.producer_version);
   let tag_offset, version_offset = terminal_component_offsets golden in
   let unknown_tag = Bytes.copy golden in

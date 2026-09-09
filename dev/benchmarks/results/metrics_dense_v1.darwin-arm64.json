@@ -15,7 +15,7 @@
     },
     "python": "3.14.3"
   },
-  "generated_at": "2026-08-14T07:18:51.462538+00:00",
+  "generated_at": "2026-09-09T04:55:07.653440+00:00",
   "methodology": {
     "measurement": "interleaved fresh-process wall time and sampled resident set size",
     "rss_sample_interval_seconds": 0.001,
@@ -29,10 +29,10 @@
   "runs": {
     "modelkit": [
       {
-        "elapsed_ns": 165518041,
-        "peak_rss_bytes": 49283072,
+        "elapsed_ns": 154475625,
+        "peak_rss_bytes": 49332224,
         "worker": {
-          "allocated_words": 27638011,
+          "allocated_words": 19238589,
           "checksum": "0.017142600000000507,0.00039999166666668408,0.019999791665582023,0.99999952000888004,0.90909333333333331,0.90909333333333331,0.90908787882828224,0.90910000000000002,0.9090939393737375,0.3521889753887073,1,35,34,0.63047266941804747,0.41390965511203281",
           "ocaml": "5.3.0",
           "operations": [
@@ -72,10 +72,10 @@
         }
       },
       {
-        "elapsed_ns": 156604291,
-        "peak_rss_bytes": 46497792,
+        "elapsed_ns": 151602083,
+        "peak_rss_bytes": 45383680,
         "worker": {
-          "allocated_words": 27638011,
+          "allocated_words": 19238589,
           "checksum": "0.017142600000000507,0.00039999166666668408,0.019999791665582023,0.99999952000888004,0.90909333333333331,0.90909333333333331,0.90908787882828224,0.90910000000000002,0.9090939393737375,0.3521889753887073,1,35,34,0.63047266941804747,0.41390965511203281",
           "ocaml": "5.3.0",
           "operations": [
@@ -115,10 +115,10 @@
         }
       },
       {
-        "elapsed_ns": 156544417,
-        "peak_rss_bytes": 49741824,
+        "elapsed_ns": 150630000,
+        "peak_rss_bytes": 46006272,
         "worker": {
-          "allocated_words": 27638011,
+          "allocated_words": 19238589,
           "checksum": "0.017142600000000507,0.00039999166666668408,0.019999791665582023,0.99999952000888004,0.90909333333333331,0.90909333333333331,0.90908787882828224,0.90910000000000002,0.9090939393737375,0.3521889753887073,1,35,34,0.63047266941804747,0.41390965511203281",
           "ocaml": "5.3.0",
           "operations": [
@@ -160,8 +160,8 @@
     ],
     "sklearn": [
       {
-        "elapsed_ns": 746805500,
-        "peak_rss_bytes": 137527296,
+        "elapsed_ns": 759525500,
+        "peak_rss_bytes": 143736832,
         "worker": {
           "allocated_words": null,
           "checksum": "8a86dff6b4205982d9cbd4a62596abbccbdbc98ef29d5a37e3b48efae06fbdd7",
@@ -202,8 +202,8 @@
         }
       },
       {
-        "elapsed_ns": 731848875,
-        "peak_rss_bytes": 136904704,
+        "elapsed_ns": 768535708,
+        "peak_rss_bytes": 138395648,
         "worker": {
           "allocated_words": null,
           "checksum": "8a86dff6b4205982d9cbd4a62596abbccbdbc98ef29d5a37e3b48efae06fbdd7",
@@ -244,8 +244,8 @@
         }
       },
       {
-        "elapsed_ns": 737732958,
-        "peak_rss_bytes": 136511488,
+        "elapsed_ns": 758787917,
+        "peak_rss_bytes": 139034624,
         "worker": {
           "allocated_words": null,
           "checksum": "8a86dff6b4205982d9cbd4a62596abbccbdbc98ef29d5a37e3b48efae06fbdd7",

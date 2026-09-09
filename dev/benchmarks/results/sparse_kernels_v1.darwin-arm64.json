@@ -15,7 +15,7 @@
     },
     "python": "3.14.3"
   },
-  "generated_at": "2026-09-04T21:18:48.656132+00:00",
+  "generated_at": "2026-09-09T05:01:38.353151+00:00",
   "methodology": {
     "measurement": "interleaved fresh-process wall time and sampled resident set size",
     "rss_sample_interval_seconds": 0.001,
@@ -29,8 +29,8 @@
   "runs": {
     "modelkit": [
       {
-        "elapsed_ns": 8734422667,
-        "peak_rss_bytes": 297418752,
+        "elapsed_ns": 8802971625,
+        "peak_rss_bytes": 290258944,
         "worker": {
           "allocated_words": 155271903,
           "checksum": "f7b5d75f8bfa621ec6b33a508f30afd4",
@@ -42,19 +42,19 @@
               },
               "csr_product": {
                 "allocated_words": 6000492,
-                "elapsed_ns": 15506982
+                "elapsed_ns": 16487836
               },
               "csr_transposed_product": {
                 "allocated_words": 36532,
-                "elapsed_ns": 13404130
+                "elapsed_ns": 13294935
               },
               "dense_product": {
                 "allocated_words": 6000392,
-                "elapsed_ns": 1057255029
+                "elapsed_ns": 1062898159
               },
               "dense_transposed_product": {
                 "allocated_words": 24392,
-                "elapsed_ns": 1346417903
+                "elapsed_ns": 1336032152
               },
               "density": 0.01,
               "nonzeros": 100000
@@ -66,19 +66,19 @@
               },
               "csr_product": {
                 "allocated_words": 6000492,
-                "elapsed_ns": 70847988
+                "elapsed_ns": 69329977
               },
               "csr_transposed_product": {
                 "allocated_words": 36532,
-                "elapsed_ns": 45990943
+                "elapsed_ns": 46272993
               },
               "dense_product": {
                 "allocated_words": 6000392,
-                "elapsed_ns": 1078540086
+                "elapsed_ns": 1094283103
               },
               "dense_transposed_product": {
                 "allocated_words": 24392,
-                "elapsed_ns": 1356045007
+                "elapsed_ns": 1411255121
               },
               "density": 0.05,
               "nonzeros": 500000
@@ -90,19 +90,19 @@
               },
               "csr_product": {
                 "allocated_words": 6000492,
-                "elapsed_ns": 329280853
+                "elapsed_ns": 324573993
               },
               "csr_transposed_product": {
                 "allocated_words": 36532,
-                "elapsed_ns": 185379981
+                "elapsed_ns": 186348915
               },
               "dense_product": {
                 "allocated_words": 6000392,
-                "elapsed_ns": 1133345127
+                "elapsed_ns": 1141568183
               },
               "dense_transposed_product": {
                 "allocated_words": 24392,
-                "elapsed_ns": 1366887092
+                "elapsed_ns": 1358012199
               },
               "density": 0.25,
               "nonzeros": 2500000
@@ -113,7 +113,7 @@
             "allocated_bytes": 200000,
             "materialize": {
               "allocated_words": 1525036,
-              "elapsed_ns": 4943132
+              "elapsed_ns": 5182981
             },
             "materialized_bytes": 4200008,
             "shared_bytes": 8400008,
@@ -127,12 +127,12 @@
             },
             "csr_transform": {
               "allocated_words": 13872100,
-              "elapsed_ns": 70334911
+              "elapsed_ns": 70635080
             },
             "dense_bytes": 80000000,
             "dense_transform": {
               "allocated_words": 24344075,
-              "elapsed_ns": 172590970
+              "elapsed_ns": 173757076
             },
             "output_columns": 500
           },
@@ -180,8 +180,8 @@
         }
       },
       {
-        "elapsed_ns": 8714212250,
-        "peak_rss_bytes": 293060608,
+        "elapsed_ns": 8795900125,
+        "peak_rss_bytes": 286720000,
         "worker": {
           "allocated_words": 155271903,
           "checksum": "f7b5d75f8bfa621ec6b33a508f30afd4",
@@ -193,19 +193,19 @@
               },
               "csr_product": {
                 "allocated_words": 6000492,
-                "elapsed_ns": 15576124
+                "elapsed_ns": 16009807
               },
               "csr_transposed_product": {
                 "allocated_words": 36532,
-                "elapsed_ns": 13314008
+                "elapsed_ns": 13372898
               },
               "dense_product": {
                 "allocated_words": 6000392,
-                "elapsed_ns": 1057775974
+                "elapsed_ns": 1064872980
               },
               "dense_transposed_product": {
                 "allocated_words": 24392,
-                "elapsed_ns": 1337491989
+                "elapsed_ns": 1341856956
               },
               "density": 0.01,
               "nonzeros": 100000
@@ -217,19 +217,19 @@
               },
               "csr_product": {
                 "allocated_words": 6000492,
-                "elapsed_ns": 70336103
+                "elapsed_ns": 68711996
               },
               "csr_transposed_product": {
                 "allocated_words": 36532,
-                "elapsed_ns": 46013832
+                "elapsed_ns": 45989990
               },
               "dense_product": {
                 "allocated_words": 6000392,
-                "elapsed_ns": 1077939987
+                "elapsed_ns": 1127187967
               },
               "dense_transposed_product": {
                 "allocated_words": 24392,
-                "elapsed_ns": 1347491025
+                "elapsed_ns": 1352252006
               },
               "density": 0.05,
               "nonzeros": 500000
@@ -241,19 +241,19 @@
               },
               "csr_product": {
                 "allocated_words": 6000492,
-                "elapsed_ns": 329971075
+                "elapsed_ns": 324882030
               },
               "csr_transposed_product": {
                 "allocated_words": 36532,
-                "elapsed_ns": 185222864
+                "elapsed_ns": 185662984
               },
               "dense_product": {
                 "allocated_words": 6000392,
-                "elapsed_ns": 1133022069
+                "elapsed_ns": 1141231060
               },
               "dense_transposed_product": {
                 "allocated_words": 24392,
-                "elapsed_ns": 1365969181
+                "elapsed_ns": 1372051000
               },
               "density": 0.25,
               "nonzeros": 2500000
@@ -264,7 +264,7 @@
             "allocated_bytes": 200000,
             "materialize": {
               "allocated_words": 1525036,
-              "elapsed_ns": 5038022
+              "elapsed_ns": 5219936
             },
             "materialized_bytes": 4200008,
             "shared_bytes": 8400008,
@@ -278,12 +278,12 @@
             },
             "csr_transform": {
               "allocated_words": 13872100,
-              "elapsed_ns": 70696115
+              "elapsed_ns": 70805788
             },
             "dense_bytes": 80000000,
             "dense_transform": {
               "allocated_words": 24344075,
-              "elapsed_ns": 172035932
+              "elapsed_ns": 173748016
             },
             "output_columns": 500
           },
@@ -331,8 +331,8 @@
         }
       },
       {
-        "elapsed_ns": 8740267709,
-        "peak_rss_bytes": 293568512,
+        "elapsed_ns": 8733385459,
+        "peak_rss_bytes": 300957696,
         "worker": {
           "allocated_words": 155271903,
           "checksum": "f7b5d75f8bfa621ec6b33a508f30afd4",
@@ -344,19 +344,19 @@
               },
               "csr_product": {
                 "allocated_words": 6000492,
-                "elapsed_ns": 20936965
+                "elapsed_ns": 15866994
               },
               "csr_transposed_product": {
                 "allocated_words": 36532,
-                "elapsed_ns": 13378858
+                "elapsed_ns": 13252973
               },
               "dense_product": {
                 "allocated_words": 6000392,
-                "elapsed_ns": 1057147026
+                "elapsed_ns": 1063865900
               },
               "dense_transposed_product": {
                 "allocated_words": 24392,
-                "elapsed_ns": 1345474958
+                "elapsed_ns": 1340585947
               },
               "density": 0.01,
               "nonzeros": 100000
@@ -368,19 +368,19 @@
               },
               "csr_product": {
                 "allocated_words": 6000492,
-                "elapsed_ns": 73658943
+                "elapsed_ns": 68717002
               },
               "csr_transposed_product": {
                 "allocated_words": 36532,
-                "elapsed_ns": 46000957
+                "elapsed_ns": 45970916
               },
               "dense_product": {
                 "allocated_words": 6000392,
-                "elapsed_ns": 1077651977
+                "elapsed_ns": 1084510087
               },
               "dense_transposed_product": {
                 "allocated_words": 24392,
-                "elapsed_ns": 1348858833
+                "elapsed_ns": 1344339132
               },
               "density": 0.05,
               "nonzeros": 500000
@@ -392,19 +392,19 @@
               },
               "csr_product": {
                 "allocated_words": 6000492,
-                "elapsed_ns": 328767061
+                "elapsed_ns": 324809074
               },
               "csr_transposed_product": {
                 "allocated_words": 36532,
-                "elapsed_ns": 185302019
+                "elapsed_ns": 185335874
               },
               "dense_product": {
                 "allocated_words": 6000392,
-                "elapsed_ns": 1133158922
+                "elapsed_ns": 1141242027
               },
               "dense_transposed_product": {
                 "allocated_words": 24392,
-                "elapsed_ns": 1372142076
+                "elapsed_ns": 1364531993
               },
               "density": 0.25,
               "nonzeros": 2500000
@@ -415,7 +415,7 @@
             "allocated_bytes": 200000,
             "materialize": {
               "allocated_words": 1525036,
-              "elapsed_ns": 4925966
+              "elapsed_ns": 5146980
             },
             "materialized_bytes": 4200008,
             "shared_bytes": 8400008,
@@ -429,12 +429,12 @@
             },
             "csr_transform": {
               "allocated_words": 13872100,
-              "elapsed_ns": 70213794
+              "elapsed_ns": 69755077
             },
             "dense_bytes": 80000000,
             "dense_transform": {
               "allocated_words": 24344075,
-              "elapsed_ns": 172425031
+              "elapsed_ns": 173577070
             },
             "output_columns": 500
           },
@@ -484,8 +484,8 @@
     ],
     "sklearn": [
       {
-        "elapsed_ns": 1574028125,
-        "peak_rss_bytes": 623738880,
+        "elapsed_ns": 1789221083,
+        "peak_rss_bytes": 619479040,
         "worker": {
           "allocated_words": null,
           "checksum": "ac284ad116f20d685180ca6d98608e237c98e37b769497830973abba9b64ae51",
@@ -497,19 +497,19 @@
               },
               "csr_product": {
                 "allocated_words": null,
-                "elapsed_ns": 1658500
+                "elapsed_ns": 1712584
               },
               "csr_transposed_product": {
                 "allocated_words": null,
-                "elapsed_ns": 2062041
+                "elapsed_ns": 1943000
               },
               "dense_product": {
                 "allocated_words": null,
-                "elapsed_ns": 55770000
+                "elapsed_ns": 55338375
               },
               "dense_transposed_product": {
                 "allocated_words": null,
-                "elapsed_ns": 115674458
+                "elapsed_ns": 118810667
               },
               "density": 0.01,
               "nonzeros": 100000
@@ -521,19 +521,19 @@
               },
               "csr_product": {
                 "allocated_words": null,
-                "elapsed_ns": 5093917
+                "elapsed_ns": 5168792
               },
               "csr_transposed_product": {
                 "allocated_words": null,
-                "elapsed_ns": 6115583
+                "elapsed_ns": 6108375
               },
               "dense_product": {
                 "allocated_words": null,
-                "elapsed_ns": 52988625
+                "elapsed_ns": 54298542
               },
               "dense_transposed_product": {
                 "allocated_words": null,
-                "elapsed_ns": 115822166
+                "elapsed_ns": 116929833
               },
               "density": 0.05,
               "nonzeros": 500000
@@ -545,19 +545,19 @@
               },
               "csr_product": {
                 "allocated_words": null,
-                "elapsed_ns": 29403958
+                "elapsed_ns": 31117584
               },
               "csr_transposed_product": {
                 "allocated_words": null,
-                "elapsed_ns": 29153500
+                "elapsed_ns": 28764084
               },
               "dense_product": {
                 "allocated_words": null,
-                "elapsed_ns": 54396125
+                "elapsed_ns": 54833792
               },
               "dense_transposed_product": {
                 "allocated_words": null,
-                "elapsed_ns": 118568917
+                "elapsed_ns": 115382417
               },
               "density": 0.25,
               "nonzeros": 2500000
@@ -568,7 +568,7 @@
             "allocated_bytes": null,
             "materialize": {
               "allocated_words": null,
-              "elapsed_ns": 712208
+              "elapsed_ns": 774083
             },
             "materialized_bytes": 3100004,
             "shared_bytes": null,
@@ -581,12 +581,12 @@
             },
             "csr_transform": {
               "allocated_words": null,
-              "elapsed_ns": 5861542
+              "elapsed_ns": 5878583
             },
             "dense_bytes": 80000000,
             "dense_transform": {
               "allocated_words": null,
-              "elapsed_ns": 11709125
+              "elapsed_ns": 11884333
             },
             "output_columns": 500
           },
@@ -634,8 +634,8 @@
         }
       },
       {
-        "elapsed_ns": 1578230709,
-        "peak_rss_bytes": 624148480,
+        "elapsed_ns": 1582849083,
+        "peak_rss_bytes": 617529344,
         "worker": {
           "allocated_words": null,
           "checksum": "ac284ad116f20d685180ca6d98608e237c98e37b769497830973abba9b64ae51",
@@ -647,19 +647,19 @@
               },
               "csr_product": {
                 "allocated_words": null,
-                "elapsed_ns": 1645292
+                "elapsed_ns": 1652875
               },
               "csr_transposed_product": {
                 "allocated_words": null,
-                "elapsed_ns": 1909708
+                "elapsed_ns": 1921583
               },
               "dense_product": {
                 "allocated_words": null,
-                "elapsed_ns": 53138500
+                "elapsed_ns": 54088833
               },
               "dense_transposed_product": {
                 "allocated_words": null,
-                "elapsed_ns": 117783125
+                "elapsed_ns": 114419166
               },
               "density": 0.01,
               "nonzeros": 100000
@@ -671,19 +671,19 @@
               },
               "csr_product": {
                 "allocated_words": null,
-                "elapsed_ns": 5159667
+                "elapsed_ns": 5164417
               },
               "csr_transposed_product": {
                 "allocated_words": null,
-                "elapsed_ns": 6146541
+                "elapsed_ns": 6148833
               },
               "dense_product": {
                 "allocated_words": null,
-                "elapsed_ns": 54123458
+                "elapsed_ns": 55301709
               },
               "dense_transposed_product": {
                 "allocated_words": null,
-                "elapsed_ns": 117647792
+                "elapsed_ns": 116520208
               },
               "density": 0.05,
               "nonzeros": 500000
@@ -695,19 +695,19 @@
               },
               "csr_product": {
                 "allocated_words": null,
-                "elapsed_ns": 30228416
+                "elapsed_ns": 29451625
               },
               "csr_transposed_product": {
                 "allocated_words": null,
-                "elapsed_ns": 29158708
+                "elapsed_ns": 28848958
               },
               "dense_product": {
                 "allocated_words": null,
-                "elapsed_ns": 53079333
+                "elapsed_ns": 53927791
               },
               "dense_transposed_product": {
                 "allocated_words": null,
-                "elapsed_ns": 116022208
+                "elapsed_ns": 117109625
               },
               "density": 0.25,
               "nonzeros": 2500000
@@ -718,7 +718,7 @@
             "allocated_bytes": null,
             "materialize": {
               "allocated_words": null,
-              "elapsed_ns": 688458
+              "elapsed_ns": 800542
             },
             "materialized_bytes": 3100004,
             "shared_bytes": null,
@@ -731,12 +731,12 @@
             },
             "csr_transform": {
               "allocated_words": null,
-              "elapsed_ns": 5866334
+              "elapsed_ns": 5672541
             },
             "dense_bytes": 80000000,
             "dense_transform": {
               "allocated_words": null,
-              "elapsed_ns": 11901666
+              "elapsed_ns": 11668959
             },
             "output_columns": 500
           },
@@ -784,8 +784,8 @@
         }
       },
       {
-        "elapsed_ns": 1592298208,
-        "peak_rss_bytes": 623493120,
+        "elapsed_ns": 1603258500,
+        "peak_rss_bytes": 626049024,
         "worker": {
           "allocated_words": null,
           "checksum": "ac284ad116f20d685180ca6d98608e237c98e37b769497830973abba9b64ae51",
@@ -797,19 +797,19 @@
               },
               "csr_product": {
                 "allocated_words": null,
-                "elapsed_ns": 1800042
+                "elapsed_ns": 1718375
               },
               "csr_transposed_product": {
                 "allocated_words": null,
-                "elapsed_ns": 1890541
+                "elapsed_ns": 1916000
               },
               "dense_product": {
                 "allocated_words": null,
-                "elapsed_ns": 57216208
+                "elapsed_ns": 59506584
               },
               "dense_transposed_product": {
                 "allocated_words": null,
-                "elapsed_ns": 114708917
+                "elapsed_ns": 116252750
               },
               "density": 0.01,
               "nonzeros": 100000
@@ -821,19 +821,19 @@
               },
               "csr_product": {
                 "allocated_words": null,
-                "elapsed_ns": 5073500
+                "elapsed_ns": 5269542
               },
               "csr_transposed_product": {
                 "allocated_words": null,
-                "elapsed_ns": 6168291
+                "elapsed_ns": 6073792
               },
               "dense_product": {
                 "allocated_words": null,
-                "elapsed_ns": 55648584
+                "elapsed_ns": 54754833
               },
               "dense_transposed_product": {
                 "allocated_words": null,
-                "elapsed_ns": 116265708
+                "elapsed_ns": 116566583
               },
               "density": 0.05,
               "nonzeros": 500000
@@ -845,19 +845,19 @@
               },
               "csr_product": {
                 "allocated_words": null,
-                "elapsed_ns": 29366292
+                "elapsed_ns": 29440167
               },
               "csr_transposed_product": {
                 "allocated_words": null,
-                "elapsed_ns": 28892334
+                "elapsed_ns": 28792875
               },
               "dense_product": {
                 "allocated_words": null,
-                "elapsed_ns": 56188875
+                "elapsed_ns": 54205958
               },
               "dense_transposed_product": {
                 "allocated_words": null,
-                "elapsed_ns": 115795750
+                "elapsed_ns": 119286666
               },
               "density": 0.25,
               "nonzeros": 2500000
@@ -868,7 +868,7 @@
             "allocated_bytes": null,
             "materialize": {
               "allocated_words": null,
-              "elapsed_ns": 861042
+              "elapsed_ns": 615583
             },
             "materialized_bytes": 3100004,
             "shared_bytes": null,
@@ -881,12 +881,12 @@
             },
             "csr_transform": {
               "allocated_words": null,
-              "elapsed_ns": 5717709
+              "elapsed_ns": 5897750
             },
             "dense_bytes": 80000000,
             "dense_transform": {
               "allocated_words": null,
-              "elapsed_ns": 11791541
+              "elapsed_ns": 12354042
             },
             "output_columns": 500
           },

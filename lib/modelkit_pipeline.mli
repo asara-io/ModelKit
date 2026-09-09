@@ -1,8 +1,38 @@
 open Modelkit_data
+open Modelkit_metadata
 open Modelkit_protocols
 
 module Pipeline : sig
   type capabilities = { decision_function : bool; predict_proba : bool }
+
+  type provenance
+  (** Identity supplied by a component package. Provenance describes code that
+      produced fitted state; it does not grant artifact serialization support.
+  *)
+
+  val provenance :
+    package:string ->
+    version:string ->
+    implementation:string ->
+    (provenance, Error.t) result
+
+  val provenance_package : provenance -> string
+  val provenance_version : provenance -> string
+  val provenance_implementation : provenance -> string
+
+  (** [Portable_artifact] means a reviewed data-only ModelKit codec is attached
+      to that fitted component. *)
+  type serialization_support = Portable_artifact | Unsupported
+
+  type component_report = {
+    component_name : string;
+    provenance : provenance option;
+    serialization_support : serialization_support;
+  }
+  (** Artifact support and optional producer identity for one fitted component.
+  *)
+
+  type artifact_report
 
   type encoded_component = {
     component_tag : int;
@@ -14,17 +44,24 @@ module Pipeline : sig
     stage_name : string;
     transform_input_schema : Feature_schema.t;
     transform_output_schema : Feature_schema.t;
+    fitted_transform_metadata_check : Metadata.t -> (unit, Error.t) result;
     apply_transform :
+      metadata:Metadata.t ->
       feature_schema:Feature_schema.t ->
       x:Matrix.t ->
       (Matrix.t, Error.t) result;
+    transformer_provenance : provenance option;
     encode_transformer : (unit -> (encoded_component, Error.t) result) option;
   }
 
   type transformer = {
     transformer_name : string;
+    transformer_cache_check : unit -> (unit, Error.t) result;
+    transformer_fit_metadata_check : Metadata.t -> (unit, Error.t) result;
+    transformer_transform_metadata_check : Metadata.t -> (unit, Error.t) result;
     fit_transform :
-      sample_weight:Sample_weight.t option ->
+      cache:Modelkit_transform_cache.Transform_cache.Store.t option ->
+      metadata:Metadata.t ->
       rng:Rng.t ->
       feature_schema:Feature_schema.t ->
       x:Matrix.t ->
@@ -34,6 +71,22 @@ module Pipeline : sig
   type builder = {
     reversed_transformers : transformer list;
     names : string list;
+  }
+
+  type 'target stage = {
+    name : string;
+    stage_cache_check : unit -> (unit, Error.t) result;
+    stage_fit_metadata_check : Metadata.t -> (unit, Error.t) result;
+    stage_transform_metadata_check : Metadata.t -> (unit, Error.t) result;
+    validate_target : x:Matrix.t -> y:'target -> (unit, Error.t) result;
+    fit_stage :
+      cache:Modelkit_transform_cache.Transform_cache.Store.t option ->
+      metadata:Metadata.t ->
+      rng:Rng.t ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      y:'target ->
+      (fitted_transformer * Matrix.t * Feature_schema.t, Error.t) result;
   }
 
   type 'prediction fitted_estimator = {
@@ -53,14 +106,16 @@ module Pipeline : sig
       (Matrix.t, Error.t) result)
       option;
     terminal_classes : (unit -> int array) option;
+    estimator_provenance : provenance option;
     encode_estimator : (unit -> (encoded_component, Error.t) result) option;
   }
 
   type ('target, 'prediction) estimator = {
     estimator_name : string;
+    estimator_fit_metadata_check : Metadata.t -> (unit, Error.t) result;
     estimator_capabilities : capabilities;
     fit_estimator :
-      ?sample_weight:Sample_weight.t ->
+      metadata:Metadata.t ->
       rng:Rng.t ->
       feature_schema:Feature_schema.t ->
       x:Matrix.t ->
@@ -70,8 +125,9 @@ module Pipeline : sig
   }
 
   type ('target, 'prediction) t = {
-    transformers : transformer array;
+    transformers : 'target stage array;
     estimator : ('target, 'prediction) estimator;
+    cache : Modelkit_transform_cache.Transform_cache.Store.t option;
   }
 
   type ('target, 'prediction) fitted = {
@@ -81,9 +137,18 @@ module Pipeline : sig
     pipeline_output_schema : Feature_schema.t;
   }
 
+  val validate_transform_output :
+    input:Matrix.t ->
+    output_schema:Feature_schema.t ->
+    Matrix.t ->
+    (unit, Error.t) result
+
   val transformer_internal :
     ?encode:('fitted -> (encoded_component, Error.t) result) ->
+    ?cache_codec:
+      ('specification, 'fitted) Modelkit_transform_cache.Transform_cache.Codec.t ->
     ?route_sample_weight:bool ->
+    ?provenance:provenance ->
     name:string ->
     (module TRANSFORMER
        with type t = 'specification
@@ -93,8 +158,23 @@ module Pipeline : sig
     'specification ->
     (transformer, Error.t) result
 
+  val metadata_transformer :
+    ?provenance:provenance ->
+    name:string ->
+    (module METADATA_TRANSFORMER
+       with type t = 'specification
+        and type target = unit
+        and type fitted = 'fitted
+        and type rng = Rng.t) ->
+    'specification ->
+    (transformer, Error.t) result
+  (** Packages per-method requests from the specification once. Fit validates
+      both the fit request and the training transform request. No artifact codec
+      is supplied for this adapter. *)
+
   val transformer :
     ?route_sample_weight:bool ->
+    ?provenance:provenance ->
     name:string ->
     (module TRANSFORMER
        with type t = 'specification
@@ -103,6 +183,21 @@ module Pipeline : sig
         and type rng = Rng.t) ->
     'specification ->
     (transformer, Error.t) result
+
+  val cacheable_transformer :
+    ?route_sample_weight:bool ->
+    ?provenance:provenance ->
+    name:string ->
+    (module Modelkit_transform_cache.Transform_cache.CACHEABLE_TRANSFORMER
+       with type t = 'specification
+        and type params = 'params
+        and type target = unit
+        and type fitted = 'fitted
+        and type rng = Rng.t) ->
+    'specification ->
+    (transformer, Error.t) result
+  (** Packages a stage whose fitted state may be restored from an explicitly
+      attached pipeline cache. *)
 
   val estimator_internal :
     ?encode:('fitted -> (encoded_component, Error.t) result) ->
@@ -110,6 +205,7 @@ module Pipeline : sig
       (?sample_weight:Sample_weight.t ->
       'target ->
       (Sample_weight.t option, Error.t) result) ->
+    ?provenance:provenance ->
     name:string ->
     (module ESTIMATOR
        with type t = 'specification
@@ -131,7 +227,34 @@ module Pipeline : sig
     'specification ->
     (('target, 'prediction) estimator, Error.t) result
 
+  val metadata_estimator :
+    ?provenance:provenance ->
+    name:string ->
+    (module METADATA_ESTIMATOR
+       with type t = 'specification
+        and type target = 'target
+        and type prediction = 'prediction
+        and type fitted = 'fitted
+        and type rng = Rng.t) ->
+    ?decision_function:
+      ('fitted ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      (Vector.t, Error.t) result) ->
+    ?predict_proba:
+      ('fitted ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      (Matrix.t, Error.t) result) ->
+    ?classes:('fitted -> int array) ->
+    'specification ->
+    (('target, 'prediction) estimator, Error.t) result
+  (** Packages a terminal fit request and optional prediction capabilities.
+      Weight delivery follows that request; class-weight resolution, when
+      needed, belongs to the consumer. No artifact codec is supplied. *)
+
   val estimator :
+    ?provenance:provenance ->
     name:string ->
     (module ESTIMATOR
        with type t = 'specification
@@ -156,6 +279,7 @@ module Pipeline : sig
   val classifier_internal :
     ?encode:('fitted -> (encoded_component, Error.t) result) ->
     ?class_weight:Modelkit_class_weight.Class_weight.t ->
+    ?provenance:provenance ->
     name:string ->
     (module ESTIMATOR
        with type t = 'specification
@@ -179,6 +303,7 @@ module Pipeline : sig
 
   val classifier :
     ?class_weight:Modelkit_class_weight.Class_weight.t ->
+    ?provenance:provenance ->
     name:string ->
     (module ESTIMATOR
        with type t = 'specification
@@ -208,10 +333,144 @@ module Pipeline : sig
     ('target, 'prediction) estimator ->
     (('target, 'prediction) t, Error.t) result
 
+  module Supervised : sig
+    type nonrec 'kind stage = 'kind Target.t stage
+    type 'kind builder
+
+    val metadata_transformer :
+      name:string ->
+      (module METADATA_TRANSFORMER
+         with type t = 'specification
+          and type target = 'kind Target.t
+          and type fitted = 'fitted
+          and type rng = Rng.t) ->
+      'specification ->
+      ('kind stage, Error.t) result
+
+    val transformer :
+      ?route_sample_weight:bool ->
+      name:string ->
+      (module TRANSFORMER
+         with type t = 'specification
+          and type target = 'kind Target.t
+          and type fitted = 'fitted
+          and type rng = Rng.t) ->
+      'specification ->
+      ('kind stage, Error.t) result
+    (** Packages a supervised transformer. Each fit receives [Some y] from the
+        pipeline's training rows; weights reach it only when
+        [route_sample_weight] is true. Targets and weights must have one entry
+        per row. Length errors are rejected before any stage fits. Class weights
+        remain a terminal-estimator policy and do not alter the sample weights
+        routed to transformers. *)
+
+    val cacheable_transformer :
+      ?route_sample_weight:bool ->
+      name:string ->
+      (module Modelkit_transform_cache.Transform_cache.CACHEABLE_TRANSFORMER
+         with type t = 'specification
+          and type params = 'params
+          and type target = 'kind Target.t
+          and type fitted = 'fitted
+          and type rng = Rng.t) ->
+      'specification ->
+      ('kind stage, Error.t) result
+    (** The complete target content participates in this stage's cache key. *)
+
+    val unsupervised : transformer -> 'kind stage
+    (** Adapts an existing unsupervised stage, retaining its weight-routing and
+        artifact-codec policies. Its fit still receives [y:None]. *)
+
+    val empty : 'kind builder
+
+    val add_transformer :
+      'kind builder -> 'kind stage -> ('kind builder, Error.t) result
+
+    val set_estimator :
+      'kind builder ->
+      ('kind Target.t, 'prediction) estimator ->
+      (('kind Target.t, 'prediction) t, Error.t) result
+    (** The terminal and supervised stages share the same target kind. The
+        resulting pipeline uses the ordinary fit, prediction, CV, and search
+        APIs. Targets are used only during fitting; inference reuses learned
+        transforms without targets. Metadata-aware stages may separately request
+        inference weights or groups.
+
+        A supervised stage fits on and transforms the same training rows. This
+        is suitable for feature selection; target encoders needing internal
+        cross-fitting require a separate fit-transform contract. Supervised
+        stages currently have no artifact codec. *)
+  end
+
   val clone : ('target, 'prediction) t -> ('target, 'prediction) t
+
+  val with_cache :
+    ('target, 'prediction) t ->
+    Modelkit_transform_cache.Transform_cache.Store.t ->
+    ('target, 'prediction) t
+  (** Retains the caller-owned store through pipeline clones and nested
+      composition. Unsupported leaves fail preflight before fitting. *)
+
+  val without_cache : ('target, 'prediction) t -> ('target, 'prediction) t
+  val cache_enabled : ('target, 'prediction) t -> bool
   val transformer_names : ('target, 'prediction) t -> string array
   val estimator_name : ('target, 'prediction) t -> string
   val capabilities : ('target, 'prediction) t -> capabilities
+
+  val artifact_report : ('target, 'prediction) fitted -> artifact_report
+  (** Reports component provenance and whether every fitted component has a
+      reviewed portable artifact codec. An unsupported component may still be
+      fitted and used normally; artifact encoding returns a typed error. *)
+
+  val artifact_transformers : artifact_report -> component_report array
+  val artifact_estimator : artifact_report -> component_report
+  val portable_artifact_supported : artifact_report -> bool
+
+  val fit_with_metadata :
+    ('target, 'prediction) t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:'target ->
+    unit ->
+    (('target, 'prediction) fitted, Error.t) result
+  (** Metadata-aware operations validate all supplied row lengths and all
+      declared requests before any consumer runs. Fit preflight includes the
+      transforms of training rows. Requests are structural: configured children
+      are checked even when a column selection later proves empty. Metadata
+      remains row-aligned through feature transformations; values are neither
+      transformed nor implicitly reused from fitting. Existing operations use
+      absent metadata, apart from the legacy fit's optional sample weights. CV
+      and search can select these inputs from their metadata carrier. *)
+
+  val transform_with_metadata :
+    ('target, 'prediction) fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val predict_with_metadata :
+    ('target, 'prediction) fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    ('prediction, Error.t) result
+
+  val decision_function_with_metadata :
+    ('target, 'prediction) fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Vector.t, Error.t) result
+
+  val predict_proba_with_metadata :
+    ('target, 'prediction) fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
 
   val fit :
     ('target, 'prediction) t ->

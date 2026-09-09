@@ -19,7 +19,7 @@ let error_category = function
   | Error.Data _ -> Data
   | Error.Shape_mismatch _ | Error.Feature_schema_mismatch _ | Error.Numerical _
   | Error.Convergence _ | Error.Compatibility _ | Error.Artifact _
-  | Error.Cancelled ->
+  | Error.Callback_failure _ | Error.Cancelled ->
       Other
 
 let has_category expected kind = error_category kind = expected
@@ -35,7 +35,7 @@ let validation_reason_contains fragment kind =
   | Error.Validation { reason; _ } -> contains fragment reason
   | Error.Data _ | Error.Shape_mismatch _ | Error.Feature_schema_mismatch _
   | Error.Numerical _ | Error.Convergence _ | Error.Compatibility _
-  | Error.Artifact _ | Error.Cancelled ->
+  | Error.Artifact _ | Error.Callback_failure _ | Error.Cancelled ->
       false
 
 let frame () =

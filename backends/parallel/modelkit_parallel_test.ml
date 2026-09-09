@@ -149,6 +149,38 @@ let test_domain_count_invariance () =
       check_report expected (run execution))
     [ 1; 2; 4 ]
 
+let test_prediction_domain_count_invariance () =
+  let run execution =
+    Cross_validation.Regression.cross_val_predict ~execution
+      ~splitter:(splitter ()) ~seed:(Seed.of_int 2026) (pipeline ())
+      (dataset ())
+    |> get
+  in
+  let signature report =
+    let folds = Cross_validation.prediction_folds report in
+    let values =
+      Cross_validation.out_of_fold_predictions report
+      |> Result.get_ok |> Target.regression_values |> Vector.to_array
+    in
+    ( Array.map
+        (fun fold ->
+          ( fold.Cross_validation.prediction_fold_index,
+            fold.Cross_validation.prediction_test_indices ))
+        folds,
+      values )
+  in
+  let expected = signature (run Execution.sequential) in
+  List.iter
+    (fun domains ->
+      let execution =
+        Modelkit_parallel.create ~inner_threads:1 ~domains ()
+        |> get |> Modelkit_parallel.execution
+      in
+      Alcotest.(check bool)
+        "out-of-fold predictions are schedule independent" true
+        (expected = signature (run execution)))
+    [ 1; 2; 4 ]
+
 let update_maximum maximum value =
   let rec update () =
     let observed = Atomic.get maximum in
@@ -253,6 +285,215 @@ let test_programmer_exception () =
   in
   Alcotest.(check bool) "programmer exception propagated" true propagated
 
+module Target_summary = struct
+  type t = unit
+  type params = unit
+  type target = Target.regression Target.t
+  type fitted = Feature_schema.t * float * float
+  type rng = Rng.t
+
+  let clone () = ()
+  let params () = ()
+
+  let fit () ?sample_weight:_ ~rng ~feature_schema ~x:_ ~y () =
+    match y with
+    | None ->
+        Error
+          (Error.make ~remediation:"route the training targets"
+             (Error.Validation { name = "targets"; reason = "missing targets" }))
+    | Some y ->
+        let values = Target.regression_values y in
+        let mean =
+          Reference_backend.sum values /. Float.of_int (Vector.length values)
+        in
+        let random, _ = Rng.next_float rng in
+        Ok (feature_schema, mean, random)
+
+  let transform (_, mean, random) ~feature_schema:_ ~x =
+    Matrix.init ~rows:(Matrix.rows x) ~columns:1 (fun _ _ -> mean +. random)
+    |> Result.map_error (fun error ->
+        Error.of_data_error ~remediation:"provide valid output dimensions" error)
+
+  let fitted_params _ = ()
+  let input_schema (schema, _, _) = schema
+  let output_schema (schema, _, _) = schema
+end
+
+let test_supervised_domain_count_invariance ?(wrap = Fun.id) () =
+  let stage =
+    Pipeline.Supervised.transformer ~name:"target-summary"
+      (module Target_summary)
+      ()
+    |> get
+  in
+  let specification =
+    Pipeline.Supervised.add_transformer Pipeline.Supervised.empty (wrap stage)
+    |> get
+    |> fun builder ->
+    Pipeline.Supervised.set_estimator builder
+      (Pipeline.estimator ~name:"random" (module Random_regressor) () |> get)
+    |> get
+  in
+  let source = dataset () in
+  let run execution =
+    Cross_validation.Regression.cross_validate ~return_train_score:true
+      ~return_models:true ~return_indices:true ~execution
+      ~splitter:(splitter ())
+      ~scorers:[| Regression_scorer.neg_mean_squared_error |]
+      ~seed:(Seed.of_int 2026) specification source
+    |> get
+  in
+  let expected = run Execution.sequential in
+  let transformed fold =
+    Pipeline.transform
+      (Option.get fold.Cross_validation.model)
+      ~feature_schema:(Dataset.feature_schema source)
+      ~x:(Dataset.features source)
+    |> get |> Matrix.to_arrays
+  in
+  List.iter
+    (fun domains ->
+      let execution =
+        Modelkit_parallel.create ~inner_threads:1 ~domains ()
+        |> get |> Modelkit_parallel.execution
+      in
+      let observed = run execution in
+      check_report expected observed;
+      Array.iter2
+        (fun expected observed ->
+          Alcotest.(check bool)
+            "target-derived state and stage RNG are schedule independent" true
+            (transformed expected = transformed observed))
+        (Cross_validation.folds expected)
+        (Cross_validation.folds observed))
+    [ 1; 2; 4 ]
+
+let check_transformer_domains stage =
+  let specification =
+    Pipeline.add_transformer Pipeline.empty stage |> get |> fun builder ->
+    Pipeline.set_estimator builder
+      (Pipeline.estimator ~name:"random" (module Random_regressor) () |> get)
+    |> get
+  in
+  let source = dataset () in
+  let run execution =
+    Cross_validation.Regression.cross_validate ~return_train_score:true
+      ~return_models:true ~return_indices:true ~execution
+      ~splitter:(splitter ())
+      ~scorers:[| Regression_scorer.neg_mean_squared_error |]
+      ~seed:(Seed.of_int 2026) specification source
+    |> get
+  in
+  let expected = run Execution.sequential in
+  let transformed fold =
+    Pipeline.transform
+      (Option.get fold.Cross_validation.model)
+      ~feature_schema:(Dataset.feature_schema source)
+      ~x:(Dataset.features source)
+    |> get |> Matrix.to_arrays
+  in
+  List.iter
+    (fun domains ->
+      let execution =
+        Modelkit_parallel.create ~inner_threads:1 ~domains ()
+        |> get |> Modelkit_parallel.execution
+      in
+      let observed = run execution in
+      check_report expected observed;
+      Array.iter2
+        (fun expected observed ->
+          Alcotest.(check bool)
+            "composed outputs are schedule independent" true
+            (transformed expected = transformed observed))
+        (Cross_validation.folds expected)
+        (Cross_validation.folds observed))
+    [ 1; 2; 4 ]
+
+let test_column_domain_count_invariance () =
+  let columns = Column_selector.indices [| 0 |] |> get in
+  let scaler =
+    Pipeline.transformer ~name:"scale"
+      (module Standard_scaler)
+      (Standard_scaler.create ())
+    |> get
+  in
+  let composition =
+    Column_transformer.create
+      [|
+        Column_transformer.transformer ~columns scaler;
+        Column_transformer.passthrough ~name:"raw" ~columns |> get;
+      |]
+    |> get
+  in
+  check_transformer_domains
+    (Column_transformer.stage ~name:"columns" composition |> get)
+
+let test_nested_domain_count_invariance () =
+  let imputer =
+    Pipeline.transformer ~name:"impute"
+      (module Simple_imputer)
+      (Simple_imputer.mean ())
+    |> get
+  in
+  let scaler =
+    Pipeline.transformer ~name:"scale"
+      (module Standard_scaler)
+      (Standard_scaler.create ())
+    |> get
+  in
+  let prepared =
+    Transformer_pipeline.create [| imputer; scaler |]
+    |> get
+    |> Transformer_pipeline.stage ~name:"prepared"
+    |> get
+  in
+  let union =
+    Feature_union.create
+      [|
+        Feature_union.transformer prepared;
+        Feature_union.passthrough ~name:"raw" |> get;
+      |]
+    |> get
+    |> Feature_union.stage ~name:"union"
+    |> get
+  in
+  let nested =
+    Transformer_pipeline.create [| union; scaler |]
+    |> get
+    |> Transformer_pipeline.stage ~name:"nested"
+    |> get
+  in
+  check_transformer_domains nested
+
+let test_supervised_nested_domains () =
+  let wrap stage =
+    let columns =
+      Column_transformer.Supervised.create
+        [|
+          Column_transformer.Supervised.transformer ~columns:Column_selector.all
+            stage;
+        |]
+      |> get
+      |> Column_transformer.Supervised.stage ~name:"columns"
+      |> get
+    in
+    let union =
+      Feature_union.Supervised.create
+        [|
+          Feature_union.Supervised.transformer columns;
+          Feature_union.Supervised.passthrough ~name:"raw" |> get;
+        |]
+      |> get
+      |> Feature_union.Supervised.stage ~name:"views"
+      |> get
+    in
+    Transformer_pipeline.Supervised.create [| union |]
+    |> get
+    |> Transformer_pipeline.Supervised.stage ~name:"nested"
+    |> get
+  in
+  test_supervised_domain_count_invariance ~wrap ()
+
 let () =
   Alcotest.run "parallel execution"
     [
@@ -260,6 +501,16 @@ let () =
         [
           Alcotest.test_case "domain-count invariance" `Quick
             test_domain_count_invariance;
+          Alcotest.test_case "prediction domain-count invariance" `Quick
+            test_prediction_domain_count_invariance;
+          Alcotest.test_case "supervised domain-count invariance" `Quick
+            (fun () -> test_supervised_domain_count_invariance ());
+          Alcotest.test_case "column domain-count invariance" `Quick
+            test_column_domain_count_invariance;
+          Alcotest.test_case "supervised nested domain-count invariance" `Quick
+            test_supervised_nested_domains;
+          Alcotest.test_case "nested domain-count invariance" `Quick
+            test_nested_domain_count_invariance;
           Alcotest.test_case "bounded ordered map" `Quick
             test_bounded_ordered_map;
           Alcotest.test_case "lowest failure" `Quick test_lowest_failure;

@@ -1,0 +1,115 @@
+{0 authoring-estimators Authoring a third-party estimator}
+
+ModelKit extensions are ordinary OCaml modules. An estimator package depends on
+[modelkit], implements a public protocol, and packages an immutable
+specification when it enters a pipeline. It does not depend on ModelKit's
+private [Modelkit_*] compilation units or on an execution backend.
+
+{1 Choose the protocol}
+
+Implement {!module-type:Modelkit.ESTIMATOR} when fitting needs only features,
+targets, an optional sample-weight argument, and an explicit RNG. Implement
+{!module-type:Modelkit.METADATA_ESTIMATOR} when fitting requests typed metadata
+such as weights, groups, or a progress callback. Classification implementations
+use integer {!type:Modelkit.Target.classification} targets and regression
+implementations use float64 {!type:Modelkit.Target.regression} targets.
+
+In either protocol:
+
+- [t] is an immutable training specification and [params] is its inspectable
+  parameter representation.
+- [fitted] is a distinct type containing learned values and the admitted
+  {!Modelkit.Feature_schema.t}.
+- [clone] preserves the specification's parameters; it does not copy fitted
+  state.
+- [fit] and [predict] return typed {!Modelkit.Error.t} values for routine data,
+  shape, validation, numerical, and compatibility failures.
+- every operation validates its schema and row-aligned inputs, and a fixed RNG
+  stream produces deterministic results.
+
+A metadata-aware regressor declares its needs before fitting:
+
+{[
+let fit_request _specification =
+  Modelkit.Metadata.Request.create
+    ~sample_weight:Modelkit.Metadata.Request.Required
+    ~groups:Modelkit.Metadata.Request.Optional
+    ~callback:Modelkit.Metadata.Request.Optional
+    ()
+]}
+
+The pipeline validates all requests before any component fits and passes only
+the requested fields to the implementation. The estimator must still validate
+values it interprets. It must not retain fit metadata as an implicit input to a
+later prediction.
+
+{1 Package and identify the estimator}
+
+Create provenance once from nonblank package, version, and implementation
+identifiers, then pass it when packaging the specification:
+
+{[
+let package specification =
+  let ( let* ) = Result.bind in
+  let* provenance =
+    Modelkit.Pipeline.provenance
+      ~package:"acme-models"
+      ~version:"1.2.0"
+      ~implementation:"Robust_regressor"
+  in
+  Modelkit.Pipeline.metadata_estimator
+    ~provenance
+    ~name:"robust"
+    (module Robust_regressor)
+    specification
+]}
+
+Use {!val:Modelkit.Pipeline.estimator} for the ordinary estimator protocol. The
+result enters {!Modelkit.Pipeline.set_estimator} and thereafter uses the same
+pipeline, nested composition, cross-validation, search, and optional parallel
+execution APIs as a built-in estimator. Search builders should construct a new
+immutable specification for every candidate and invoke the same packaging
+function.
+
+Execution is owned by the workflow. A component should not create domains or
+thread pools internally. Applications opt into bounded fold or candidate
+execution by installing [modelkit-parallel] and passing its
+[Modelkit_parallel.execution] value to cross-validation or search.
+
+{1 Publish conformance checks}
+
+Package tests should run {!Modelkit.Conformance.Estimator.check} or
+{!Modelkit.Conformance.Metadata_estimator.check} against representative valid
+data. The fixture supplies the observations that generic code cannot infer from
+abstract target and prediction types: parameter equality, prediction length,
+and deterministic prediction equality. Assert
+{!Modelkit.Conformance.passed}; use {!Modelkit.Conformance.failures} and
+{!Modelkit.Conformance.issue_to_string} for test-runner diagnostics.
+
+Conformance is a protocol baseline, not a numerical validation suite. Component
+authors remain responsible for invalid-input, numerical-edge, parity,
+determinism, and platform tests appropriate to their algorithm. At least one
+integration test should exercise the packaged estimator through the workflows
+the package claims to support.
+
+{1 Provenance and portable artifacts}
+
+After fitting, {!val:Modelkit.Pipeline.artifact_report} lists every fitted stage
+and the terminal estimator. Each component reports its optional provenance and
+either {!Modelkit.Pipeline.Portable_artifact} or
+{!Modelkit.Pipeline.Unsupported}. Provenance is descriptive identity; it never
+turns arbitrary behavior into a portable codec.
+
+Public estimator adapters intentionally attach no codec. They remain fully
+usable for in-memory fitting and prediction, while
+{!Modelkit.Artifact.encode_regression} or its classification counterpart returns
+a typed artifact error. ModelKit artifacts contain data rather than closures or
+marshalled OCaml values. An external codec therefore requires a separately
+reviewed, package-qualified, versioned data format and is not provided by an
+ambient registry.
+
+The repository's separately built [test/public_consumer] library is the
+executable reference for this guide. Its one metadata-aware estimator module is
+used unchanged by conformance checks, nested composition, two-domain
+cross-validation, randomized search, and artifact-support reporting while
+depending only on the public [Modelkit] namespace.

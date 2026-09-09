@@ -7,6 +7,8 @@ implementation; the portable package never requires an accelerated backend.
 `parallel/` provides the separately installable `modelkit-parallel` package.
 It uses Domainslib for bounded fold execution and retains sequential fallback,
 stable result ordering, deterministic logical seeds, and oversubscription
-diagnostics. Its requested domain count includes the calling domain; requesting
-one domain avoids pool creation. Diagnostics observe common BLAS and OpenMP
-thread-limit variables without changing them.
+diagnostics across cross-validation, learning-curve, validation-curve,
+permutation-test, and search workflows. Its requested domain count includes the
+calling domain;
+requesting one domain avoids pool creation. Diagnostics observe common BLAS and
+OpenMP thread-limit variables without changing them.

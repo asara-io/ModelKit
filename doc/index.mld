@@ -8,7 +8,7 @@ The supported API is the flat {!Modelkit} namespace documented below. Physical
 additional public namespaces or compatibility targets. Optional integrations,
 such as bounded Domainslib execution, are distributed as separate packages.
 
-Version 0.4.1 provides immutable dense {!Modelkit.Dataset} admission, explicit
+Version 0.5.0 provides immutable dense {!Modelkit.Dataset} admission, explicit
 feature-finiteness policies, stable schema fingerprints, zero-copy row-index
 views, and copy/view reports for opaque float64 {!Modelkit.Vector} and
 {!Modelkit.Matrix} values, together with checked {!Modelkit.Csr_matrix}
@@ -42,13 +42,124 @@ expanding-window time-series splitters produce validated source-row views;
 test selections into aligned datasets. Weighted regression and binary
 classification metrics expose higher-is-better scorer specifications, stable
 fold-score aggregation, explicit undefined-result handling, and residual, ROC,
-and precision-recall data without a plotting dependency. Cross-validation and
-finite grid search retain stable logical ordering and structured failures;
-optional bounded Domainslib fold execution is supplied by the separate
-[modelkit-parallel] package. Versioned data-only artifacts reconstruct fitted
-built-in pipelines under explicit reader limits and task-specific loaders.
+and precision-recall data without a plotting dependency. Cross-validation,
+learning and validation curves, and search retain stable logical ordering and
+structured failures; optional bounded Domainslib fold execution is supplied by
+the separate [modelkit-parallel] package. Versioned data-only artifacts
+reconstruct fitted built-in pipelines under explicit reader limits and
+task-specific loaders.
 Portable tests consume committed scikit-learn reference data without requiring
 Python during a normal build or test run.
+
+{1 Third-party capabilities and conformance}
+
+{!Modelkit.Capability} describes optional behavior that generic workflow code
+must choose before invocation: sample-weight and metadata support, classifier
+responses, and optional estimator prediction methods. These descriptions do
+not weaken the base protocols. Immutable specifications, deterministic results,
+typed routine failures, schema validation, and transformer row preservation are
+always required and therefore are not capability flags.
+
+An external scorer implements {!module-type:Modelkit.SCORER}, then becomes a
+first-class value through {!val:Modelkit.Scorer.of_module}. Its capability
+description declares whether it accepts sample weights and which prediction
+response it consumes. Binary probability scorers include their positive class
+label in that declaration, allowing evaluation to select the correct fitted
+probability column. Pass these values through [custom_scorers] alongside the
+existing [scorers] argument in regression, binary, or multiclass
+cross-validation, grid search, and randomized search. Built-in scorer values
+remain unchanged; their [as_scorer] functions expose the same first-class
+representation when application code needs a uniform collection.
+
+{@ocaml[
+open Modelkit
+
+module Constant_score : SCORER with type t = float
+                                and type params = float
+                                and type truth = Target.regression Target.t
+                                and type prediction = Target.regression Target.t = struct
+  type t = float
+  type params = float
+  type truth = Target.regression Target.t
+  type prediction = Target.regression Target.t
+
+  let clone value = value
+  let params value = value
+  let name _ = "constant_score"
+  let score value ?sample_weight:_ ~truth:_ ~prediction:_ () = Ok value
+end
+
+let constant_score =
+  Scorer.of_module
+    ~capabilities:(Capability.scorer ~prediction:Capability.Direct ())
+    (module Constant_score) 0.5
+]}
+
+{!Modelkit.Conformance} provides framework-neutral reports for external
+estimators, transformers, and scorers. A fixture supplies representative valid
+data plus equality and prediction-length observations that cannot be inferred
+from abstract protocol types. Checks cover cloning, successful fitting or
+scoring, fitted parameter and schema reporting, row preservation, finite
+scores, and repeatability. Reports are data rather than Alcotest values, so a
+third-party package can make them fail its preferred test runner by asserting
+{!val:Modelkit.Conformance.passed}.
+
+The {!page-authoring_estimators} guide covers protocol selection, immutable
+state, metadata requests, pipeline packaging, conformance fixtures, execution
+ownership, provenance, and the portable-artifact boundary for external
+estimators.
+
+{1 Transform-cache foundation}
+
+{!Modelkit.Transform_cache} defines the data and ownership contracts for
+opt-in reuse of fitted transformer state. This increment establishes the cache
+foundation only: pipelines, cross-validation, and search do not yet read or
+write cache entries. Applications can use the scoped memory and persistent
+stores directly while workflow integration remains scheduled separately.
+
+{!Modelkit.Transform_cache.Component} gives each codec a validated,
+package-qualified name and positive format version. A
+{!Modelkit.Transform_cache.Key} canonically frames the component identity,
+immutable configuration, training features, optional target, routed metadata,
+and logical seed. Changing any one field produces a different key. Content IDs
+use OCaml's portable [Digest] implementation for deterministic cache identity;
+they are accidental-collision detectors, not cryptographic authentication, and
+must not be used as trust proofs for attacker-controlled content.
+
+A transformer that implements
+{!module-type:Modelkit.Transform_cache.CACHEABLE_TRANSFORMER} supplies a stable
+configuration identity plus reviewed encoders and validating decoders for its
+fitted state. {!Modelkit.Transform_cache.Codec} preserves the specification and
+fitted types across that boundary. Requesting caching for an ordinary
+transformer through {!val:Modelkit.Transform_cache.Codec.require} returns a
+typed compatibility error rather than silently omitting or inventing a codec.
+
+{!Modelkit.Transform_cache.Memory} is an explicitly created, caller-owned
+store; ModelKit installs no process-global cache. It copies byte payloads on
+insertion and retrieval, bounds retained payload bytes and entry count, and
+evicts the least-recently-written entries. Updates and counters are safe across
+OCaml domains. The byte bound excludes keys and OCaml allocation headers, so it
+is a payload limit rather than a total resident-memory guarantee. Cached fitted
+payloads can reveal properties of training data and should be scoped and
+handled with the same care as fitted models.
+
+{!Modelkit.Transform_cache.Persistent} stores versioned, immutable entries in
+an explicit directory. Each entry frames its requested key and payload length
+and carries a checksum. Readers validate the complete envelope and configured
+payload bound before allocating or returning fitted bytes. A corrupt entry is
+reported through [Corrupt] and never becomes a hit; publishing trusted recomputed
+state for that key replaces it. A second valid but different payload for the
+same key is a typed codec/determinism failure.
+
+Writers create restrictive temporary files in the cache root and publish them
+with an atomic rename, so concurrent readers observe a complete old or new
+entry rather than a partial write. Concurrent writers for the same key must
+produce identical bytes, as required by a stable cache codec. The portable API
+does not claim filesystem crash durability because Stdlib exposes no portable
+[fsync]. Cache entries are plaintext and checksums detect accidental corruption
+rather than malicious replacement. Before persisting state derived from secret
+training data, callers must protect the root, backups, and retention lifecycle
+with host access control and encryption appropriate to their environment.
 
 {1 Sparse storage foundation}
 
@@ -65,7 +176,7 @@ The portable {!Modelkit.Reference_backend.feature_matrix_vector_product} and
 {!Modelkit.Reference_backend.transposed_feature_matrix_vector_product} functions
 dispatch without densifying CSR input. Dense and sparse forms agree for finite
 operands; sparse kernels visit only stored entries. Estimators and workflow APIs
-remain dense-only in 0.4.1; sparse estimator integration is scheduled for a
+remain dense-only in 0.5.0; sparse estimator integration is scheduled for a
 later release.
 
 {@ocaml[
@@ -519,7 +630,7 @@ val positive_probabilities : Vector.t = <abstr>
 - : float array = [|0.; 0.; 1.|]
 ]}
 
-The current pipeline routes targets and sample weights to its terminal
+The pipeline routes targets and sample weights to its terminal
 estimator. Its unsupervised preprocessing stages receive no targets and receive
 sample weights only when packaged with [~route_sample_weight:true]; the
 standard scaler then fits weighted moments. {!Modelkit.Pipeline.classifier}
@@ -530,6 +641,1047 @@ arbitrary extension modules may close over behavior that has no reviewed data
 codec, pipelines intended for persistence use the artifact-aware built-in
 constructors. Encoding any unsupported component returns a typed
 {!Modelkit.Error.Artifact} failure.
+
+{2 Column-wise preprocessing}
+
+{!Modelkit.Column_transformer} applies different unsupervised stages to
+selected columns, fits every branch on the same training rows, and joins the
+outputs in declaration order. {!Modelkit.Column_selector} selects by ordered
+indices, ordered names, or all columns. Overlaps between branches are allowed;
+duplicates within one selector are rejected. All selectors are resolved before
+any branch fits.
+
+For example, scale two numeric columns and keep the remaining flag:
+
+{@ocaml[
+# let column_x = Matrix.of_arrays [| [| 1.; 2.; 0. |]; [| 3.; 4.; 1. |] |] |> Result.get_ok;;
+val column_x : Matrix.t = <abstr>
+# let column_schema =
+    Feature_names.create ~expected_count:3 [| "height"; "weight"; "flag" |]
+    |> Result.get_ok |> Feature_schema.named;;
+val column_schema : Feature_schema.t = <abstr>
+# let numeric_columns = Column_selector.names [| "height"; "weight" |] |> Result.get_ok;;
+val numeric_columns : Column_selector.t = <abstr>
+# let numeric_stage = Pipeline.transformer ~name:"scale" (module Standard_scaler)
+    (Standard_scaler.create ()) |> Result.get_ok;;
+val numeric_stage : Pipeline.transformer = <abstr>
+# let columns = Column_transformer.create ~remainder:Column_transformer.Passthrough
+    [| Column_transformer.transformer ~columns:numeric_columns numeric_stage |]
+    |> Result.get_ok;;
+val columns : Column_transformer.t = <abstr>
+# let fitted_columns, transformed_columns, column_allocation =
+    Column_transformer.fit_transform columns ~rng:(Rng.create (Seed.of_int 42))
+      ~feature_schema:column_schema ~x:column_x ~y:None () |> Result.get_ok;;
+val fitted_columns : Column_transformer.fitted = <abstr>
+val transformed_columns : Matrix.t = <abstr>
+val column_allocation : Column_transformer.allocation =
+...
+# column_allocation.selected_input_bytes, column_allocation.output_bytes;;
+- : int64 * int64 = (32L, 48L)
+# Matrix.to_arrays transformed_columns;;
+- : float array array = [|[|-1.; -1.; 0.|]; [|1.; 1.; 1.|]|]
+# Column_transformer.output_schema fitted_columns |> Feature_schema.names
+    |> Option.get |> Feature_names.to_array;;
+- : string array = [|"scale__height"; "scale__weight"; "remainder__flag"|]
+# let columns_stage = Column_transformer.stage ~name:"columns" columns |> Result.get_ok;;
+val columns_stage : Pipeline.transformer = <abstr>
+]}
+
+Add [columns_stage] to an ordinary pipeline, or adapt it with
+{!Modelkit.Pipeline.Supervised.unsupervised} for a target-aware pipeline.
+{!Modelkit.Column_transformer.stage} reuses the branch outputs produced during
+fitting and forwards sample weights to child packages; individual children
+still receive weights only when packaged with [~route_sample_weight:true].
+Cross-validation therefore fits branch statistics and resolves weights within
+each training fold.
+
+Named inputs retain their feature identities inside each branch. Anonymous
+inputs acquire [x0], [x1], etc. using original column positions. Outputs are
+prefixed with the branch name, and passthrough remainder columns appear last
+in original order. Empty selections skip child fitting and transformation.
+Explicitly dropped columns do not reappear in the remainder; an entirely
+dropped result retains its row count with zero columns. Inference requires
+the same complete ordered input schema as fitting.
+
+Allocation reports count the dense payload of selected inputs copied for
+transform branches and the final output matrix. Passthrough copies directly
+into that output. Child allocations, scratch, and OCaml metadata are excluded.
+The combined output-width limit is checked before final concatenation; each
+child remains responsible for its own allocation bounds. Composite artifact
+codecs are not yet supported. Target-aware branches use
+{!Modelkit.Column_transformer.Supervised}.
+
+{2 Feature unions and nested preprocessing}
+
+{!Modelkit.Transformer_pipeline} is a sequential chain of preprocessing stages
+without a terminal estimator. It passes each learned stage's output and schema
+to the next stage, and can itself be packaged as an ordinary transformer.
+{!Modelkit.Feature_union} instead fits independent branches on the same full
+input and concatenates their outputs in declaration order. Both can nest
+inside column transformers, ordinary pipelines, or each other.
+
+For example, concatenate an imputed/scaled representation with the raw features
+from the preceding column example:
+
+{@ocaml[
+# let prepared = Transformer_pipeline.create
+    [| Pipeline.transformer ~name:"impute" (module Simple_imputer)
+         (Simple_imputer.mean ()) |> Result.get_ok;
+       numeric_stage |] |> Result.get_ok;;
+val prepared : Transformer_pipeline.t = <abstr>
+# let prepared_stage = Transformer_pipeline.stage ~name:"prepared" prepared |> Result.get_ok;;
+val prepared_stage : Pipeline.transformer = <abstr>
+# let representations = Feature_union.create
+    [| Feature_union.transformer prepared_stage;
+       Feature_union.passthrough ~name:"raw" |> Result.get_ok |]
+    |> Result.get_ok;;
+val representations : Feature_union.t = <abstr>
+# let fitted_union, union_output, union_allocation =
+    Feature_union.fit_transform representations ~rng:(Rng.create (Seed.of_int 42))
+      ~feature_schema:column_schema ~x:column_x ~y:None () |> Result.get_ok;;
+val fitted_union : Feature_union.fitted = <abstr>
+val union_output : Matrix.t = <abstr>
+val union_allocation : Feature_union.allocation =
+...
+# union_allocation.output_bytes;;
+- : int64 = 96L
+# Matrix.row union_output 0 |> Vector.to_array;;
+- : float array = [|-1.; -1.; -1.; 1.; 2.; 0.|]
+# let representations_stage = Feature_union.stage ~name:"representations" representations |> Result.get_ok;;
+val representations_stage : Pipeline.transformer = <abstr>
+]}
+
+Use the [stage] constructors when nesting: they reuse training outputs rather
+than applying the fitted children again. Union inputs are shared immutable
+matrices; only final concatenation allocates a union-owned numeric buffer.
+Its allocation report excludes child outputs, scratch, and metadata. Chains
+introduce no numeric copies of their own, and an empty chain is the identity.
+
+Union names have the form [branch__feature], using [x0], [x1], etc. for
+anonymous child outputs. Chains retain their final child's schema without
+adding prefixes. Nested names therefore preserve branch provenance. Duplicate
+names fail explicitly, and inference checks the fitted input schema at each
+boundary. Empty/all-dropped unions preserve rows with zero output columns;
+active branches still receive zero-column input and enforce their own policy.
+
+Every level forwards sample weights to child packages, which deliver them
+only to stages explicitly requesting weights. CV fits the entire composition
+inside each training fold. Child random streams derive from logical names
+and positions, and errors retain the full nested stage path. Branches execute
+sequentially so outer CV remains the parallelism owner. Sparse union output,
+branch-output weighting, and composite artifact codecs remain outside the
+current API.
+
+{2 Supervised preprocessing}
+
+{!Modelkit.Pipeline.Supervised} builds pipelines whose transformers can learn
+from targets, for example supervised feature selectors. Package a
+{!Modelkit.TRANSFORMER} whose [target] is a regression or classification
+{!Modelkit.Target.t} with {!Modelkit.Pipeline.Supervised.transformer}.
+The builder ties that target kind to the terminal estimator at compile time.
+It produces an ordinary {!Modelkit.Pipeline.t}, so fitting, prediction,
+cross-validation, and grid search use the same APIs as other pipelines.
+
+This helper packages a caller-supplied regression selector before ridge
+regression:
+
+{@ocaml[
+# let regression_pipeline selector specification =
+    let ( let* ) = Result.bind in
+    let* stage =
+      Pipeline.Supervised.transformer ~name:"select" selector specification
+    in
+    let* builder =
+      Pipeline.Supervised.add_transformer Pipeline.Supervised.empty stage
+    in
+    let* ridge = Ridge_regression.create () in
+    let* terminal =
+      Pipeline.estimator ~name:"ridge" (module Ridge_regression) ridge
+    in
+    Pipeline.Supervised.set_estimator builder terminal;;
+val regression_pipeline :
+...
+  result = <fun>
+]}
+
+Each supervised stage receives [Some y] containing only the current fit's
+training targets. Targets and supplied sample weights are checked against
+the feature row count before any stage fits. Stages must preserve row count
+and row order. Weights reach a transformer only when it is packaged with
+[~route_sample_weight:true]; they are the original sample weights, before
+any terminal class-weight adjustment. During CV, all three inputs are
+selected from the same training partition. Inference reuses fitted values
+without requiring targets or weights.
+
+Use {!Modelkit.Pipeline.Supervised.unsupervised} to mix existing preprocessing
+stages into this builder. It preserves their opt-in weight routing and
+artifact codecs, and their fit still receives [y:None]. Stage names, child
+RNG derivation, feature-schema validation, and contextual errors follow the
+ordinary pipeline contract.
+
+The [Supervised] modules in {!Modelkit.Column_transformer},
+{!Modelkit.Feature_union}, and {!Modelkit.Transformer_pipeline} accept these
+same typed stages. Their [create] and [stage] functions let you nest them in
+any order, mixing supervised children with adapted unsupervised stages.
+Column selection changes features only: every child receives the same
+training targets and retains its own sample-weight routing policy.
+
+For example, this helper combines a target-aware selector's output with the
+original features and returns a stage for the supervised pipeline builder:
+
+{@ocaml[
+# let selection_and_original selector specification =
+    let ( let* ) = Result.bind in
+    let* selected =
+      Pipeline.Supervised.transformer ~name:"selected" selector specification
+    in
+    let* raw = Feature_union.Supervised.passthrough ~name:"raw" in
+    let* union =
+      Feature_union.Supervised.create
+        [| Feature_union.Supervised.transformer selected; raw |]
+    in
+    Feature_union.Supervised.stage ~name:"features" union;;
+val selection_and_original :
+...
+  'b -> ('c Pipeline.Supervised.stage, Error.t) result = <fun>
+]}
+
+Nested compositions share the ordinary naming, empty-selection, width-limit,
+and deterministic seed rules. All target and weight lengths are checked before
+any pipeline stage fits, even for empty target-aware compositions. Children
+must preserve row order as well as row count; row-count checks cannot detect a
+permutation performed incorrectly by a custom transformer. Fitting reuses each
+child's training output, while prediction requires only the fitted state and
+new features. Compositions do not capture the fit's targets or weights for
+later inference.
+
+Supervised stages currently have no artifact codec. This contract fits a
+stage and transforms the same training rows; it does not supply the internal
+cross-fitting needed by some target encoders. Metadata-aware consumers can
+request groups, weights, and callbacks for fitting and inference as described
+below.
+
+{2 Metadata requests and delivery}
+
+{!Modelkit.Metadata} carries typed sample weights and integer groups. Requests
+are independent for fitting and transformation, so a transformer can use
+weights only for fitting and groups for both operations. A request defaults to
+[Ignore]; [Optional] delivers a supplied field, [Required] rejects absence,
+and [Reject] rejects presence. Ignoring a field in one branch does not prevent
+another branch from requesting it. Unrequested fields never reach the consumer.
+
+{@ocaml[
+# let group_request = Metadata.Request.create
+    ~groups:Metadata.Request.Required ();;
+val group_request : Metadata.Request.t = <abstr>
+# let training_groups = Groups.create ~expected_length:2 [| 10; 20 |]
+    |> Result.get_ok;;
+val training_groups : Groups.t = <abstr>
+# let training_metadata = Metadata.create ~groups:training_groups ();;
+val training_metadata : Metadata.t = <abstr>
+# Metadata.validate ~rows:2 training_metadata;;
+- : (unit, Error.t) result = Ok ()
+# Metadata.route group_request training_metadata |> Result.get_ok
+    |> Metadata.groups |> Option.get |> Groups.to_array;;
+- : int array = [|10; 20|]
+# Metadata.route Metadata.Request.none training_metadata |> Result.get_ok
+    |> Metadata.groups;;
+- : Groups.t option = None
+]}
+
+To author a consumer, implement {!Modelkit.METADATA_TRANSFORMER} or
+{!Modelkit.METADATA_ESTIMATOR}. Declare [fit_request] and, for a transformer,
+[transform_request] on the immutable specification. Package it with
+{!Modelkit.Pipeline.metadata_transformer},
+{!Modelkit.Pipeline.Supervised.metadata_transformer}, or
+{!Modelkit.Pipeline.metadata_estimator}. The adapters capture the requests when
+packaged and supply only the fields each method requests. These packages can
+nest with existing stages and retain the supervised target-kind checks.
+Legacy transformers retain their existing weight opt-in policy, and legacy
+terminal estimators continue receiving sample weights.
+
+Call {!Modelkit.Pipeline.fit_with_metadata} with training metadata and
+{!Modelkit.Pipeline.predict_with_metadata} with metadata for the inference rows.
+The corresponding transform, decision, and probability methods also accept
+metadata. Direct unsupervised column, union, and chain operations expose
+[fit_with_metadata], [fit_transform_with_metadata], and
+[transform_with_metadata]; columns and unions also expose
+[transform_with_report_with_metadata] for their allocation report.
+
+Every supplied field must match the current input row count, even if every
+consumer ignores it. Before any consumer runs, fitting validates both its fit
+requests and the transform requests needed for its training output. Inference
+validates every transform request before the first transform. Requests are
+structural: a configured child's requirements still apply when its column
+selection is empty. Drop and passthrough branches declare no requests.
+
+Column selection changes features only. Stages must preserve row count and
+order; weights and groups pass through without feature transformations.
+Fitted compositions do not retain training metadata for future calls. A
+consumer may retain learned group statistics, but must use the inference
+call's group labels to select them. Missing required inference metadata fails
+instead of substituting training values. Validation failures retain the full
+nested stage path, and programmer exceptions propagate as with existing
+components.
+
+Metadata-aware adapters currently have no artifact codecs. Existing codec
+packages continue to round-trip unchanged.
+
+{2 Transformed-target regression}
+
+{!Modelkit.Transformed_target_regressor} wraps a packaged scalar regressor.
+It fits a target mapping within each training partition and inverse-transforms
+predictions before they leave the pipeline. CV and search therefore score in
+the original target space, using the original scoring weights. Supervised
+feature preprocessing continues to receive original targets; only the wrapped
+regressor receives transformed targets.
+
+For a fixed mapping, supply pure scalar functions:
+
+{@ocaml[
+# let response_transform = Transformed_target_regressor.functions
+    ~transform:log1p ~inverse_transform:expm1;;
+val response_transform : Transformed_target_regressor.transformer = <abstr>
+# let response_regressor =
+    Pipeline.estimator ~name:"linear" (module Linear_regression)
+      (Linear_regression.create ()) |> Result.get_ok;;
+val response_regressor :
+  (Linear_regression.target, Linear_regression.prediction) Pipeline.estimator =
+  <abstr>
+# let response_pipeline =
+    Transformed_target_regressor.create ~name:"response"
+      ~transformer:response_transform ~regressor:response_regressor ()
+    |> Result.get_ok
+    |> Pipeline.set_estimator Pipeline.empty |> Result.get_ok;;
+val response_pipeline :
+  (Target.regression Target.t, Target.regression Target.t) Pipeline.t =
+  <abstr>
+]}
+
+For learned mappings, implement
+{!module-type:Modelkit.Transformed_target_regressor.TRANSFORMER} and package
+it with {!val:Modelkit.Transformed_target_regressor.transformer}. The wrapper clones
+its specification and derives separate deterministic random streams for target
+and regressor fitting on every fold and full-data refit. Declare target-fit
+weights, groups, and callbacks through [fit_request]; the regressor's requests
+remain independent. Both requests are checked before pipeline fitting begins.
+[transform] and [inverse_transform] use only fitted state and target values,
+without inference metadata or implicit reuse of training metadata.
+
+Training checks every target's round trip, with configurable finite,
+nonnegative relative and absolute tolerances. A mismatch is a typed error,
+not a warning. Target transformations and inverse predictions must preserve
+row count and order; the wrapper checks lengths and target admission rejects
+non-finite results. The training check does not prove invertibility on unseen
+values. For example, [log1p] requires targets above [-1.], and [expm1] can
+overflow for sufficiently large predicted log-targets. These produce typed
+errors. Exceptions raised by user functions propagate as with other extension
+code. This wrapper has no artifact codec; attempted persistence fails explicitly.
+
+{2 Evaluation metadata and callbacks}
+
+CV, learning and validation curves, and search default to
+{!Modelkit.Metadata.of_dataset}: dataset weights and groups follow the same row
+selections as features and targets for fitting and prediction. Full-data refit
+receives the complete metadata carrier. An explicit [~metadata] replaces this
+default without merging fields. This allows consumer weights or groups to
+differ from scoring weights or splitter groups: scorers and splitters continue
+using the dataset's own fields. Every supplied row-aligned field is validated
+against the full dataset before evaluation.
+
+Add a {!Modelkit.Callback.t} with [Metadata.of_dataset ~callback dataset] to
+observe evaluation, candidates, folds, and refit. Metadata-aware consumers opt
+in separately with [Metadata.Request.create ~callback:Optional ()] (or
+[Required]); their fit/transform lifecycle then appears in the event stream.
+They may call [Callback.progress] using the callback received through metadata,
+and must propagate its errors. A callback delivered to a consumer must not be
+retained or invoked after that operation returns.
+
+A handler returns [Ok Continue], [Ok Cancel], or [Error reason]. For example,
+this handler cancels before the evaluator plans any folds:
+
+{@ocaml[
+# let stop = Callback.create (fun _ -> Ok Callback.Cancel) |> Result.get_ok;;
+val stop : Callback.t = <abstr>
+# Cross_validation.Binary_classification.cross_validate
+    ~metadata:(Metadata.of_dataset ~callback:stop dataset)
+    ~splitter:(Cross_validation.target_aware_splitter (module Stratified_k_fold) splitter)
+    ~scorers:[| Binary_classification_scorer.accuracy |]
+    ~seed:(Seed.of_int 42) pipeline dataset
+  |> function Error error -> Error.kind error = Error.Cancelled | Ok _ -> false;;
+- : bool = true
+]}
+
+Direct pipeline callbacks run synchronously. CV buffers events independently
+for each fold, executes at most the backend's concurrency per batch, and then
+delivers events serially on the caller domain: candidate order, fold order,
+then emission order inside each fold. The positive [max_buffered_events]
+limit defaults to 10,000 per fold. Exceeding it produces
+[Error.Callback_failure], with no unbounded event accumulation. Concurrent
+emitters inside a custom consumer determine their own emission order.
+
+Cancellation returns [Error.Cancelled] and prevents
+later batches, candidates, and refit. Already-running work can finish; buffered events after cancellation are
+discarded. This is cooperative cancellation between bounded batches, not
+preemption of a solver in another domain. Handler errors become
+[Error.Callback_failure] and handler exceptions propagate. Both callback errors
+and [Error.Cancelled] abort even under [Record]; they are never substituted
+with a score. Handlers must synchronize their own state only when shared
+across independent concurrent evaluations. Search with an explicit
+{!Modelkit.Search_checkpoint} retains completed candidate reports for inspection
+and resumption; standalone CV does not return a partial report.
+
+[Started] and [Finished] bracket operations that return normally. Ordinary
+failures produce [Finished (Failed error)], including recorded fold failures;
+cancellation, callback errors, and exceptions need not produce a finishing
+event. Callback errors take precedence if a handler fails while receiving an
+ordinary failure. Events contain logical identities and nested stage paths,
+not timestamps, training observations, or fitted models. Reports retain the
+existing fit/score timing and failure details.
+
+{1 Out-of-fold prediction}
+
+The [cross_val_predict] functions fit one cloned pipeline per fold and place
+each test prediction back at its source row. Test folds must form an exact
+partition: every source row occurs once. Holdout, shuffle, repeated, and
+expanding-window splitters are rejected when they omit or repeat test rows.
+This check completes before fitting begins.
+
+{@ocaml[
+# let oof_x = Matrix.init ~rows:9 ~columns:1
+    (fun row _ -> Float.of_int row) |> Result.get_ok;;
+val oof_x : Matrix.t = <abstr>
+# let oof_y = Target.regression
+    (Vector.of_array (Array.init 9 (fun row -> (2. *. Float.of_int row) +. 1.)))
+    |> Result.get_ok;;
+val oof_y : Target.regression Target.t = <abstr>
+# let oof_data = Dataset.create ~finiteness:Dataset.Require_finite
+    ~x:oof_x ~y:oof_y () |> Result.get_ok;;
+val oof_data : Target.regression Dataset.t = <abstr>
+# let oof_pipeline = Pipeline.estimator ~name:"linear"
+    (module Linear_regression) (Linear_regression.create ())
+    |> Result.get_ok |> Pipeline.set_estimator Pipeline.empty |> Result.get_ok;;
+val oof_pipeline :
+  (Linear_regression.target, Linear_regression.prediction) Pipeline.t =
+  <abstr>
+# let oof_splitter : Target.regression Target.t Cross_validation.splitter =
+    K_fold.create ~folds:3 ~shuffle:true () |> Result.get_ok
+    |> Cross_validation.target_independent_splitter (module K_fold);;
+val oof_splitter : Target.regression Target.t Cross_validation.splitter =
+  <abstr>
+# let oof_report = Cross_validation.Regression.cross_val_predict
+    ~splitter:oof_splitter ~seed:(Seed.of_int 42) oof_pipeline oof_data
+    |> Result.get_ok;;
+val oof_report :
+  Target.regression Target.t Cross_validation.prediction_report = <abstr>
+# Cross_validation.out_of_fold_predictions oof_report |> Result.get_ok
+    |> Target.regression_values |> fun values ->
+    Array.for_all
+      (fun row ->
+        Float.abs (Vector.get values row -. ((2. *. Float.of_int row) +. 1.))
+        < 1e-12)
+      (Array.init 9 Fun.id);;
+- : bool = true
+]}
+
+Binary and multiclass prediction accept [~response:Labels] or
+[~response:Probabilities]. Probability reports declare the complete dataset's
+ascending class order. If a fitted fold declares only a subset, its columns are
+mapped by class label and absent classes receive zero, matching the committed
+scikit-learn parity fixture. Unknown or duplicate fitted classes fail rather
+than being assigned positionally.
+
+[Abort] returns the lowest-index fitting or prediction error. [Record] retains
+one result, test-index array, and fit/predict timing per fold. The assembled
+value is unavailable if any fold failed, but successful fold responses remain
+available through {!Modelkit.Cross_validation.prediction_folds}. Metadata,
+callbacks, deterministic child seeds, and bounded execution follow ordinary
+cross-validation semantics.
+
+{1 Learning curves}
+
+{!Modelkit.Learning_curve} evaluates the same pipeline and scorers as ordinary
+cross-validation over progressively larger training subsets. The splitter runs
+once. Each point keeps every validation fold unchanged and uses a nested prefix
+of its corresponding base training fold, so score changes reflect training-set
+size rather than changing validation membership. Pipeline cloning keeps all
+preprocessing and supervised feature selection inside the selected training
+rows.
+
+A schedule accepts positive absolute row counts or finite fractions greater
+than zero and at most one. Fractions are applied to the smallest base training
+fold and rounded down, giving every fold the same resolved training-row count.
+Resolved sizes must be strictly increasing and fit every base fold. An optional
+[max_fits] limit checks [points * folds] before fitting begins. Schedule values
+and returned point arrays are defensively copied.
+
+{@ocaml[
+# let curve_schedule = Learning_curve.schedule ~shuffle:true ~max_fits:6
+    [|Learning_curve.Fraction 0.5; Learning_curve.Fraction 1.0|]
+    |> Result.get_ok;;
+val curve_schedule : Learning_curve.schedule = <abstr>
+# let curve_report = Learning_curve.Regression.evaluate
+    ~return_indices:true ~schedule:curve_schedule ~splitter:oof_splitter
+    ~scorers:[|Regression_scorer.neg_mean_absolute_error;
+               Regression_scorer.r2 ()|]
+    ~seed:(Seed.of_int 42) oof_pipeline oof_data |> Result.get_ok;;
+...
+# Array.map
+    (fun point ->
+      (point.Learning_curve.training_samples,
+       Cross_validation.successful_fold_count point.Learning_curve.evaluation))
+    (Learning_curve.points curve_report);;
+- : (int * int) array = [|(3, 3); (6, 3)|]
+]}
+
+Without schedule shuffling, each subset preserves the splitter's training-row
+order. With shuffling, each base training fold is shuffled once from the fixed
+seed and logical fold index; larger points remain supersets of smaller points,
+and results do not depend on domain scheduling. Curve points run sequentially,
+while folds within each point use the supplied {!Modelkit.Execution.t}. The
+optional Domainslib backend therefore bounds concurrency without changing
+indices or scores.
+
+Every point contains a normal cross-validation report with train scores enabled
+and fitted fold models omitted. Multiple scorers, train/test timings, optional
+indices, row-aligned weights and metadata, and callback buffering retain their
+ordinary CV behavior. Classification entry points first validate the complete
+dataset's class count; a smaller training subset that an estimator cannot fit
+is represented by its typed fold failure. [Record] is the default and continues
+to later sizes. [Abort] stops at the first failing fold and adds the resolved
+training size to the error context. Timings remain observational and are not a
+reproducibility guarantee.
+
+{1 Validation curves}
+
+{!Modelkit.Validation_curve} measures how one parameter changes train and
+validation scores. Its specification copies an ordered, nonempty typed value
+array and retains an immutable base configuration. A pure encoder supplies the
+stable {!type:Modelkit.Grid_search.parameter_value} used in reports; a setter
+returns a new configuration for each original typed value, and a builder
+packages that configuration as a pipeline. Values themselves must be immutable.
+
+The splitter runs once, and every value uses the exact same train/test row
+views. Pipeline construction and fold fitting remain independent for each
+value, so all preprocessing and supervised selection is learned only from the
+corresponding training fold. Unlike grid search, a validation curve neither
+ranks values nor selects or refits a winner.
+
+{@ocaml[
+# let validation_specification = Validation_curve.create ~max_fits:6
+      ~name:"fit_intercept" ~base:true ~values:[|true; false|]
+      ~encode:(fun value -> Grid_search.Bool value)
+      ~set:(fun _ value -> Ok value)
+      ~build:(fun fit_intercept ->
+        match Pipeline.estimator ~name:"linear" (module Linear_regression)
+                (Linear_regression.create ~fit_intercept ()) with
+        | Error error -> Error error
+        | Ok estimator -> Pipeline.set_estimator Pipeline.empty estimator) ()
+      |> Result.get_ok in
+  let validation_report = Validation_curve.Regression.evaluate
+      ~return_indices:true ~specification:validation_specification
+      ~splitter:oof_splitter
+      ~scorers:[|Regression_scorer.neg_mean_absolute_error;
+                 Regression_scorer.r2 ()|]
+      ~seed:(Seed.of_int 42) oof_data |> Result.get_ok in
+  Array.map
+      (fun point ->
+        (point.Validation_curve.parameter_value,
+         Option.map Cross_validation.successful_fold_count
+           point.Validation_curve.evaluation))
+      (Validation_curve.points validation_report);;
+- : (bool * int option) array = [|(true, Some 3); (false, Some 3)|]
+]}
+
+Each point retains its original typed value, encoded parameter, mean fit and
+score times, aggregate results for every scorer, and an ordinary CV report with
+train scores enabled. Optional indices make shared fold membership auditable;
+fitted fold models are always omitted. The point and score arrays returned by
+accessors are defensive copies. An optional [max_fits] bounds [values * folds]
+before any setter, builder, or fit runs.
+
+Values run sequentially in declaration order, while folds within one value use
+the supplied bounded {!Modelkit.Execution.t}. [Record] retains setter and builder
+errors as points without evaluations and retains fitting, prediction, and
+scoring failures inside present CV reports. [Abort] returns the first failure in
+value and fold order. Callback events use the existing search, candidate, and
+cross-validation lifecycle with candidate indices equal to point indices.
+Metadata routing, weights, deterministic logical seeds, cancellation, and
+callback bounds otherwise retain their existing CV/search contracts.
+
+{1 Permutation significance tests}
+
+{!Modelkit.Permutation_test} estimates whether a pipeline's cross-validated
+score is unusually high relative to scores obtained after breaking the
+feature/target association. It evaluates exactly one higher-is-better scorer,
+reports the observed mean score and ordered null scores, and applies the
+standard corrected upper-tail estimate so even zero exceedances produce a
+nonzero p-value.
+
+The splitter runs once against the observed target. Its validated row views are
+then shared by the observed evaluation and every permutation. Each evaluation
+clones and fits the complete pipeline independently within its training folds,
+preventing preprocessing or supervised-selection leakage. Fitted models from
+permutations are not retained.
+
+{@ocaml[
+# let permutation_specification =
+      Permutation_test.create ~permutations:5 ~max_fits:18 ()
+      |> Result.get_ok in
+  let permutation_report = Permutation_test.Regression.evaluate
+      ~return_indices:true ~specification:permutation_specification
+      ~splitter:oof_splitter
+      ~scorer:Regression_scorer.neg_mean_absolute_error
+      ~seed:(Seed.of_int 42) oof_pipeline oof_data
+      |> Result.get_ok in
+  (Array.length (Permutation_test.permutation_scores permutation_report),
+   (let p = Permutation_test.p_value permutation_report in
+    p > 0.0 && p <= 1.0),
+   Cross_validation.successful_fold_count
+     (Permutation_test.observed_evaluation permutation_report));;
+- : int * bool * int = (5, true, 3)
+]}
+
+Without dataset groups, targets shuffle globally. With groups, each target
+remains inside its original group, matching grouped permutation-test semantics
+while the same groups also reach the splitter and requested metadata consumers.
+Permutation streams derive from logical permutation and stable first-seen group
+identities. They are reproducible across execution backends but intentionally
+do not reproduce NumPy's random sequence.
+
+The observed evaluation runs first. Permutations use the supplied bounded
+{!Modelkit.Execution.t}, while folds within one permutation remain sequential
+to avoid nested oversubscription. The optional [max_fits] preflights
+[(permutations + 1) * folds]. Any routine failure aborts with its typed
+permutation/fold context: dropping failed null scores would change the test and
+invalidate its p-value. The observed report can retain indices for auditing,
+but never fitted fold models.
+
+{1 Randomized search and selection policies}
+
+{!Modelkit.Parameter_distribution} supplies typed finite choices, uniform,
+log-uniform, and integer-uniform draws, plus custom samplers receiving explicit
+RNG state. Bounds are lower-inclusive and upper-exclusive. Float bounds must
+be finite, and log-uniform bounds must be positive. Specifications, values,
+setters, encoders, and custom samplers follow the library's immutability and
+explicit-random-state contracts.
+
+{!Modelkit.Randomized_search} shares grid search's fold evaluation, metadata
+routing, callback delivery, failure policies, and full-data refitting. Each
+candidate uses identical split membership. Sampling and fitting derive
+separate deterministic streams from logical identities. The candidate order
+and sampled prefix remain reproducible across execution backends; NumPy's
+random sequence is not a compatibility contract.
+
+Choice-only spaces sample Cartesian positions without replacement and cap
+iterations at the available product size. Duplicate values can still yield
+equal configurations. If any axis uses a distribution, all axes sample with
+replacement. Finite products must fit an OCaml integer, but sampling avoids
+expanding that product: storage grows with the requested sample count. The
+default is ten iterations, and an empty axis list evaluates the base once.
+
+{@ocaml[
+# let intercept_axis = Randomized_search.axis ~name:"fit_intercept"
+    ~distribution:(Parameter_distribution.choice [|false; true|] |> Result.get_ok)
+    ~encode:(fun value -> Grid_search.Bool value)
+    ~set:(fun _ value -> Ok value) |> Result.get_ok;;
+val intercept_axis : bool Randomized_search.axis = <abstr>
+# let random_space = Randomized_search.create ~iterations:10 ~base:true
+    ~build:(fun fit_intercept ->
+      match Pipeline.estimator ~name:"linear" (module Linear_regression)
+              (Linear_regression.create ~fit_intercept ()) with
+      | Error error -> Error error
+      | Ok estimator -> Pipeline.set_estimator Pipeline.empty estimator)
+    [|intercept_axis|] |> Result.get_ok;;
+...
+# Randomized_search.candidate_count random_space;;
+- : int = 2
+# let preview = Randomized_search.sample ~seed:(Seed.of_int 1729) random_space;;
+...
+# Array.length preview = 2
+    && Array.for_all (fun candidate ->
+      Result.is_ok candidate.Randomized_search.sampled_configuration) preview;;
+- : bool = true
+]}
+
+[Randomized_search.sample] previews encoded parameters and typed configurations
+without building or fitting pipelines. Ordinary sampler/setter errors retain
+candidate and axis context and become candidate build failures under [Record].
+Failed draws omit the corresponding encoded parameter. User exceptions
+propagate. Without a checkpoint, sampling happens inside candidate callbacks, so
+cancellation prevents later candidates from drawing or fitting; a control
+error also stops remaining draws within the current candidate.
+
+The existing [search ~refit:"scorer_name"] entry points retain their behavior.
+Both search modules also expose [search_with_policy ~policy] for each task
+family, with policies from {!Modelkit.Grid_search.refit_policy}:
+
+- [Best_score name] ranks by that scorer and refits the winner, preserving
+  lowest-index tie breaking.
+- [No_refit] returns candidate reports without selecting or fitting a winner.
+  Ranks remain unset, and [refit_result report] returns [Ok None]. With [Record],
+  inspect candidate failures even when no refit was requested: all candidates
+  may have failed. A completed no-refit report is a successful search callback
+  outcome; candidate events still report their own failures.
+- [Custom select] passes copied candidate arrays to a selector returning an
+  array index. The selector can combine metrics, enforce score constraints,
+  and inspect parameters. The chosen candidate must have built and have at
+  least one successful test-score aggregate; the selector is responsible for
+  any additional metric requirements. Ranks remain unset. Avoid timing-based
+  choices when execution-independent reproducibility matters.
+
+For example, [Grid_search.Custom (fun candidates -> ...)] can select the least
+complex configuration among candidates satisfying a validation-score threshold.
+Selectors run once on the calling domain after candidate evaluation. Their
+returned errors follow [Record] or [Abort], while control errors always abort;
+exceptions propagate. Invalid indices or ineligible candidates produce typed
+selection failures. The selected pipeline fits once on the complete dataset
+with the original aligned metadata.
+
+[refit_result] distinguishes [Ok None] from [Ok (Some selected)] and [Error e].
+The existing [selection] accessor returns a fitted winner, or a typed error
+when refitting was disabled or selection/refitting failed. Sampler and selector
+failures remain reviewable without silently substituting a different winner.
+
+{1 Successive-halving search}
+
+{!Modelkit.Successive_halving} allocates progressively larger training subsets
+per fold and promotes the highest-scoring candidates. It accepts existing grids
+or randomized spaces for regression, binary classification, and multiclass
+classification. Randomized configurations are sampled once and reused across
+rounds. Each candidate is built and fitted fresh in each round; the pipeline
+contract does not support fitted-state continuation.
+
+Resources count training rows {e per fold}. Validation rows remain fixed, and
+training subsets grow as nested seeded prefixes shared by every candidate.
+Classification prefixes include every class, and every base training and
+validation fold must contain every class. Budgets must fit all training folds.
+A single holdout fold is supported. Subsetting preserves a group-aware splitter's
+training/validation separation, without requiring whole training groups to be
+sampled together. Weights and other metadata follow the selected rows.
+
+{@ocaml[
+# let halving_budget = Successive_halving.budget ~min_samples:4
+    ~max_samples:12 ~factor:2 ~max_fits:16 () |> Result.get_ok;;
+val halving_budget : Successive_halving.budget = <abstr>
+# Successive_halving.resources halving_budget;;
+- : int array = [|4; 8; 12|]
+# let halving_x = Matrix.init ~rows:16 ~columns:1
+    (fun row _ -> float_of_int row) |> Result.get_ok;;
+val halving_x : Matrix.t = <abstr>
+# let halving_y = Target.regression
+    (Vector.of_array (Array.init 16 (fun row -> 3. *. float_of_int row +. 5.)))
+    |> Result.get_ok;;
+val halving_y : Target.regression Target.t = <abstr>
+# let halving_data = Dataset.create ~finiteness:Dataset.Require_finite
+    ~x:halving_x ~y:halving_y () |> Result.get_ok;;
+val halving_data : Target.regression Dataset.t = <abstr>
+# let halving_splitter = Cross_validation.target_independent_splitter
+    (module K_fold) (K_fold.create ~folds:4 () |> Result.get_ok);;
+...
+# let halving_report = Successive_halving.Regression.search_with_policy
+    ~budget:halving_budget ~candidates:(Successive_halving.of_randomized random_space)
+    ~splitter:halving_splitter ~scorers:[|Regression_scorer.neg_mean_squared_error|]
+    ~promotion_score:"neg_mean_squared_error" ~policy:Grid_search.No_refit
+    ~seed:(Seed.of_int 1729) halving_data |> Result.get_ok;;
+...
+# Array.map (fun round -> round.Successive_halving.training_samples,
+    Array.length round.Successive_halving.candidates)
+    (Successive_halving.rounds halving_report);;
+- : (int * int) array = [|(4, 2); (8, 1); (12, 1)|]
+# Successive_halving.refit_result halving_report = Ok None;;
+- : bool = true
+]}
+
+Each promotion retains up to [ceil(current_candidate_count / factor)] candidates
+with successful promotion-score aggregates. Ties favor the lowest original
+candidate index. Reports retain every evaluated candidate, its round's scores,
+ranks on the promotion metric, and training/validation row indices. Promoted
+indices appear in score order; candidates are evaluated in original-index order.
+Rounds continue to the declared maximum even if only one candidate remains.
+
+[search ~refit] uses the same metric for promotion and final selection.
+[search_with_policy] separates [promotion_score] from the final named-score,
+custom, or no-refit policy. Custom selectors receive only final-round survivors
+and return an array position; candidate and selected indices retain their
+original identities. A selected pipeline refits on the full input dataset with
+its original metadata. Optional [max_fits] conservatively caps the scheduled
+candidate/fold fits plus that refit, before any candidate is built or fitted.
+
+Ordinary candidate failures follow [Record] or [Abort]. Under [Record], a round
+with no eligible survivor stops promotion and retains its reports with an error
+selection. Final-round no-refit behavior follows the existing no-refit contract.
+Callbacks carry [Stage "halving round N"] context and report search progress
+after each round. Cancellation stops subsequent work and returns an error.
+
+{1 Search checkpoints and partial reports}
+
+Pass [?checkpoint] to grid, randomized, or successive-halving search to retain
+completed candidate evaluations across cooperative cancellation and process
+restarts. {!val:Modelkit.Search_checkpoint.snapshot} exposes the committed prefix,
+including typed build/fold failures and scores. A candidate commits after its
+finished callback succeeds. Interrupted candidates repeat their whole evaluation;
+completed candidates reuse their saved results. Halving reconstructs promotion
+from completed round results and continues at the correct resource level.
+
+Checkpoints serialize reports and identities. The caller supplies fresh pipeline
+builders, configurations, samplers, scorers, and selectors on resume. Give the
+specification a stable version ID covering all executable behavior and dependency
+versions, and identify the {e entire} immutable configuration, including fields
+absent from reported parameters. These IDs are required because functions and
+abstract configuration values cannot be compared automatically.
+
+Search also verifies feature/target values, schema, dataset and explicit metadata
+weights/groups, actual ordered splits, seeds, search options, encoded parameters,
+and configuration IDs. Callback {e presence} must remain the same because a
+consumer can require or reject it; a resumed handler can simply continue.
+Execution concurrency may change. Checkpointed randomized search prepares all
+initial configurations before fitting to verify their identities.
+
+{@ocaml[
+# let search_session = Search_checkpoint.create
+    ~specification_id:"linear-intercept-example-v1"
+    ~configuration_id:string_of_bool () |> Result.get_ok;;
+val search_session : bool Search_checkpoint.t = <abstr>
+# let stop_after_first = Callback.create (fun event ->
+    if event.Callback.operation = Callback.Candidate
+       && event.Callback.status = Callback.Started
+       && List.mem (Error.Candidate 1) event.Callback.context
+    then Ok Callback.Cancel else Ok Callback.Continue) |> Result.get_ok;;
+val stop_after_first : Callback.t = <abstr>
+# let interrupted_search = Randomized_search.Regression.search
+    ~checkpoint:search_session
+    ~metadata:(Metadata.of_dataset ~callback:stop_after_first halving_data)
+    ~space:random_space ~splitter:halving_splitter
+    ~scorers:[|Regression_scorer.neg_mean_squared_error|]
+    ~refit:"neg_mean_squared_error" ~seed:(Seed.of_int 1729) halving_data;;
+...
+# Result.is_error interrupted_search
+    && Array.length (Search_checkpoint.completed
+         (Search_checkpoint.snapshot search_session)) = 1;;
+- : bool = true
+# let checkpoint_bytes = Search_checkpoint.snapshot search_session
+    |> Search_checkpoint.encode |> Result.get_ok;;
+...
+# let restored_session = Search_checkpoint.create
+    ~resume:(Search_checkpoint.decode checkpoint_bytes |> Result.get_ok)
+    ~specification_id:"linear-intercept-example-v1"
+    ~configuration_id:string_of_bool () |> Result.get_ok;;
+val restored_session : bool Search_checkpoint.t = <abstr>
+# let keep_going = Callback.create (fun _ -> Ok Callback.Continue) |> Result.get_ok;;
+val keep_going : Callback.t = <abstr>
+# let resumed_search = Randomized_search.Regression.search
+    ~checkpoint:restored_session
+    ~metadata:(Metadata.of_dataset ~callback:keep_going halving_data)
+    ~space:random_space ~splitter:halving_splitter
+    ~scorers:[|Regression_scorer.neg_mean_squared_error|]
+    ~refit:"neg_mean_squared_error" ~seed:(Seed.of_int 1729) halving_data
+    |> Result.get_ok;;
+...
+# Array.length (Grid_search.candidates resumed_search) = 2
+    && Result.is_ok (Grid_search.selection resumed_search);;
+- : bool = true
+]}
+
+The byte format is versioned and bounded to 64 MiB, with a checksum for accidental
+corruption. It contains no fitted models, OCaml closures, or [Marshal] payloads.
+The caller owns persistence: write a new checkpoint to a temporary file and
+replace the previous file atomically after writing succeeds. Snapshots can be
+taken from search callbacks on the caller domain. Each session admits one active
+search; other concurrent access is unsupported.
+
+Resumption rebuilds successful candidate specifications and reruns final selection
+and full-data refit. It does not replay cached CV/fit callbacks; candidate lifecycle
+callbacks can repeat. An interruption during refit leaves all candidate evaluations
+available. Deterministic score-based selection matches uninterrupted execution;
+timing-based or side-effect-dependent selection does not have that guarantee.
+
+{1 Resampling and aligned train/test data}
+
+{!Modelkit.Shuffle_split} draws independent random train/test partitions;
+{!Modelkit.Stratified_shuffle_split} apportions class counts before sampling.
+Their defaults are ten splits and a 10% test fraction. Different splits can
+reuse test rows, so they do not provide exhaustive out-of-fold coverage.
+{!Modelkit.Holdout} emits a single split with a 25% test fraction by default.
+
+{!Modelkit.Repeated_k_fold} and {!Modelkit.Repeated_stratified_k_fold} default
+to five folds and ten repetitions, always shuffling within each repetition.
+They emit folds in repetition-major order, and every row appears in exactly
+one test fold per repetition. Increasing the repetition count preserves the
+earlier splits. The stratified variant uses {!Modelkit.Stratified_k_fold}'s
+allocation rules. All splitters return eager arrays of row views, so storing
+repeated folds takes space proportional to rows times total fold count.
+
+Sizes use {!Modelkit.Split_size}: [Count n] for rows or [Fraction f] for a
+fraction strictly between zero and one. Training fractions round down; test
+fractions round up. One explicit size determines the other by subtraction.
+With both sizes supplied, unused rows are allowed, but partitions must remain
+nonempty and disjoint. Shuffle and stratified-shuffle views retain randomized
+row order; repeated K-fold views retain source row order.
+
+Use {!Modelkit.Train_test_split.split} to copy an immutable dataset into two
+aligned datasets. This example uses the classification dataset from above:
+
+{@ocaml[
+# let train_data, test_data =
+    Train_test_split.split ~test_size:(Split_size.Fraction 0.25)
+      ~rng:(Rng.create (Seed.of_int 1729)) dataset () |> Result.get_ok;;
+...
+# Dataset.sample_count train_data + Dataset.sample_count test_data
+    = Dataset.sample_count dataset;;
+- : bool = true
+# Feature_schema.equal (Dataset.feature_schema train_data)
+    (Dataset.feature_schema dataset);;
+- : bool = true
+]}
+
+Optional [~stratify:(Dataset.target dataset)] enables classification-label
+stratification. Separate aligned classification labels may also stratify a
+regression dataset. Stratification requires shuffling, at least two examples
+per class, and at least as many rows in each partition as there are classes.
+Class allocation uses proportional largest remainders, with seeded tie
+breaking, assigning training rows first and test rows from the remainder.
+These feasibility rules do not guarantee every rare class appears in both
+partitions under extreme imbalance. Use the resulting labels to check any
+class-coverage requirements of your estimator or scorer.
+
+The helper selects features, targets, weights, and groups in exactly the same
+row order, preserving schemas and feature-finiteness policies. With
+[shuffle=false], training takes the first rows and test takes the next rows;
+the RNG is ignored. A partition with zero total sample weight is rejected at
+materialization. Group labels are carried with rows but do not constrain
+membership: these splitters do not provide group exclusion.
+
+Use {!Modelkit.Cross_validation.target_independent_splitter} to package
+shuffle, holdout, or repeated K-fold specifications for CV and search. Package
+stratified specifications with
+{!Modelkit.Cross_validation.target_aware_splitter}. Logical split and repetition
+indices derive deterministic child random streams. Results are reproducible
+across execution backends, but NumPy's random row identities are not a
+compatibility promise. Reference fixtures compare partition sizes, class
+allocations without ties, and exact unshuffled holdout rows.
+
+{2 Nested cross-validation recipe}
+
+Model selection and model evaluation must use distinct held-out rows. In nested
+cross-validation, each outer training partition owns a fresh inner search. That
+search may fit and compare candidates only within its outer training data,
+including its full-data refit. The selected model is then scored once on the
+corresponding untouched outer test partition. Aggregating those outer scores
+estimates the performance of the complete selection procedure rather than the
+best candidate observed during tuning.
+
+The repository's
+{{:https://github.com/asara-io/ModelKit/blob/main/examples/nested_cv.ml}runnable
+nested-CV recipe} implements that protocol entirely through public APIs:
+
+{v
+let outer_train, outer_test = Split.materialize development outer_split in
+let inner_report =
+  Grid_search.Regression.search
+    ~grid:(grid ())
+    ~splitter:(k_fold 3)
+    ~scorers:[|Regression_scorer.neg_mean_squared_error|]
+    ~refit:"neg_mean_squared_error"
+    ~seed:(Seed.derive root_seed ~operation:"nested-cv-inner-search"
+             ~index:outer_index)
+    outer_train
+  |> Result.get_ok
+in
+let selected = Grid_search.selection inner_report |> Result.get_ok in
+score selected.Grid_search.selected_model outer_test
+v}
+
+Before the outer loop, the recipe uses {!Modelkit.Train_test_split.split} to
+reserve a final test dataset. After aggregating all outer-fold scores with
+{!Modelkit.Score_aggregation}, it performs one last search on the complete
+development dataset and evaluates that fitted selection once on the final
+holdout. Neither outer test rows nor final test rows influence preprocessing,
+candidate ranking, or refitting.
+
+Run the complete program from a source checkout:
+
+{v
+opam exec -- dune exec examples/nested_cv.exe
+v}
+
+The example derives holdout, outer-split, per-outer-fold inner-search, and final
+search seeds from separate logical operation names. Its outer loop is
+sequential; a bounded execution backend may be supplied to each inner search
+without creating nested parallelism. For grouped or time-ordered observations,
+replace K-fold with the appropriate group-aware or temporal splitter at both
+levels, and reserve the final test set with equivalent domain constraints
+rather than the ordinary shuffled helper.
+
+{2 Fixed folds and exhaustive exclusion}
+
+{!Modelkit.Predefined_split} accepts one integer test-fold assignment per row.
+Nonnegative IDs need not be contiguous; distinct IDs are emitted in ascending
+order. An assignment of [-1] keeps a row in every training partition and never
+places it in test data. Each test fold uses all other rows for training.
+Assignments are copied at construction; [params] and [fold_ids] return fresh
+arrays. Empty test schedules, invalid negative IDs, and schedules leaving an
+empty training partition are rejected.
+
+{@ocaml[
+# let fixed = Predefined_split.create
+    ~test_folds:[|-1; 8; 8; 2; 2; -1; 99; 99|] () |> Result.get_ok;;
+val fixed : Predefined_split.t = <abstr>
+# Predefined_split.fold_ids fixed = [|2; 8; 99|];;
+- : bool = true
+# let fixed_folds = Predefined_split.split fixed
+    ~rng:(Rng.create (Seed.of_int 1729))
+    ~x:(Matrix.create ~rows:8 ~columns:1 0. |> Result.get_ok)
+    ~y:None () |> Result.get_ok;;
+...
+# Array.map (fun (train, test) -> Row_view.length train, Row_view.length test)
+    fixed_folds = [|(6, 2); (6, 2); (6, 2)|];;
+- : bool = true
+]}
+
+{!Modelkit.Leave_one_out} tests each row once, in source order, against all
+remaining rows. It requires at least two rows. Its eager row views require
+quadratic index storage, and single-row scoring can make metrics such as
+R-squared undefined. Select a suitable scorer, such as negative squared error.
+
+{!Modelkit.Leave_one_group_out} tests each distinct group once, in ascending
+integer-ID order, against all other groups. It requires aligned groups and at
+least two distinct IDs. Each row is tested exactly once and groups never cross
+a fold's training/test boundary. Index storage grows with row count times
+group count. Both exhaustive splitters and predefined splits ignore the RNG.
+Predefined and single-row splits do not enforce group exclusion.
+
+{2 Stratified groups}
+
+{!Modelkit.Stratified_group_k_fold} keeps each group intact while seeking
+balanced class proportions across test folds. It requires aligned groups and
+classification labels, at least two folds, and at least as many groups as
+folds. Every row is tested exactly once, all folds are nonempty, and training
+contains the complete complement of each test fold. All row views preserve
+source order.
+
+The greedy algorithm considers groups with the greatest class-count dispersion
+first and selects the fold that best balances per-class fractions. Numerical
+ties favor the less populated fold, then its index. With [shuffle=true], a
+seeded permutation breaks ties between groups with equal dispersion; it does
+not globally randomize group placement. Groups are assigned to remaining
+empty folds when needed to ensure nonempty partitions. Sparse group histograms
+avoid allocating every possible group/class pair.
+
+Stratification is best effort under group exclusion. A rare class concentrated
+in one group cannot occur in both training and test when that group is held
+out. The splitter permits this valid partition; the estimator or scorer may
+reject it. Class balance is not a promise of optimality or universal class
+coverage. The reference fixtures check exact unshuffled membership on known
+cases; ModelKit's tie tolerance and nonempty-fold safeguard are documented in
+the API, and general scikit-learn membership equivalence is not guaranteed.
+
+Package stratified-group specifications with
+{!Modelkit.Cross_validation.target_aware_splitter}; use
+{!Modelkit.Cross_validation.target_independent_splitter} for predefined and
+leave-one-out/group-out specifications. Predefined schedules containing [-1]
+rows intentionally do not have full test coverage; preserve that distinction
+when assembling predictions in source-row order.
 
 {1 Artifact safety and compatibility}
 

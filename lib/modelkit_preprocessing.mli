@@ -58,7 +58,7 @@ module Simple_imputer : sig
   val statistics : fitted -> Vector.t
 
   include
-    TRANSFORMER
+    Modelkit_transform_cache.Transform_cache.CACHEABLE_TRANSFORMER
       with type t := t
        and type params := params
        and type target = unit
@@ -84,7 +84,7 @@ module Standard_scaler : sig
   val scale : fitted -> Vector.t
 
   include
-    TRANSFORMER
+    Modelkit_transform_cache.Transform_cache.CACHEABLE_TRANSFORMER
       with type t := t
        and type params := params
        and type target = unit

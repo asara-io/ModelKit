@@ -2,18 +2,28 @@
  (name modelkit)
  (public_name modelkit)
  (private_modules
+  modelkit_checkpoint_codec
   modelkit_artifact
+  modelkit_composition
+  modelkit_conformance
   modelkit_class_weight
   modelkit_data
+  modelkit_feature_selection
   modelkit_glm
   modelkit_linear_classifiers
   modelkit_linear_models
   modelkit_metrics
+  modelkit_metadata
+  modelkit_callback
   modelkit_model_selection
   modelkit_pipeline
   modelkit_preprocessing
   modelkit_protocols
   modelkit_regularized_linear
   modelkit_sgd
+  modelkit_resampling
+  modelkit_partitioning
   modelkit_splitting
+  modelkit_target
+  modelkit_transform_cache
   modelkit_transforms))

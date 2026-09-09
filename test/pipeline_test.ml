@@ -304,7 +304,8 @@ let is_data_length_mismatch = function
       | Data_error.Invalid_csr_column_order _ )
   | Error.Shape_mismatch _ | Error.Feature_schema_mismatch _
   | Error.Validation _ | Error.Numerical _ | Error.Convergence _
-  | Error.Compatibility _ | Error.Artifact _ | Error.Cancelled ->
+  | Error.Compatibility _ | Error.Artifact _ | Error.Callback_failure _
+  | Error.Cancelled ->
       false
 
 let test_fit_transform_predict () =
@@ -490,28 +491,28 @@ let is_validation = function
   | Error.Validation _ -> true
   | Error.Data _ | Error.Shape_mismatch _ | Error.Feature_schema_mismatch _
   | Error.Numerical _ | Error.Convergence _ | Error.Compatibility _
-  | Error.Artifact _ | Error.Cancelled ->
+  | Error.Artifact _ | Error.Callback_failure _ | Error.Cancelled ->
       false
 
 let is_compatibility = function
   | Error.Compatibility _ -> true
   | Error.Data _ | Error.Shape_mismatch _ | Error.Feature_schema_mismatch _
   | Error.Validation _ | Error.Numerical _ | Error.Convergence _
-  | Error.Artifact _ | Error.Cancelled ->
+  | Error.Artifact _ | Error.Callback_failure _ | Error.Cancelled ->
       false
 
 let is_schema_mismatch = function
   | Error.Feature_schema_mismatch _ -> true
   | Error.Data _ | Error.Shape_mismatch _ | Error.Validation _
   | Error.Numerical _ | Error.Convergence _ | Error.Compatibility _
-  | Error.Artifact _ | Error.Cancelled ->
+  | Error.Artifact _ | Error.Callback_failure _ | Error.Cancelled ->
       false
 
 let is_shape_mismatch = function
   | Error.Shape_mismatch _ -> true
   | Error.Data _ | Error.Feature_schema_mismatch _ | Error.Validation _
   | Error.Numerical _ | Error.Convergence _ | Error.Compatibility _
-  | Error.Artifact _ | Error.Cancelled ->
+  | Error.Artifact _ | Error.Callback_failure _ | Error.Cancelled ->
       false
 
 let expect_error predicate result =

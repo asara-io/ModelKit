@@ -1,0 +1,32 @@
+{
+  "comparison": "Fitted coefficient importances, resolved thresholds, selected indices, and transformed dense matrices.",
+  "configuration": {
+    "classification_estimator": "RidgeClassifier(alpha=0.5)",
+    "classification_norm_order": 1,
+    "classification_threshold": "median",
+    "max_features": 2,
+    "regression_estimator": "LinearRegression()",
+    "regression_threshold": "mean"
+  },
+  "environment": {
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3"
+  },
+  "fixture": "model_based_selection_v1",
+  "generator": "dev/fixtures/generate.py",
+  "license": "Apache-2.0",
+  "references": [
+    "sklearn.feature_selection.SelectFromModel",
+    "sklearn.linear_model.LinearRegression",
+    "sklearn.linear_model.RidgeClassifier"
+  ],
+  "schema_version": 1
+}

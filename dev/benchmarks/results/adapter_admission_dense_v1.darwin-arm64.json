@@ -15,7 +15,7 @@
     },
     "python": "3.14.3"
   },
-  "generated_at": "2026-09-04T19:33:58.639142+00:00",
+  "generated_at": "2026-09-09T04:54:24.826516+00:00",
   "methodology": {
     "measurement": "interleaved fresh-process wall time and sampled resident set size",
     "rss_sample_interval_seconds": 0.001,
@@ -29,14 +29,14 @@
   "runs": {
     "modelkit": [
       {
-        "elapsed_ns": 1165709167,
-        "peak_rss_bytes": 287375360,
+        "elapsed_ns": 1175790667,
+        "peak_rss_bytes": 282902528,
         "worker": {
           "adapters": {
             "nx": {
               "allocated_bytes_per_retained_payload_byte": 5.72552,
               "allocated_words": 47521815,
-              "elapsed_ns": 247458934,
+              "elapsed_ns": 246868848,
               "report_count": 5,
               "retained_payload_bytes": 66400000,
               "temporary_payload_bytes": 1600000
@@ -44,7 +44,7 @@
             "talon": {
               "allocated_bytes_per_retained_payload_byte": 4.762171,
               "allocated_words": 39526023,
-              "elapsed_ns": 226541042,
+              "elapsed_ns": 226825952,
               "report_count": 5,
               "retained_payload_bytes": 66400000,
               "temporary_payload_bytes": 1600000
@@ -88,14 +88,14 @@
         }
       },
       {
-        "elapsed_ns": 1167903625,
-        "peak_rss_bytes": 283869184,
+        "elapsed_ns": 1334321916,
+        "peak_rss_bytes": 261439488,
         "worker": {
           "adapters": {
             "nx": {
               "allocated_bytes_per_retained_payload_byte": 5.72552,
               "allocated_words": 47521815,
-              "elapsed_ns": 246919870,
+              "elapsed_ns": 391487121,
               "report_count": 5,
               "retained_payload_bytes": 66400000,
               "temporary_payload_bytes": 1600000
@@ -103,7 +103,7 @@
             "talon": {
               "allocated_bytes_per_retained_payload_byte": 4.762171,
               "allocated_words": 39526023,
-              "elapsed_ns": 228211164,
+              "elapsed_ns": 243538141,
               "report_count": 5,
               "retained_payload_bytes": 66400000,
               "temporary_payload_bytes": 1600000
@@ -147,14 +147,14 @@
         }
       },
       {
-        "elapsed_ns": 1186405834,
-        "peak_rss_bytes": 279085056,
+        "elapsed_ns": 1164352542,
+        "peak_rss_bytes": 279494656,
         "worker": {
           "adapters": {
             "nx": {
               "allocated_bytes_per_retained_payload_byte": 5.72552,
               "allocated_words": 47521815,
-              "elapsed_ns": 246582984,
+              "elapsed_ns": 246685028,
               "report_count": 5,
               "retained_payload_bytes": 66400000,
               "temporary_payload_bytes": 1600000
@@ -162,7 +162,7 @@
             "talon": {
               "allocated_bytes_per_retained_payload_byte": 4.762171,
               "allocated_words": 39526023,
-              "elapsed_ns": 228487014,
+              "elapsed_ns": 229457139,
               "report_count": 5,
               "retained_payload_bytes": 66400000,
               "temporary_payload_bytes": 1600000
@@ -208,8 +208,8 @@
     ],
     "sklearn": [
       {
-        "elapsed_ns": 747131250,
-        "peak_rss_bytes": 255983616,
+        "elapsed_ns": 737279042,
+        "peak_rss_bytes": 255557632,
         "worker": {
           "allocated_words": null,
           "checksum": "02f5292e1f00802651dd220db63c4437129103791d3cb490ace7a6f73d8cccce",
@@ -248,8 +248,8 @@
         }
       },
       {
-        "elapsed_ns": 758205167,
-        "peak_rss_bytes": 255672320,
+        "elapsed_ns": 733755291,
+        "peak_rss_bytes": 257114112,
         "worker": {
           "allocated_words": null,
           "checksum": "02f5292e1f00802651dd220db63c4437129103791d3cb490ace7a6f73d8cccce",
@@ -288,8 +288,8 @@
         }
       },
       {
-        "elapsed_ns": 747807250,
-        "peak_rss_bytes": 255246336,
+        "elapsed_ns": 761288083,
+        "peak_rss_bytes": 255819776,
         "worker": {
           "allocated_words": null,
           "checksum": "02f5292e1f00802651dd220db63c4437129103791d3cb490ace7a6f73d8cccce",

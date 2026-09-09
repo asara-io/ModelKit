@@ -1,3 +1,7 @@
 (executable
  (name evaluation)
  (libraries modelkit))
+
+(test
+ (name nested_cv)
+ (libraries modelkit))

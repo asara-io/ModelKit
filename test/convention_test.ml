@@ -80,7 +80,7 @@ let test_error_convention () =
     | Error.Validation { name; reason } -> Some (name, reason)
     | Error.Data _ | Error.Shape_mismatch _ | Error.Feature_schema_mismatch _
     | Error.Numerical _ | Error.Convergence _ | Error.Compatibility _
-    | Error.Artifact _ | Error.Cancelled ->
+    | Error.Artifact _ | Error.Callback_failure _ | Error.Cancelled ->
         None
   in
   let name, reason =
@@ -101,7 +101,8 @@ let test_error_convention () =
     | Error.Data error -> Some error
     | Error.Shape_mismatch _ | Error.Feature_schema_mismatch _
     | Error.Validation _ | Error.Numerical _ | Error.Convergence _
-    | Error.Compatibility _ | Error.Artifact _ | Error.Cancelled ->
+    | Error.Compatibility _ | Error.Artifact _ | Error.Callback_failure _
+    | Error.Cancelled ->
         None
   in
   let dimensions =

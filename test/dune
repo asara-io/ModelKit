@@ -1,7 +1,16 @@
 (library
  (name modelkit_test_support)
  (wrapped false)
- (modules backend_conformance adapter_conformance)
+ (modules
+  backend_conformance
+  adapter_conformance
+  evaluation_metadata_support
+  transformed_target_support
+  resampling_support
+  partitioning_support
+  randomized_search_support
+  halving_support
+  checkpoint_support)
  (libraries modelkit alcotest))
 
 (test
@@ -15,6 +24,96 @@
  (modules preprocessing_test)
  (package modelkit)
  (libraries modelkit alcotest))
+
+(test
+ (name feature_selection_test)
+ (modules feature_selection_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name univariate_selection_fixture_test)
+ (modules univariate_selection_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/univariate_selection_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_UNIVARIATE_FIXTURE
+   %{dep:fixtures/sklearn/univariate_selection_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name model_based_selection_test)
+ (modules model_based_selection_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name model_based_selection_fixture_test)
+ (modules model_based_selection_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/model_based_selection_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_MODEL_SELECTOR_FIXTURE
+   %{dep:fixtures/sklearn/model_based_selection_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name recursive_feature_elimination_test)
+ (modules recursive_feature_elimination_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name recursive_feature_elimination_fixture_test)
+ (modules recursive_feature_elimination_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/recursive_feature_elimination_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_RFE_FIXTURE
+   %{dep:fixtures/sklearn/recursive_feature_elimination_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name recursive_feature_elimination_cv_test)
+ (modules recursive_feature_elimination_cv_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name recursive_feature_elimination_cv_fixture_test)
+ (modules recursive_feature_elimination_cv_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/recursive_feature_elimination_cv_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_RFECV_FIXTURE
+   %{dep:fixtures/sklearn/recursive_feature_elimination_cv_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name sequential_feature_selection_test)
+ (modules sequential_feature_selection_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name sequential_feature_selection_fixture_test)
+ (modules sequential_feature_selection_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/sequential_feature_selection_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_SFS_FIXTURE
+   %{dep:fixtures/sklearn/sequential_feature_selection_v1.tsv}
+   (run %{test}))))
 
 (test
  (name transforms_test)
@@ -31,6 +130,12 @@
 (test
  (name pipeline_test)
  (modules pipeline_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name supervised_pipeline_test)
+ (modules supervised_pipeline_test)
  (package modelkit)
  (libraries modelkit alcotest))
 
@@ -137,6 +242,72 @@
  (libraries modelkit alcotest))
 
 (test
+ (name learning_curve_test)
+ (modules learning_curve_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name learning_curve_fixture_test)
+ (modules learning_curve_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/learning_curve_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_LEARNING_CURVE_FIXTURE
+   %{dep:fixtures/sklearn/learning_curve_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name validation_curve_test)
+ (modules validation_curve_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name validation_curve_fixture_test)
+ (modules validation_curve_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/validation_curve_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_VALIDATION_CURVE_FIXTURE
+   %{dep:fixtures/sklearn/validation_curve_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name permutation_test)
+ (modules permutation_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name permutation_fixture_test)
+ (modules permutation_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/permutation_test_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_PERMUTATION_FIXTURE
+   %{dep:fixtures/sklearn/permutation_test_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name cross_val_prediction_fixture_test)
+ (modules cross_val_prediction_fixture_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/cross_val_prediction_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_CROSS_VAL_PREDICTION_FIXTURE
+   %{dep:fixtures/sklearn/cross_val_prediction_v1.tsv}
+   (run %{test}))))
+
+(test
  (name grid_search_test)
  (modules grid_search_test)
  (package modelkit)
@@ -147,6 +318,36 @@
  (modules protocol_test)
  (package modelkit)
  (libraries modelkit alcotest))
+
+(test
+ (name conformance_test)
+ (modules conformance_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name transform_cache_test)
+ (modules transform_cache_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name pipeline_cache_test)
+ (modules pipeline_cache_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name persistent_cache_test)
+ (modules persistent_cache_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name persistent_cache_process_test)
+ (modules persistent_cache_process_test)
+ (package modelkit)
+ (libraries modelkit alcotest unix))
 
 (test
  (name convention_test)
@@ -350,3 +551,123 @@
    MODELKIT_SKLEARN_GLM_FIXTURE
    %{dep:fixtures/sklearn/glm_v1.tsv}
    (run %{test}))))
+
+(test
+ (name column_transformer_test)
+ (modules column_transformer_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/column_transformer_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_COLUMN_FIXTURE
+   %{dep:fixtures/sklearn/column_transformer_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name nested_composition_test)
+ (modules nested_composition_test)
+ (package modelkit)
+ (libraries modelkit alcotest)
+ (deps fixtures/sklearn/nested_composition_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_NESTED_FIXTURE
+   %{dep:fixtures/sklearn/nested_composition_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name metadata_routing_test)
+ (modules metadata_routing_test)
+ (package modelkit)
+ (libraries modelkit alcotest))
+
+(test
+ (name evaluation_metadata_test)
+ (modules evaluation_metadata_test)
+ (package modelkit)
+ (libraries modelkit modelkit_test_support alcotest))
+
+(test
+ (name transformed_target_test)
+ (modules transformed_target_test)
+ (package modelkit)
+ (libraries modelkit modelkit_test_support alcotest)
+ (deps fixtures/sklearn/transformed_target_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_TARGET_FIXTURE
+   %{dep:fixtures/sklearn/transformed_target_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name resampling_test)
+ (modules resampling_test)
+ (package modelkit)
+ (libraries modelkit modelkit_test_support alcotest))
+
+(test
+ (name resampling_fixture_test)
+ (modules resampling_fixture_test)
+ (package modelkit)
+ (libraries modelkit modelkit_test_support alcotest)
+ (deps fixtures/sklearn/resampling_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_RESAMPLING_FIXTURE
+   %{dep:fixtures/sklearn/resampling_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name partitioning_test)
+ (modules partitioning_test)
+ (package modelkit)
+ (libraries modelkit modelkit_test_support alcotest))
+
+(test
+ (name partitioning_fixture_test)
+ (modules partitioning_fixture_test)
+ (package modelkit)
+ (libraries modelkit modelkit_test_support alcotest)
+ (deps fixtures/sklearn/partitioning_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_PARTITIONING_FIXTURE
+   %{dep:fixtures/sklearn/partitioning_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name randomized_search_test)
+ (modules randomized_search_test)
+ (package modelkit)
+ (libraries modelkit modelkit_test_support alcotest))
+
+(test
+ (name randomized_search_fixture_test)
+ (modules randomized_search_fixture_test)
+ (package modelkit)
+ (libraries modelkit modelkit_test_support alcotest)
+ (deps fixtures/sklearn/randomized_search_v1.tsv)
+ (action
+  (setenv
+   MODELKIT_RANDOMIZED_FIXTURE
+   %{dep:fixtures/sklearn/randomized_search_v1.tsv}
+   (run %{test}))))
+
+(test
+ (name halving_test)
+ (modules halving_test)
+ (package modelkit)
+ (libraries modelkit modelkit_test_support alcotest))
+
+(test
+ (name checkpoint_test)
+ (modules checkpoint_test)
+ (package modelkit)
+ (libraries modelkit modelkit_test_support alcotest))
+
+(test
+ (name checkpoint_process_test)
+ (modules checkpoint_process_test)
+ (package modelkit)
+ (libraries modelkit modelkit_test_support alcotest unix))

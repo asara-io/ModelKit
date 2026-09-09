@@ -1,3 +1,34 @@
+# 0.5.0 (2026-09-09)
+
+- Publish the third-party estimator authoring guide, metadata-aware conformance
+  checks, component provenance, and explicit fitted-pipeline artifact-support
+  reports. A separately built public-only consumer participates unchanged in
+  nested composition, metadata routing, parallel cross-validation, and
+  randomized search; external codecs remain opt-in reviewed work and unsupported
+  encoding returns a typed error.
+- Add candidate-boundary search checkpoints with partial evaluation reports,
+  bounded data-only serialization, full data/split/configuration identity checks,
+  and deterministic resumption across process restarts and execution backends.
+- Add successive-halving search over grid or randomized candidates with nested
+  training-row budgets, deterministic promotion, class and weight feasibility
+  checks, fresh fits, per-round reports, and optional bounded full-data refitting.
+- Add typed randomized parameter distributions and search with finite sampling
+  without replacement, distribution sampling, and deterministic candidate streams.
+- Share named-score, no-refit, and custom multi-metric selection policies across
+  grid and randomized search while preserving existing named-refit entry points.
+- Add typed supervised pipelines, dense column transformation, feature unions,
+  and nested preprocessing chains with fold-local fitting.
+- Route requested weights, groups, and callbacks through nested consumers,
+  cross-validation, search, and full-data refit with bounded cancellation.
+- Add stratified-group K-fold, predefined, leave-one-out, and leave-one-group-out
+  splitters with explicit coverage, feasibility, and group-exclusion contracts.
+- Add shuffle, stratified-shuffle, holdout, and repeated K-fold splitters, plus
+  aligned train/test dataset splitting with explicit counts and fractional sizes.
+- Add transformed-target regression with fold-local target fitting, metadata
+  requests, checked inverse transforms, and original-space predictions.
+- Record producer version 0.5.0 in newly written artifacts while retaining
+  compatibility with existing readers and golden artifacts.
+
 # 0.4.1 (2026-09-04)
 
 - Add checked immutable CSR matrices with canonical structure validation,

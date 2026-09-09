@@ -1,6 +1,6 @@
 (documentation
  (package modelkit)
- (mld_files index))
+ (mld_files index authoring_estimators))
 
 (mdx
  (files index.mld)

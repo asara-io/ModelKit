@@ -9,3 +9,81 @@
  (modules modelkit_parallel_test)
  (package modelkit-parallel)
  (libraries modelkit modelkit-parallel alcotest))
+
+(test
+ (name pipeline_cache_parallel_test)
+ (modules pipeline_cache_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel alcotest))
+
+(test
+ (name learning_curve_parallel_test)
+ (modules learning_curve_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel alcotest))
+
+(test
+ (name validation_curve_parallel_test)
+ (modules validation_curve_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel alcotest))
+
+(test
+ (name recursive_feature_elimination_cv_parallel_test)
+ (modules recursive_feature_elimination_cv_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel alcotest))
+
+(test
+ (name sequential_feature_selection_parallel_test)
+ (modules sequential_feature_selection_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel alcotest))
+
+(test
+ (name permutation_test_parallel_test)
+ (modules permutation_test_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel alcotest))
+
+(test
+ (name evaluation_metadata_parallel_test)
+ (modules evaluation_metadata_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel modelkit_test_support alcotest))
+
+(test
+ (name transformed_target_parallel_test)
+ (modules transformed_target_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel modelkit_test_support alcotest))
+
+(test
+ (name resampling_parallel_test)
+ (modules resampling_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel modelkit_test_support alcotest))
+
+(test
+ (name partitioning_parallel_test)
+ (modules partitioning_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel modelkit_test_support alcotest))
+
+(test
+ (name randomized_search_parallel_test)
+ (modules randomized_search_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel modelkit_test_support alcotest))
+
+(test
+ (name halving_parallel_test)
+ (modules halving_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel modelkit_test_support alcotest))
+
+(test
+ (name checkpoint_parallel_test)
+ (modules checkpoint_parallel_test)
+ (package modelkit-parallel)
+ (libraries modelkit modelkit-parallel modelkit_test_support alcotest))

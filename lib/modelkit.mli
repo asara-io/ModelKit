@@ -424,6 +424,7 @@ module Error : sig
     | Convergence of { algorithm : string; reason : string }
     | Compatibility of { component : string; reason : string }
     | Artifact of { operation : string; reason : string }
+    | Callback_failure of { reason : string }
     | Cancelled
 
   type t
@@ -509,6 +510,127 @@ module Admission : sig
       reports. *)
 end
 
+(** Typed progress and lifecycle notifications. Handlers may continue, cancel,
+    or return an explanatory error. Exceptions raised by a handler propagate. *)
+module Callback : sig
+  (** Lifecycle events enclose evaluation, candidates, folds, refit, and
+      requesting consumers' fit/transform methods. [Finished (Failed error)]
+      reports ordinary failures, including recorded fold failures. Cancellation,
+      callback failure, or an exception may leave a started operation
+      unfinished. A handler error becomes [Error.Callback_failure]; [Cancel]
+      becomes [Error.Cancelled]. Both abort evaluation even under [Record].
+      Handler failures take precedence over an operation failure delivered to
+      them. Events after the first handler failure or cancellation are
+      discarded.
+
+      CV admits at most [Execution.concurrency] folds per batch. Their events
+      are delivered after that batch finishes, in fold order and then emission
+      order within each fold. Cancellation prevents subsequent batches,
+      candidates, or refit; already-running work may finish. Events are bounded
+      per fold, and overflow aborts with [Error.Callback_failure]. Timing is not
+      part of an event. Custom consumers with concurrent emitters determine
+      their own emission order. No callbacks run while handling an exception. *)
+  type operation =
+    | Fit
+    | Transform
+    | Cross_validation
+    | Fold
+    | Search
+    | Candidate
+    | Refit
+
+  type outcome = Succeeded | Failed of Error.t
+
+  type status =
+    | Started
+    | Progress of { completed : int; total : int option }
+    | Finished of outcome
+
+  type event = {
+    operation : operation;
+    context : Error.context list;
+    status : status;
+  }
+
+  type decision = Continue | Cancel
+  type t
+
+  val create :
+    ?max_buffered_events:int ->
+    (event -> (decision, string) result) ->
+    (t, Error.t) result
+  (** The positive event bound defaults to [10_000] per buffered fold. Direct
+      pipeline calls deliver synchronously; CV buffers fold events and delivers
+      them serially on the caller domain in logical fold order, one bounded
+      batch at a time. Callbacks need not synchronize their own mutable state
+      within one evaluation. Sharing a handler across independent concurrent
+      evaluations requires caller synchronization. *)
+
+  val progress :
+    t -> completed:int -> ?total:int -> unit -> (unit, Error.t) result
+  (** Consumers report progress through the callback delivered in metadata.
+      Counts must satisfy [0 <= completed <= total] when a total is given. The
+      library supplies the enclosing operation and nested context. Consumers
+      must propagate errors from this call and must not retain the delivered
+      callback after their operation returns. *)
+
+  val is_control_error : Error.t -> bool
+  (** Recognizes [Error.Cancelled] and [Error.Callback_failure]. Evaluators
+      always abort on these errors, including under [Record] failure policy. *)
+end
+
+(** Immutable, typed, row-aligned inputs for metadata-aware consumers. Metadata
+    is supplied independently for each operation; fitted pipelines do not retain
+    fit metadata for later inference. *)
+module Metadata : sig
+  type t
+
+  val create :
+    ?sample_weight:Sample_weight.t ->
+    ?groups:Groups.t ->
+    ?callback:Callback.t ->
+    unit ->
+    t
+
+  val empty : t
+  val sample_weight : t -> Sample_weight.t option
+  val groups : t -> Groups.t option
+  val callback : t -> Callback.t option
+  val of_dataset : ?callback:Callback.t -> _ Dataset.t -> t
+
+  val select : t -> Row_view.t -> (t, Error.t) result
+  (** Selects weights and groups in exactly the row-view order; the callback is
+      shared, not sliced. Source lengths are checked before selection. *)
+
+  val validate : rows:int -> t -> (unit, Error.t) result
+  (** Checks every supplied field, including fields ignored by consumers. *)
+
+  module Request : sig
+    (** [Ignore] never delivers the field; [Optional] delivers it when supplied;
+        [Required] rejects absence; [Reject] rejects presence. Requests are
+        independent for each method and each consumer. *)
+    type policy = Ignore | Optional | Required | Reject
+
+    type t
+
+    val create :
+      ?sample_weight:policy -> ?groups:policy -> ?callback:policy -> unit -> t
+    (** All policies default to [Ignore]. *)
+
+    val none : t
+    val sample_weight : t -> policy
+    val groups : t -> policy
+    val callback : t -> policy
+  end
+
+  val validate_request : Request.t -> t -> (unit, Error.t) result
+
+  val route : Request.t -> t -> (t, Error.t) result
+  (** Checks presence policies and returns only requested fields, sharing the
+      immutable values. This does not check row lengths; use [validate] at the
+      operation boundary. Ignored fields may still reach requesting siblings. *)
+end
+
 (** Shared convention for immutable configured components.
 
     Concrete modules expose [params] as a public typed value. [clone] returns an
@@ -552,6 +674,18 @@ module type ESTIMATOR = sig
 
   val fitted_params : fitted -> params
   val feature_schema : fitted -> Feature_schema.t
+end
+
+(** Estimator with an explicit fitted feature-importance extractor.
+
+    The extractor returns one finite, non-negative value per feature in the
+    fitted estimator's schema. Generic selectors validate this contract before
+    using the values. Coefficient-based implementations can use
+    {!Feature_importance}. *)
+module type IMPORTANCE_ESTIMATOR = sig
+  include ESTIMATOR
+
+  val feature_importances : fitted -> (Vector.t, Error.t) result
 end
 
 (** Estimator whose targets and predictions are integer class labels. *)
@@ -602,6 +736,77 @@ module type TRANSFORMER = sig
   val output_schema : fitted -> Feature_schema.t
 end
 
+(** Transformer with explicit per-method metadata requests. Requests are read
+    from the specification when packaged and remain fixed for its fitted
+    lifetime. Both fit and transform requests are validated before training
+    begins, since fitting also transforms the training rows. The implementation
+    must preserve row count and order and must not retain metadata solely to
+    substitute it for future inference inputs. *)
+module type METADATA_TRANSFORMER = sig
+  include SPECIFICATION
+
+  type target
+  type fitted
+  type rng
+
+  val fit_request : t -> Metadata.Request.t
+  val transform_request : t -> Metadata.Request.t
+
+  val fit :
+    t ->
+    metadata:Metadata.t ->
+    rng:rng ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:target option ->
+    unit ->
+    (fitted, Error.t) result
+
+  val transform :
+    fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val fitted_params : fitted -> params
+  val input_schema : fitted -> Feature_schema.t
+  val output_schema : fitted -> Feature_schema.t
+end
+
+(** Estimator with a declared fit-metadata request. Prediction uses fitted state
+    and features; pipeline preprocessing may separately request inference
+    metadata. *)
+module type METADATA_ESTIMATOR = sig
+  include SPECIFICATION
+
+  type target
+  type prediction
+  type fitted
+  type rng
+
+  val fit_request : t -> Metadata.Request.t
+
+  val fit :
+    t ->
+    metadata:Metadata.t ->
+    rng:rng ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:target ->
+    unit ->
+    (fitted, Error.t) result
+
+  val predict :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (prediction, Error.t) result
+
+  val fitted_params : fitted -> params
+  val feature_schema : fitted -> Feature_schema.t
+end
+
 (** A named scoring rule over observed and predicted values. *)
 module type SCORER = sig
   include SPECIFICATION
@@ -618,6 +823,201 @@ module type SCORER = sig
     prediction:prediction ->
     unit ->
     (float, Error.t) result
+end
+
+(** Published descriptions of optional behavior implemented by a component.
+
+    Required protocol behavior is not a capability: determinism, immutable
+    specifications, typed failures, row alignment, and schema validation remain
+    mandatory. These values describe only behavior that a generic consumer may
+    need to select before invoking a component. *)
+module Capability : sig
+  type support = Supported | Unsupported
+
+  type prediction =
+    | Direct
+    | Labels
+    | Positive_probabilities of int
+    | Class_probabilities
+
+  type estimator = {
+    estimator_sample_weight : support;
+    estimator_fit_metadata : support;
+    estimator_decision_function : support;
+    estimator_predict_proba : support;
+  }
+
+  type transformer = {
+    transformer_target : support;
+    transformer_sample_weight : support;
+    transformer_fit_metadata : support;
+    transformer_transform_metadata : support;
+  }
+
+  type scorer = {
+    scorer_sample_weight : support;
+    scorer_prediction : prediction;
+  }
+
+  val estimator :
+    ?sample_weight:support ->
+    ?fit_metadata:support ->
+    ?decision_function:support ->
+    ?predict_proba:support ->
+    unit ->
+    estimator
+
+  val transformer :
+    ?target:support ->
+    ?sample_weight:support ->
+    ?fit_metadata:support ->
+    ?transform_metadata:support ->
+    unit ->
+    transformer
+
+  val scorer : ?sample_weight:support -> prediction:prediction -> unit -> scorer
+end
+
+(** A type-safe, first-class scorer supplied by application or third-party code.
+    [of_module] snapshots the immutable specification with [clone]. Names and
+    capability compatibility are validated by consuming evaluation APIs before
+    fitting begins. *)
+module Scorer : sig
+  type ('truth, 'prediction) t
+
+  val of_module :
+    capabilities:Capability.scorer ->
+    (module SCORER
+       with type t = 'specification
+        and type params = 'params
+        and type truth = 'truth
+        and type prediction = 'prediction) ->
+    'specification ->
+    ('truth, 'prediction) t
+
+  val name : ('truth, 'prediction) t -> string
+  val capabilities : ('truth, 'prediction) t -> Capability.scorer
+
+  val score :
+    ('truth, 'prediction) t ->
+    ?sample_weight:Sample_weight.t ->
+    truth:'truth ->
+    prediction:'prediction ->
+    unit ->
+    (float, Error.t) result
+end
+
+(** Framework-neutral protocol checks for third-party components.
+
+    Reports are ordinary values so package authors can use them from Alcotest,
+    OUnit, expect tests, or their own build tooling without adding a ModelKit
+    test-framework dependency. *)
+module Conformance : sig
+  type issue =
+    | Protocol_error of Error.t
+    | Violation of string
+    | Raised of string
+
+  type outcome = Passed | Failed of issue
+  type check = { name : string; outcome : outcome }
+  type report
+
+  val issue_to_string : issue -> string
+  val checks : report -> check array
+  val passed : report -> bool
+  val failures : report -> check array
+
+  module Estimator : sig
+    type ('specification, 'params, 'target, 'prediction, 'fitted, 'rng) fixture = {
+      specification : 'specification;
+      rng : unit -> 'rng;
+      feature_schema : Feature_schema.t;
+      x : Matrix.t;
+      y : 'target;
+      sample_weight : Sample_weight.t option;
+      equal_params : 'params -> 'params -> bool;
+      prediction_length : 'prediction -> int;
+      equal_prediction : 'prediction -> 'prediction -> bool;
+    }
+
+    val check :
+      (module ESTIMATOR
+         with type t = 'specification
+          and type params = 'params
+          and type target = 'target
+          and type prediction = 'prediction
+          and type fitted = 'fitted
+          and type rng = 'rng) ->
+      ('specification, 'params, 'target, 'prediction, 'fitted, 'rng) fixture ->
+      report
+  end
+
+  module Metadata_estimator : sig
+    type ('specification, 'params, 'target, 'prediction, 'fitted, 'rng) fixture = {
+      specification : 'specification;
+      rng : unit -> 'rng;
+      feature_schema : Feature_schema.t;
+      x : Matrix.t;
+      y : 'target;
+      metadata : Metadata.t;
+      equal_params : 'params -> 'params -> bool;
+      prediction_length : 'prediction -> int;
+      equal_prediction : 'prediction -> 'prediction -> bool;
+    }
+
+    val check :
+      (module METADATA_ESTIMATOR
+         with type t = 'specification
+          and type params = 'params
+          and type target = 'target
+          and type prediction = 'prediction
+          and type fitted = 'fitted
+          and type rng = 'rng) ->
+      ('specification, 'params, 'target, 'prediction, 'fitted, 'rng) fixture ->
+      report
+  end
+
+  module Transformer : sig
+    type ('specification, 'params, 'target, 'fitted, 'rng) fixture = {
+      specification : 'specification;
+      rng : unit -> 'rng;
+      feature_schema : Feature_schema.t;
+      x : Matrix.t;
+      y : 'target option;
+      sample_weight : Sample_weight.t option;
+      equal_params : 'params -> 'params -> bool;
+    }
+
+    val check :
+      (module TRANSFORMER
+         with type t = 'specification
+          and type params = 'params
+          and type target = 'target
+          and type fitted = 'fitted
+          and type rng = 'rng) ->
+      ('specification, 'params, 'target, 'fitted, 'rng) fixture ->
+      report
+  end
+
+  module Scorer : sig
+    type ('specification, 'params, 'truth, 'prediction) fixture = {
+      specification : 'specification;
+      capabilities : Capability.scorer;
+      truth : 'truth;
+      prediction : 'prediction;
+      sample_weight : Sample_weight.t option;
+      equal_params : 'params -> 'params -> bool;
+    }
+
+    val check :
+      (module SCORER
+         with type t = 'specification
+          and type params = 'params
+          and type truth = 'truth
+          and type prediction = 'prediction) ->
+      ('specification, 'params, 'truth, 'prediction) fixture ->
+      report
+  end
 end
 
 (** Contract for deterministic materialization of train/test row selections. *)
@@ -712,6 +1112,193 @@ module Seed : sig
   val to_string : t -> string
 end
 
+(** Content-addressed transform-cache foundations.
+
+    Stores are explicit values with caller-owned lifetimes; ModelKit does not
+    install a process-global cache. Cache payloads are data only and are copied
+    at the storage boundary. *)
+module Transform_cache : sig
+  module Component : sig
+    type t
+
+    val create :
+      package:string -> name:string -> version:int -> (t, Error.t) result
+    (** Names must be nonblank and [version] must be positive. Package-qualified
+        identities prevent unrelated extensions from sharing entries. *)
+
+    val package : t -> string
+    val name : t -> string
+    val version : t -> int
+    val equal : t -> t -> bool
+    val to_string : t -> string
+  end
+
+  module Content_id : sig
+    type t
+
+    val of_bytes : bytes -> t
+    val of_string : string -> t
+    val of_matrix : Matrix.t -> t
+    val of_sample_weight : Sample_weight.t -> t
+    val of_groups : Groups.t -> t
+
+    val combine : domain:string -> t array -> (t, Error.t) result
+    (** Combines an ordered array under a nonblank domain. Domain and length
+        framing distinguish structurally different material. Content IDs are
+        deterministic cache identities, not cryptographic authentication. *)
+
+    val equal : t -> t -> bool
+    val to_hex : t -> string
+  end
+
+  module Key : sig
+    type t
+
+    val create :
+      component:Component.t ->
+      configuration:Content_id.t ->
+      training_data:Content_id.t ->
+      target:Content_id.t option ->
+      routed_metadata:Content_id.t ->
+      seed:Seed.t ->
+      t
+    (** Canonically frames every field. [None] is an explicit no-target marker,
+        not the identity of an empty target. *)
+
+    val equal : t -> t -> bool
+    val to_hex : t -> string
+  end
+
+  (** A stable fitted-state codec for a transformer. The cache format is
+      independent of the public model-artifact schema, and decoders must
+      validate payloads with typed failures. *)
+  module type CACHEABLE_TRANSFORMER = sig
+    include TRANSFORMER
+
+    val cache_component : Component.t
+    val cache_configuration : t -> Content_id.t
+    val encode_fitted : fitted -> (bytes, Error.t) result
+    val decode_fitted : bytes -> (fitted, Error.t) result
+  end
+
+  module Codec : sig
+    type ('specification, 'fitted) t
+
+    type ('specification, 'fitted) support =
+      | Unsupported
+      | Supported of ('specification, 'fitted) t
+
+    val of_module :
+      (module CACHEABLE_TRANSFORMER
+         with type t = 'specification
+          and type params = 'params
+          and type target = 'target
+          and type fitted = 'fitted
+          and type rng = 'rng) ->
+      ('specification, 'fitted) t
+
+    val component : ('specification, 'fitted) t -> Component.t
+
+    val configuration :
+      ('specification, 'fitted) t -> 'specification -> Content_id.t
+
+    val encode :
+      ('specification, 'fitted) t -> 'fitted -> (bytes, Error.t) result
+
+    val decode :
+      ('specification, 'fitted) t -> bytes -> ('fitted, Error.t) result
+
+    val require :
+      component:string ->
+      ('specification, 'fitted) support ->
+      (('specification, 'fitted) t, Error.t) result
+    (** Returns a typed compatibility error when caching is requested for a
+        transformer without a codec. *)
+  end
+
+  module Memory : sig
+    type limits
+
+    val limits : max_entries:int -> max_bytes:int64 -> (limits, Error.t) result
+    (** Both limits must be positive. [max_bytes] counts payload bytes,
+        excluding keys and OCaml allocation headers. *)
+
+    val default_limits : limits
+
+    type stats = {
+      entries : int;
+      payload_bytes : int64;
+      hits : int64;
+      misses : int64;
+      evictions : int64;
+    }
+
+    type t
+
+    val create : ?limits:limits -> unit -> t
+
+    val get : t -> Key.t -> bytes option
+    (** Returns a copy and updates hit or miss counters. *)
+
+    val put : t -> Key.t -> bytes -> (unit, Error.t) result
+    (** Copies the payload. Oversized entries fail without changing the store;
+        least-recently-written entries are evicted until both bounds hold. *)
+
+    val remove : t -> Key.t -> bool
+    val clear : t -> unit
+    val stats : t -> stats
+  end
+
+  (** Portable directory-backed storage for immutable cache entries.
+
+      Entries and temporary publication files contain plaintext fitted state.
+      ModelKit requests restrictive permissions for newly created paths but does
+      not provide encryption, authenticate content, or override the host
+      filesystem's permission semantics. Protect the root, backups, and
+      retention policy before caching state derived from secret training data.
+  *)
+  module Persistent : sig
+    type limits
+
+    val limits : max_payload_bytes:int -> (limits, Error.t) result
+    (** The positive limit bounds allocation before reading a payload. *)
+
+    val default_limits : limits
+
+    (** Corrupt entries are never returned as hits. A subsequent [put] replaces
+        a corrupt entry, allowing callers to refit safely. *)
+    type lookup = Miss | Hit of bytes | Corrupt of Error.t
+
+    type publication = Published | Already_present
+    type t
+
+    val create : ?limits:limits -> root:string -> unit -> (t, Error.t) result
+    (** Creates [root] with restrictive requested permissions when absent. Its
+        parent must already exist; existing roots must be directories. *)
+
+    val root : t -> string
+    val get : t -> Key.t -> (lookup, Error.t) result
+
+    val put : t -> Key.t -> bytes -> (publication, Error.t) result
+    (** Publishes a complete entry by atomic rename. Concurrent writers for one
+        key must encode identical payloads. *)
+
+    val remove : t -> Key.t -> (bool, Error.t) result
+  end
+
+  (** A cache backend packaged behind one workflow-facing interface. *)
+  module Store : sig
+    type lookup = Miss | Hit of bytes | Corrupt of Error.t
+    type t
+
+    val memory : Memory.t -> t
+    val persistent : Persistent.t -> t
+    val get : t -> Key.t -> (lookup, Error.t) result
+    val put : t -> Key.t -> bytes -> (unit, Error.t) result
+    val remove : t -> Key.t -> (bool, Error.t) result
+  end
+end
+
 (** Pure portable SplitMix64 random-number generation. *)
 module Rng : sig
   include RNG with type seed = Seed.t
@@ -767,7 +1354,7 @@ module Simple_imputer : sig
   val statistics : fitted -> Vector.t
 
   include
-    TRANSFORMER
+    Transform_cache.CACHEABLE_TRANSFORMER
       with type t := t
        and type params := params
        and type target = unit
@@ -794,7 +1381,7 @@ module Standard_scaler : sig
   val scale : fitted -> Vector.t
 
   include
-    TRANSFORMER
+    Transform_cache.CACHEABLE_TRANSFORMER
       with type t := t
        and type params := params
        and type target = unit
@@ -824,6 +1411,179 @@ module Variance_threshold : sig
        and type target = unit
        and type fitted := fitted
        and type rng = Rng.t
+end
+
+(** Dense target-aware feature selection by an association score.
+
+    Count selection retains exactly [k] features. Percentile selection retains
+    [floor (input_width * percentile / 100)] features and fails at fit time if
+    that is zero. Higher scores rank first; a score tie prefers the lower
+    original column index. Selected output columns always retain original input
+    order and named schemas are filtered accordingly. *)
+module Univariate_selection : sig
+  type selection = Count of int | Percentile of float
+
+  (** Squared Pearson-correlation F ranking for scalar regression targets.
+
+      This release provides scores for feature ranking rather than inferential
+      p-values. It accepts finite, unweighted dense inputs with at least three
+      rows. Constant features or targets score zero, and perfect correlation
+      scores [Float.max_float]. *)
+  module Regression : sig
+    type params = { selection : selection }
+    type t
+    type fitted
+
+    val create : selection -> (t, Error.t) result
+    val scores : fitted -> Vector.t
+    val selected_indices : fitted -> int array
+
+    include
+      TRANSFORMER
+        with type t := t
+         and type params := params
+         and type target = Target.regression Target.t
+         and type fitted := fitted
+         and type rng = Rng.t
+  end
+
+  (** One-way ANOVA F ranking for integer classification targets.
+
+      This release provides scores for feature ranking rather than inferential
+      p-values. It accepts finite, unweighted dense inputs with at least two
+      classes and one residual degree of freedom. Constant features score zero;
+      nonzero between-class variance with zero within-class variance scores
+      [Float.max_float]. *)
+  module Classification : sig
+    type params = { selection : selection }
+    type t
+    type fitted
+
+    val create : selection -> (t, Error.t) result
+    val scores : fitted -> Vector.t
+    val selected_indices : fitted -> int array
+
+    include
+      TRANSFORMER
+        with type t := t
+         and type params := params
+         and type target = Target.classification Target.t
+         and type fitted := fitted
+         and type rng = Rng.t
+  end
+end
+
+(** Helpers for converting fitted linear-model coefficients into one
+    non-negative importance per feature. Non-finite coefficients and
+    unrepresentable reductions return typed numerical errors. *)
+module Feature_importance : sig
+  type coefficient_norm = L1 | L2 | Max
+
+  val absolute_coefficients : Vector.t -> (Vector.t, Error.t) result
+  (** Returns the elementwise absolute coefficient values. *)
+
+  val coefficient_norms :
+    ?norm:coefficient_norm -> Matrix.t -> (Vector.t, Error.t) result
+  (** Reduces coefficient rows into one importance per column. The default [L1]
+      reduction matches conventional multiclass model selection. At least one
+      coefficient row is required. [L2] uses a scaled accumulation to avoid
+      intermediate overflow. *)
+end
+
+(** Dense feature selection driven by an explicitly adapted fitted estimator.
+
+    A threshold of [Mean] or [Median] is resolved from the fitted importances;
+    [Value v] uses a checked finite non-negative cutoff. Features meeting the
+    threshold are retained, optionally capped by [max_features]. Higher
+    importances rank first under a cap, equal importances prefer the lower
+    original column index, and output columns retain input order. Inputs must be
+    finite and contain at least one feature. Optional sample weights are passed
+    to the importance estimator after row-alignment validation. *)
+module Select_from_model : sig
+  type threshold = Mean | Median | Value of float
+
+  module Make (Estimator : IMPORTANCE_ESTIMATOR with type rng = Rng.t) : sig
+    type params = {
+      threshold : threshold;
+      max_features : int option;
+      estimator_params : Estimator.params;
+    }
+
+    type t
+    type fitted
+
+    val create :
+      ?threshold:threshold ->
+      ?max_features:int ->
+      Estimator.t ->
+      (t, Error.t) result
+
+    val importances : fitted -> Vector.t
+    val threshold_value : fitted -> float
+    val selected_indices : fitted -> int array
+
+    val fitted_estimator : fitted -> Estimator.fitted
+    (** The fitted estimator was trained on the selector's complete input schema
+        to derive importances; it is not the downstream estimator fitted on
+        selected columns. *)
+
+    include
+      TRANSFORMER
+        with type t := t
+         and type params := params
+         and type target = Estimator.target
+         and type fitted := fitted
+         and type rng = Rng.t
+  end
+end
+
+(** Dense recursive feature elimination using fitted estimator importances.
+
+    [Count n] removes at most [n] features per round. [Fraction f] resolves once
+    against the original input width as [max 1 (floor (f * width))] and requires
+    [0 < f < 1]. Every round fits a fresh clone on the active dense columns.
+    Weakest importances are removed first; equal importances remove the lower
+    original column index first. Ranking [1] denotes a selected feature, with
+    larger values denoting earlier elimination. The final fitted estimator and
+    its importances use exactly the selected output schema.
+
+    Inputs must be finite and contain at least one feature. Optional sample
+    weights are row-validated and routed to every estimator fit. Round seeds are
+    derived from logical round indices. Each reduced round materializes one
+    dense matrix containing its active columns; sparse input is not accepted. *)
+module Recursive_feature_elimination : sig
+  type step = Count of int | Fraction of float
+
+  module Make (Estimator : IMPORTANCE_ESTIMATOR with type rng = Rng.t) : sig
+    type params = {
+      feature_count : int;
+      step : step;
+      estimator_params : Estimator.params;
+    }
+
+    type t
+    type fitted
+
+    val create :
+      ?step:step -> feature_count:int -> Estimator.t -> (t, Error.t) result
+
+    val selected_indices : fitted -> int array
+    val ranking : fitted -> int array
+
+    val final_importances : fitted -> Vector.t
+    (** Importances from the final estimator, in selected-feature order. *)
+
+    val fitted_estimator : fitted -> Estimator.fitted
+    (** The final estimator was trained on exactly the selected features. *)
+
+    include
+      TRANSFORMER
+        with type t := t
+         and type params := params
+         and type target = Estimator.target
+         and type fitted := fitted
+         and type rng = Rng.t
+  end
 end
 
 (** Per-feature affine scaling into a configured finite range.
@@ -1138,11 +1898,18 @@ end
     unique across the whole pipeline, and failures carry the responsible
     [Error.Stage] context.
 
-    Current transformers are unsupervised and do not receive targets. Sample
-    weights always route to the terminal estimator and reach a transformer stage
-    only when it was packaged with [route_sample_weight]. Each stage receives a
-    child RNG derived from its logical name and position. Fit and inference are
-    sequential and allocate one dense matrix per transformer stage. *)
+    Unsupervised stages do not receive targets; {!Pipeline.Supervised}
+    additionally packages target-aware stages in a builder tied to the target
+    kind. Legacy packages route sample weights to the terminal estimator and to
+    transformers opting in with [route_sample_weight]. Metadata-aware packages
+    use declared per-method requests for weights and groups. Each stage receives
+    a child RNG derived from its logical name and position. Fit and inference
+    are sequential and allocate one dense matrix per transformer stage.
+
+    Caching is disabled by default. [with_cache] attaches an explicit
+    caller-owned store retained by pipeline clones used in cross-validation and
+    search. Cache-capable descendants in nested composition receive that same
+    store. *)
 module Pipeline : sig
   type transformer
   type builder
@@ -1151,8 +1918,52 @@ module Pipeline : sig
   type ('target, 'prediction) fitted
   type capabilities = { decision_function : bool; predict_proba : bool }
 
+  type provenance
+  (** Identity supplied by a component package. Provenance describes code that
+      produced fitted state; it does not grant artifact serialization support.
+  *)
+
+  val provenance :
+    package:string ->
+    version:string ->
+    implementation:string ->
+    (provenance, Error.t) result
+
+  val provenance_package : provenance -> string
+  val provenance_version : provenance -> string
+  val provenance_implementation : provenance -> string
+
+  (** [Portable_artifact] means a reviewed data-only ModelKit codec is attached
+      to that fitted component. *)
+  type serialization_support = Portable_artifact | Unsupported
+
+  type component_report = {
+    component_name : string;
+    provenance : provenance option;
+    serialization_support : serialization_support;
+  }
+  (** Artifact support and optional producer identity for one fitted component.
+  *)
+
+  type artifact_report
+
+  val metadata_transformer :
+    ?provenance:provenance ->
+    name:string ->
+    (module METADATA_TRANSFORMER
+       with type t = 'specification
+        and type target = unit
+        and type fitted = 'fitted
+        and type rng = Rng.t) ->
+    'specification ->
+    (transformer, Error.t) result
+  (** Packages per-method requests from the specification once. Fit validates
+      both the fit request and the training transform request. No artifact codec
+      is supplied for this adapter. *)
+
   val transformer :
     ?route_sample_weight:bool ->
+    ?provenance:provenance ->
     name:string ->
     (module TRANSFORMER
        with type t = 'specification
@@ -1166,7 +1977,50 @@ module Pipeline : sig
       true; by default the stage fits unweighted, matching transformers that
       declare no weight support. *)
 
+  val cacheable_transformer :
+    ?route_sample_weight:bool ->
+    ?provenance:provenance ->
+    name:string ->
+    (module Transform_cache.CACHEABLE_TRANSFORMER
+       with type t = 'specification
+        and type params = 'params
+        and type target = unit
+        and type fitted = 'fitted
+        and type rng = Rng.t) ->
+    'specification ->
+    (transformer, Error.t) result
+  (** Packages a stage with an explicit stable fitted-state cache codec. A cache
+      hit restores fitted state and transforms the current training matrix; it
+      does not cache terminal estimators or transformed matrices. *)
+
+  val metadata_estimator :
+    ?provenance:provenance ->
+    name:string ->
+    (module METADATA_ESTIMATOR
+       with type t = 'specification
+        and type target = 'target
+        and type prediction = 'prediction
+        and type fitted = 'fitted
+        and type rng = Rng.t) ->
+    ?decision_function:
+      ('fitted ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      (Vector.t, Error.t) result) ->
+    ?predict_proba:
+      ('fitted ->
+      feature_schema:Feature_schema.t ->
+      x:Matrix.t ->
+      (Matrix.t, Error.t) result) ->
+    ?classes:('fitted -> int array) ->
+    'specification ->
+    (('target, 'prediction) estimator, Error.t) result
+  (** Packages a terminal fit request and optional prediction capabilities.
+      Weight delivery follows that request; class-weight resolution, when
+      needed, belongs to the consumer. No artifact codec is supplied. *)
+
   val estimator :
+    ?provenance:provenance ->
     name:string ->
     (module ESTIMATOR
        with type t = 'specification
@@ -1193,6 +2047,7 @@ module Pipeline : sig
 
   val classifier :
     ?class_weight:Class_weight.t ->
+    ?provenance:provenance ->
     name:string ->
     (module ESTIMATOR
        with type t = 'specification
@@ -1225,10 +2080,149 @@ module Pipeline : sig
     ('target, 'prediction) estimator ->
     (('target, 'prediction) t, Error.t) result
 
+  module Supervised : sig
+    type 'kind stage
+    type 'kind builder
+
+    val metadata_transformer :
+      name:string ->
+      (module METADATA_TRANSFORMER
+         with type t = 'specification
+          and type target = 'kind Target.t
+          and type fitted = 'fitted
+          and type rng = Rng.t) ->
+      'specification ->
+      ('kind stage, Error.t) result
+
+    val transformer :
+      ?route_sample_weight:bool ->
+      name:string ->
+      (module TRANSFORMER
+         with type t = 'specification
+          and type target = 'kind Target.t
+          and type fitted = 'fitted
+          and type rng = Rng.t) ->
+      'specification ->
+      ('kind stage, Error.t) result
+    (** Packages a supervised transformer. Each fit receives [Some y] from the
+        pipeline's training rows; weights reach it only when
+        [route_sample_weight] is true. Targets and weights must have one entry
+        per row. Length errors are rejected before any stage fits. Class weights
+        remain a terminal-estimator policy and do not alter the sample weights
+        routed to transformers. *)
+
+    val cacheable_transformer :
+      ?route_sample_weight:bool ->
+      name:string ->
+      (module Transform_cache.CACHEABLE_TRANSFORMER
+         with type t = 'specification
+          and type params = 'params
+          and type target = 'kind Target.t
+          and type fitted = 'fitted
+          and type rng = Rng.t) ->
+      'specification ->
+      ('kind stage, Error.t) result
+    (** Target values become part of the cache key. They are never supplied to
+        an unsupervised stage adapted with {!val:unsupervised}. *)
+
+    val unsupervised : transformer -> 'kind stage
+    (** Adapts an existing unsupervised stage, retaining its weight-routing and
+        artifact-codec policies. Its fit still receives [y:None]. *)
+
+    val empty : 'kind builder
+
+    val add_transformer :
+      'kind builder -> 'kind stage -> ('kind builder, Error.t) result
+
+    val set_estimator :
+      'kind builder ->
+      ('kind Target.t, 'prediction) estimator ->
+      (('kind Target.t, 'prediction) t, Error.t) result
+    (** The terminal and supervised stages share the same target kind. The
+        resulting pipeline uses the ordinary fit, prediction, CV, and search
+        APIs. Targets are used only during fitting; inference reuses learned
+        transforms without targets. Metadata-aware stages may separately request
+        inference weights or groups.
+
+        A supervised stage fits on and transforms the same training rows. This
+        is suitable for feature selection; target encoders needing internal
+        cross-fitting require a separate fit-transform contract. Supervised
+        stages currently have no artifact codec. *)
+  end
+
   val clone : ('target, 'prediction) t -> ('target, 'prediction) t
+
+  val with_cache :
+    ('target, 'prediction) t ->
+    Transform_cache.Store.t ->
+    ('target, 'prediction) t
+  (** Returns a specification whose cacheable transformer stages reuse the
+      explicitly scoped store. Keys cover ordered feature schema and values,
+      targets for supervised stages, routed sample weights, configuration, and
+      logical stage seed. Nested unsupported leaves fail before fitting begins.
+      CV and search clones retain the store and derive schedule-independent keys
+      from logical work identities. *)
+
+  val without_cache : ('target, 'prediction) t -> ('target, 'prediction) t
+  val cache_enabled : ('target, 'prediction) t -> bool
   val transformer_names : ('target, 'prediction) t -> string array
   val estimator_name : ('target, 'prediction) t -> string
   val capabilities : ('target, 'prediction) t -> capabilities
+
+  val artifact_report : ('target, 'prediction) fitted -> artifact_report
+  (** Reports component provenance and whether every fitted component has a
+      reviewed portable artifact codec. An unsupported component may still be
+      fitted and used normally; artifact encoding returns a typed error. *)
+
+  val artifact_transformers : artifact_report -> component_report array
+  val artifact_estimator : artifact_report -> component_report
+  val portable_artifact_supported : artifact_report -> bool
+
+  val fit_with_metadata :
+    ('target, 'prediction) t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:'target ->
+    unit ->
+    (('target, 'prediction) fitted, Error.t) result
+  (** Metadata-aware operations validate all supplied row lengths and all
+      declared requests before any consumer runs. Fit preflight includes the
+      transforms of training rows. Requests are structural: configured children
+      are checked even when a column selection later proves empty. Metadata
+      remains row-aligned through feature transformations; values are neither
+      transformed nor implicitly reused from fitting. Existing operations use
+      absent metadata, apart from the legacy fit's optional sample weights. CV
+      and search can select these inputs from their metadata carrier. *)
+
+  val transform_with_metadata :
+    ('target, 'prediction) fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val predict_with_metadata :
+    ('target, 'prediction) fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    ('prediction, Error.t) result
+
+  val decision_function_with_metadata :
+    ('target, 'prediction) fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Vector.t, Error.t) result
+
+  val predict_proba_with_metadata :
+    ('target, 'prediction) fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
 
   val fit :
     ('target, 'prediction) t ->
@@ -1270,6 +2264,414 @@ module Pipeline : sig
 
   val input_schema : ('target, 'prediction) fitted -> Feature_schema.t
   val output_schema : ('target, 'prediction) fitted -> Feature_schema.t
+end
+
+(** Immutable ordered column selections. Duplicate indices or names within a
+    selector are rejected; different branches may select the same column. *)
+module Column_selector : sig
+  type t
+
+  val all : t
+
+  val indices : int array -> (t, Error.t) result
+  (** Copies non-negative indices, preserving caller order. Bounds are checked
+      when the selector is resolved against an input schema. *)
+
+  val names : string array -> (t, Error.t) result
+  (** Copies unique feature names. Non-empty name selection requires a named
+      input schema; absent names fail before any branch fits. *)
+
+  val resolve : t -> Feature_schema.t -> (int array, Error.t) result
+  (** Returns a fresh array of positions. Empty selections are valid. *)
+end
+
+(** Dense column-wise composition of unsupervised transformer stages.
+
+    Branches fit independently on the same training rows and concatenate in
+    declaration order. Selectors retain their own order. Unselected columns are
+    dropped by default or appended in source order as [remainder]. Columns
+    explicitly selected by a dropped branch are excluded from the remainder.
+    Empty selections skip fitting and inference, including for custom stages.
+
+    Branch inputs receive named schemas: original feature names when available,
+    otherwise [x0], [x1], etc. using original column positions. Output names are
+    [branch__feature], using the child's output names or branch-local [x0],
+    [x1], etc. for anonymous child outputs. Name collisions are typed errors.
+    Inference requires the same complete ordered input schema as fitting.
+
+    Composition validates structure; each child owns its finiteness policy.
+    Passthrough preserves values, including NaNs. All-dropped output is a dense
+    matrix with the original row count and zero columns; downstream estimators
+    may reject it. There is no implicit sparse conversion or artifact codec. *)
+module Column_transformer : sig
+  type remainder = Drop | Passthrough
+  type branch
+  type t
+  type params = t
+  type fitted
+
+  val transformer : columns:Column_selector.t -> Pipeline.transformer -> branch
+  (** Uses the packaged stage's name, weight-routing policy, and transform. *)
+
+  val passthrough :
+    name:string -> columns:Column_selector.t -> (branch, Error.t) result
+
+  val drop :
+    name:string -> columns:Column_selector.t -> (branch, Error.t) result
+
+  val create :
+    ?remainder:remainder ->
+    ?max_output_features:int ->
+    branch array ->
+    (t, Error.t) result
+  (** Copies the branch array. Names must be non-blank, unique, and different
+      from the reserved name [remainder]. [max_output_features] defaults to
+      [100_000] and must lie between zero and [Sys.max_array_length]. It bounds
+      combined output width before final concatenation; child transforms must
+      enforce their own allocation limits. *)
+
+  type branch_info = {
+    name : string;
+    input_indices : int array;
+    output_start : int;
+    output_count : int;
+  }
+
+  val branches : fitted -> branch_info array
+  (** Returns defensive copies of resolved selections and half-open output
+      ranges, including dropped/empty branches and any passthrough remainder. *)
+
+  type allocation = { selected_input_bytes : int64; output_bytes : int64 }
+  (** Dense payload bytes allocated by the composition operation: selected
+      inputs copied for active transform branches, and the final concatenated
+      matrix. Passthrough copies directly into the final matrix. Child-owned
+      outputs/scratch, schemas, indices, and OCaml allocation overhead are
+      excluded; these figures are neither total allocation nor peak memory. *)
+
+  val fit_transform :
+    t ->
+    ?sample_weight:Sample_weight.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted * Matrix.t * allocation, Error.t) result
+  (** Fits each selected child once and reuses its training output. Weights are
+      checked for row alignment and supplied to child packages, which route them
+      only when explicitly configured. Child RNGs derive from branch names and
+      positions, independently of sibling random consumption. *)
+
+  val transform_with_report :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t * allocation, Error.t) result
+
+  val stage : name:string -> t -> (Pipeline.transformer, Error.t) result
+  (** Packages the composition into a pipeline, reusing training outputs and
+      forwarding sample weights to the child packages. This avoids an extra
+      transform pass during fitting. Use [Pipeline.Supervised.unsupervised] to
+      include it in a target-aware pipeline. *)
+
+  val fit_with_metadata :
+    t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted, Error.t) result
+
+  val fit_transform_with_metadata :
+    t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted * Matrix.t * allocation, Error.t) result
+
+  val transform_with_metadata :
+    fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val transform_with_report_with_metadata :
+    fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t * allocation, Error.t) result
+
+  (** Target-aware composition for {!Pipeline.Supervised} pipelines. All active
+      children receive the same training targets in row order; sample weights
+      retain each child's opt-in policy. Adapt ordinary stages with
+      {!Pipeline.Supervised.unsupervised}. The unsupervised composition's
+      naming, allocation, empty-input, and deterministic seed rules apply.
+      Target and weight length errors fail before any pipeline stage fits.
+      Inference uses fitted values without targets. *)
+  module Supervised : sig
+    type 'kind t
+    type 'kind branch
+
+    val transformer :
+      columns:Column_selector.t ->
+      'kind Pipeline.Supervised.stage ->
+      'kind branch
+
+    val passthrough :
+      name:string -> columns:Column_selector.t -> ('kind branch, Error.t) result
+
+    val drop :
+      name:string -> columns:Column_selector.t -> ('kind branch, Error.t) result
+
+    val create :
+      ?remainder:remainder ->
+      ?max_output_features:int ->
+      'kind branch array ->
+      ('kind t, Error.t) result
+
+    val stage :
+      name:string ->
+      'kind t ->
+      ('kind Pipeline.Supervised.stage, Error.t) result
+  end
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Sequential preprocessing that can itself be used as a transformer stage.
+
+    Each child fits only on the output of earlier children from the same
+    training partition. Fitted schemas propagate without additional name
+    prefixes. The empty chain is the identity, including its input schema.
+    Stages preserve row count and order. Child RNGs derive from stage names and
+    positions; sample weights retain each child's explicit routing policy. The
+    chain allocates no additional numeric buffers beyond its children. *)
+module Transformer_pipeline : sig
+  type t
+  type params = t
+  type fitted
+
+  val create : Pipeline.transformer array -> (t, Error.t) result
+  (** Copies the stage array and rejects duplicate names. *)
+
+  val stage_names : t -> string array
+
+  val fit_transform :
+    t ->
+    ?sample_weight:Sample_weight.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted * Matrix.t, Error.t) result
+  (** Fits and transforms each child once, reusing its output for the next
+      child. All children are unsupervised and receive no targets. *)
+
+  val stage : name:string -> t -> (Pipeline.transformer, Error.t) result
+  (** Packages a chain for ordinary pipelines, column transformers, or feature
+      unions without an extra training transform pass. Sample weights reach only
+      children that request them. Composite artifact codecs are not yet
+      supported. *)
+
+  val fit_with_metadata :
+    t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted, Error.t) result
+
+  val fit_transform_with_metadata :
+    t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted * Matrix.t, Error.t) result
+
+  val transform_with_metadata :
+    fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  (** Target-aware composition for {!Pipeline.Supervised} pipelines. All active
+      children receive the same training targets in row order; sample weights
+      retain each child's opt-in policy. Adapt ordinary stages with
+      {!Pipeline.Supervised.unsupervised}. The unsupervised composition's
+      naming, allocation, empty-input, and deterministic seed rules apply.
+      Target and weight length errors fail before any pipeline stage fits.
+      Inference uses fitted values without targets. *)
+  module Supervised : sig
+    type 'kind t
+
+    val create :
+      'kind Pipeline.Supervised.stage array -> ('kind t, Error.t) result
+
+    val stage :
+      name:string ->
+      'kind t ->
+      ('kind Pipeline.Supervised.stage, Error.t) result
+  end
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
+end
+
+(** Dense concatenation of independently fitted unsupervised branches.
+
+    Every active branch receives the same immutable full input and schema,
+    without selection copies. Outputs concatenate in declaration order with
+    names [branch__feature]. Anonymous child outputs use branch-local [x0],
+    [x1], etc. Duplicate generated names are typed failures.
+
+    Dropped branches do no work. Active branches receive zero-column inputs too,
+    leaving their admissibility to each transformer. Empty or all-dropped unions
+    produce a zero-column matrix retaining the input row count. Branches run
+    sequentially; surrounding CV may own bounded parallelism. This API does not
+    add sparse output, branch-output weighting, or composite artifact codecs.
+    Target-aware branches are available through [Supervised]. *)
+module Feature_union : sig
+  type branch
+  type t
+  type params = t
+  type fitted
+
+  val transformer : Pipeline.transformer -> branch
+  val passthrough : name:string -> (branch, Error.t) result
+  val drop : name:string -> (branch, Error.t) result
+
+  val create : ?max_output_features:int -> branch array -> (t, Error.t) result
+  (** Copies the branch array and rejects duplicate or blank names.
+      [max_output_features] defaults to [100_000] and must be between zero and
+      [Sys.max_array_length]. The combined width is checked before generating
+      output names and concatenating; each child owns its own allocation bounds.
+  *)
+
+  type branch_info = { name : string; output_start : int; output_count : int }
+
+  val branches : fitted -> branch_info array
+
+  type allocation = { output_bytes : int64 }
+  (** Payload bytes of the final concatenated matrix only. Input is shared;
+      child allocations, metadata, and scratch are excluded. *)
+
+  val fit_transform :
+    t ->
+    ?sample_weight:Sample_weight.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted * Matrix.t * allocation, Error.t) result
+  (** Fits each active branch once, reuses its training output, and derives
+      random streams from branch names and positions. Sample weights are checked
+      for row alignment before any branch fits, then routed only to children
+      explicitly requesting them. *)
+
+  val transform_with_report :
+    fitted ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t * allocation, Error.t) result
+
+  val stage : name:string -> t -> (Pipeline.transformer, Error.t) result
+  (** Packages the union as an ordinary transformer stage, retaining child
+      weight routing and reusing branch outputs during fitting. It can nest
+      inside a column transformer or transformer pipeline. *)
+
+  val fit_with_metadata :
+    t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted, Error.t) result
+
+  val fit_transform_with_metadata :
+    t ->
+    metadata:Metadata.t ->
+    rng:Rng.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    y:unit option ->
+    unit ->
+    (fitted * Matrix.t * allocation, Error.t) result
+
+  val transform_with_metadata :
+    fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t, Error.t) result
+
+  val transform_with_report_with_metadata :
+    fitted ->
+    metadata:Metadata.t ->
+    feature_schema:Feature_schema.t ->
+    x:Matrix.t ->
+    (Matrix.t * allocation, Error.t) result
+
+  (** Target-aware composition for {!Pipeline.Supervised} pipelines. All active
+      children receive the same training targets in row order; sample weights
+      retain each child's opt-in policy. Adapt ordinary stages with
+      {!Pipeline.Supervised.unsupervised}. The unsupervised composition's
+      naming, allocation, empty-input, and deterministic seed rules apply.
+      Target and weight length errors fail before any pipeline stage fits.
+      Inference uses fitted values without targets. *)
+  module Supervised : sig
+    type 'kind t
+    type 'kind branch
+
+    val transformer : 'kind Pipeline.Supervised.stage -> 'kind branch
+    val passthrough : name:string -> ('kind branch, Error.t) result
+    val drop : name:string -> ('kind branch, Error.t) result
+
+    val create :
+      ?max_output_features:int ->
+      'kind branch array ->
+      ('kind t, Error.t) result
+
+    val stage :
+      name:string ->
+      'kind t ->
+      ('kind Pipeline.Supervised.stage, Error.t) result
+  end
+
+  include
+    TRANSFORMER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type fitted := fitted
+       and type rng = Rng.t
 end
 
 (** Diagnostics retained by fitted numerical estimators.
@@ -2352,6 +3754,10 @@ module Regression_scorer : sig
   val neg_root_mean_squared_error : t
   val r2 : ?undefined:Undefined_metric_policy.t -> unit -> t
 
+  val as_scorer :
+    t -> (Target.regression Target.t, Target.regression Target.t) Scorer.t
+  (** Admits a built-in specification through the first-class scorer API. *)
+
   include
     SCORER
       with type t := t
@@ -2411,6 +3817,10 @@ module Binary_classification_scorer : sig
 
   val average_precision :
     ?positive_label:int -> ?undefined:Undefined_metric_policy.t -> unit -> t
+
+  val as_scorer :
+    t -> (Target.classification Target.t, Binary_prediction.t) Scorer.t
+  (** Admits a built-in specification with its required response capability. *)
 
   include
     SCORER
@@ -2674,6 +4084,10 @@ module Multiclass_classification_scorer : sig
   val top_k_accuracy : k:int -> t
   (** Named [top_<k>_accuracy] so several cutoffs can share one report. *)
 
+  val as_scorer :
+    t -> (Target.classification Target.t, Multiclass_prediction.t) Scorer.t
+  (** Admits a built-in specification with its required response capability. *)
+
   include
     SCORER
       with type t := t
@@ -2724,8 +4138,34 @@ end
     the full probability matrix in declared class order to log-loss scorers.
     Both request predicted labels and probabilities only when a scorer needs
     them; a pipeline without the requested capability records a typed prediction
-    failure for the fold. *)
+    failure for the fold.
+
+    Out-of-fold prediction requires test folds to contain every source row
+    exactly once and restores successful responses to source row order.
+    Classification callers select labels or probabilities. Probabilities use the
+    complete dataset's ascending class order; missing fitted-fold classes
+    receive zero columns, while unknown or duplicate classes are typed
+    compatibility failures. *)
 module Cross_validation : sig
+  (** [metadata] defaults to {!Metadata.of_dataset}: dataset weights and groups
+      are selected with each fold's exact training/test row views, including
+      inference. An explicit carrier replaces that default without merging; its
+      fields must match the complete dataset's row count. Splitters still use
+      dataset groups and scorers still use dataset weights. Search refit
+      receives the complete carrier. These inputs are never inferred from a
+      previously fitted model.
+
+      A supplied callback receives evaluation lifecycle events and is delivered
+      to nested consumers only when their per-method request opts in. Fold
+      events are buffered and dispatched on the caller domain in logical order;
+      see {!Callback} for bounds, cancellation, and failure semantics.
+
+      Each task-specific [cross_validate] accepts built-in [scorers] plus
+      optional first-class [custom_scorers]. Names must be nonblank and unique
+      across both arrays. A custom scorer's {!Capability.prediction} is checked
+      against the task before fitting, and its declared sample-weight support is
+      enforced while scoring. *)
+
   type failure_policy = Abort | Record
   type partition = Train | Test
 
@@ -2755,6 +4195,17 @@ module Cross_validation : sig
   }
 
   type 'model report
+  type classification_response = Labels | Probabilities
+
+  type 'prediction prediction_fold = {
+    prediction_fold_index : int;
+    prediction_fit_time : float;
+    predict_time : float;
+    prediction_test_indices : int array;
+    prediction_result : ('prediction, failure) result;
+  }
+
+  type 'prediction prediction_report
   type 'target splitter
 
   val target_independent_splitter :
@@ -2778,6 +4229,17 @@ module Cross_validation : sig
   val folds : 'model report -> 'model fold array
   val successful_fold_count : 'model report -> int
 
+  val prediction_folds :
+    'prediction prediction_report -> 'prediction prediction_fold array
+
+  val successful_prediction_fold_count : 'prediction prediction_report -> int
+
+  val out_of_fold_predictions :
+    'prediction prediction_report -> ('prediction, failure array) result
+  (** Returns predictions restored to source row order. Under [Record], any
+      failed folds make the assembled value unavailable; their successful peers
+      remain inspectable through {!prediction_folds}. *)
+
   module Regression : sig
     type model =
       (Target.regression Target.t, Target.regression Target.t) Pipeline.fitted
@@ -2789,12 +4251,27 @@ module Cross_validation : sig
       ?failure_policy:failure_policy ->
       ?fit_seed:Seed.t ->
       ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?custom_scorers:
+        (Target.regression Target.t, Target.regression Target.t) Scorer.t array ->
       splitter:Target.regression Target.t splitter ->
       scorers:Regression_scorer.t array ->
       seed:Seed.t ->
       (Target.regression Target.t, Target.regression Target.t) Pipeline.t ->
       Target.regression Dataset.t ->
       (model report, Error.t) result
+
+    val cross_val_predict :
+      ?failure_policy:failure_policy ->
+      ?fit_seed:Seed.t ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      splitter:Target.regression Target.t splitter ->
+      seed:Seed.t ->
+      (Target.regression Target.t, Target.regression Target.t) Pipeline.t ->
+      Target.regression Dataset.t ->
+      (Target.regression Target.t prediction_report, Error.t) result
+    (** Fits on every training fold and predicts its test fold. *)
   end
 
   module Binary_classification : sig
@@ -2810,6 +4287,9 @@ module Cross_validation : sig
       ?failure_policy:failure_policy ->
       ?fit_seed:Seed.t ->
       ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Binary_prediction.t) Scorer.t array ->
       splitter:Target.classification Target.t splitter ->
       scorers:Binary_classification_scorer.t array ->
       seed:Seed.t ->
@@ -2818,6 +4298,21 @@ module Cross_validation : sig
       Pipeline.t ->
       Target.classification Dataset.t ->
       (model report, Error.t) result
+
+    val cross_val_predict :
+      ?failure_policy:failure_policy ->
+      ?fit_seed:Seed.t ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      response:classification_response ->
+      splitter:Target.classification Target.t splitter ->
+      seed:Seed.t ->
+      ( Target.classification Target.t,
+        Target.classification Target.t )
+      Pipeline.t ->
+      Target.classification Dataset.t ->
+      (Multiclass_prediction.t prediction_report, Error.t) result
+    (** Produces labels or globally aligned probabilities for binary data. *)
   end
 
   module Multiclass_classification : sig
@@ -2833,7 +4328,451 @@ module Cross_validation : sig
       ?failure_policy:failure_policy ->
       ?fit_seed:Seed.t ->
       ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Multiclass_prediction.t) Scorer.t array ->
       splitter:Target.classification Target.t splitter ->
+      scorers:Multiclass_classification_scorer.t array ->
+      seed:Seed.t ->
+      ( Target.classification Target.t,
+        Target.classification Target.t )
+      Pipeline.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+
+    val cross_val_predict :
+      ?failure_policy:failure_policy ->
+      ?fit_seed:Seed.t ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      response:classification_response ->
+      splitter:Target.classification Target.t splitter ->
+      seed:Seed.t ->
+      ( Target.classification Target.t,
+        Target.classification Target.t )
+      Pipeline.t ->
+      Target.classification Dataset.t ->
+      (Multiclass_prediction.t prediction_report, Error.t) result
+    (** Produces labels or globally aligned probabilities for multiclass data.
+    *)
+  end
+end
+
+(** Dense recursive feature elimination with fold-local cross-validation.
+
+    Every validation fold follows one complete elimination path and scores each
+    visited feature width on untouched test rows. Folds use the supplied bounded
+    {!Execution.t}; fits within a fold remain sequential. The smallest feature
+    count wins equal mean scores. After selection, a fresh recursive elimination
+    run fits the chosen width on all supplied rows.
+
+    The optional [max_fits] bound is checked before estimator fitting against
+    [path widths * (folds + 1)], covering every fold path plus the largest
+    possible full-data refit. Actual fit count can be lower when CV selects more
+    than the minimum number of features. Inputs are finite dense matrices.
+    Weights are selected for both fold fitting and scoring, and groups are
+    supplied to the configured splitter. Binary and multiclass variants accept
+    label-response scorers; probability-response scoring requires a future
+    importance-and-response protocol. *)
+module Recursive_feature_elimination_cv : sig
+  type score = {
+    feature_count : int;
+    fold_scores : float array;
+    mean_score : float;
+    standard_deviation : float;
+  }
+
+  module Regression : sig
+    module Make
+        (Estimator :
+          IMPORTANCE_ESTIMATOR
+            with type target = Target.regression Target.t
+             and type prediction = Target.regression Target.t
+             and type rng = Rng.t) : sig
+      type params = {
+        min_feature_count : int;
+        step : Recursive_feature_elimination.step;
+        max_fits : int option;
+        scorer_name : string;
+        estimator_params : Estimator.params;
+      }
+
+      type t
+      type fitted
+
+      val create :
+        ?min_feature_count:int ->
+        ?step:Recursive_feature_elimination.step ->
+        ?max_fits:int ->
+        ?execution:Execution.t ->
+        splitter:Target.regression Target.t Cross_validation.splitter ->
+        scorer:Regression_scorer.t ->
+        Estimator.t ->
+        (t, Error.t) result
+
+      val cv_results : fitted -> score array
+      (** Returns feature counts in ascending order with defensive fold-score
+          copies. *)
+
+      val selected_feature_count : fitted -> int
+      val selected_indices : fitted -> int array
+      val ranking : fitted -> int array
+      val final_importances : fitted -> Vector.t
+      val fitted_estimator : fitted -> Estimator.fitted
+      val fit_count : fitted -> int
+
+      include
+        METADATA_TRANSFORMER
+          with type t := t
+           and type params := params
+           and type target = Target.regression Target.t
+           and type fitted := fitted
+           and type rng = Rng.t
+    end
+  end
+
+  module Binary_classification : sig
+    module Make
+        (Estimator :
+          IMPORTANCE_ESTIMATOR
+            with type target = Target.classification Target.t
+             and type prediction = Target.classification Target.t
+             and type rng = Rng.t) : sig
+      type params = {
+        min_feature_count : int;
+        step : Recursive_feature_elimination.step;
+        max_fits : int option;
+        scorer_name : string;
+        estimator_params : Estimator.params;
+      }
+
+      type t
+      type fitted
+
+      val create :
+        ?min_feature_count:int ->
+        ?step:Recursive_feature_elimination.step ->
+        ?max_fits:int ->
+        ?execution:Execution.t ->
+        splitter:Target.classification Target.t Cross_validation.splitter ->
+        scorer:Binary_classification_scorer.t ->
+        Estimator.t ->
+        (t, Error.t) result
+
+      val cv_results : fitted -> score array
+      val selected_feature_count : fitted -> int
+      val selected_indices : fitted -> int array
+      val ranking : fitted -> int array
+      val final_importances : fitted -> Vector.t
+      val fitted_estimator : fitted -> Estimator.fitted
+      val fit_count : fitted -> int
+
+      include
+        METADATA_TRANSFORMER
+          with type t := t
+           and type params := params
+           and type target = Target.classification Target.t
+           and type fitted := fitted
+           and type rng = Rng.t
+    end
+  end
+
+  module Multiclass_classification : sig
+    module Make
+        (Estimator :
+          IMPORTANCE_ESTIMATOR
+            with type target = Target.classification Target.t
+             and type prediction = Target.classification Target.t
+             and type rng = Rng.t) : sig
+      type params = {
+        min_feature_count : int;
+        step : Recursive_feature_elimination.step;
+        max_fits : int option;
+        scorer_name : string;
+        estimator_params : Estimator.params;
+      }
+
+      type t
+      type fitted
+
+      val create :
+        ?min_feature_count:int ->
+        ?step:Recursive_feature_elimination.step ->
+        ?max_fits:int ->
+        ?execution:Execution.t ->
+        splitter:Target.classification Target.t Cross_validation.splitter ->
+        scorer:Multiclass_classification_scorer.t ->
+        Estimator.t ->
+        (t, Error.t) result
+
+      val cv_results : fitted -> score array
+      val selected_feature_count : fitted -> int
+      val selected_indices : fitted -> int array
+      val ranking : fitted -> int array
+      val final_importances : fitted -> Vector.t
+      val fitted_estimator : fitted -> Estimator.fitted
+      val fit_count : fitted -> int
+
+      include
+        METADATA_TRANSFORMER
+          with type t := t
+           and type params := params
+           and type target = Target.classification Target.t
+           and type fitted := fitted
+           and type rng = Rng.t
+    end
+  end
+end
+
+(** Dense greedy feature selection using fold-local candidate evaluation.
+
+    Forward selection begins with no features and adds the candidate with the
+    highest mean validation score at each round. Backward selection begins with
+    every feature and removes the candidate whose removal has the highest mean
+    score. Exact score ties choose the lower original candidate index. Output
+    columns always retain their original input order.
+
+    Splits are constructed once. Candidates within a round use the supplied
+    bounded {!Execution.t}; folds within one candidate remain sequential. Every
+    estimator fit receives a child seed derived from its round, original
+    candidate index, and fold, independently of scheduling. [max_fits] checks
+    the exact [candidate evaluations * folds] plan before the first estimator
+    fit. Weights are selected for fold fitting and scoring, and groups are
+    supplied to the configured splitter.
+
+    The fitted selector contains the selected schema rather than a fitted
+    estimator: its role is to transform features for a later pipeline stage.
+    Inputs are finite dense matrices. Binary and multiclass variants accept
+    label-response scorers; probability-response scoring requires a future
+    estimator response protocol. *)
+module Sequential_feature_selection : sig
+  type direction = Forward | Backward
+
+  module Regression : sig
+    module Make
+        (Estimator :
+          ESTIMATOR
+            with type target = Target.regression Target.t
+             and type prediction = Target.regression Target.t
+             and type rng = Rng.t) : sig
+      type params = {
+        feature_count : int;
+        direction : direction;
+        max_fits : int option;
+        scorer_name : string;
+        estimator_params : Estimator.params;
+      }
+
+      type t
+      type fitted
+
+      val create :
+        ?direction:direction ->
+        ?max_fits:int ->
+        ?execution:Execution.t ->
+        feature_count:int ->
+        splitter:Target.regression Target.t Cross_validation.splitter ->
+        scorer:Regression_scorer.t ->
+        Estimator.t ->
+        (t, Error.t) result
+
+      val selected_indices : fitted -> int array
+      val fit_count : fitted -> int
+
+      include
+        METADATA_TRANSFORMER
+          with type t := t
+           and type params := params
+           and type target = Target.regression Target.t
+           and type fitted := fitted
+           and type rng = Rng.t
+    end
+  end
+
+  module Binary_classification : sig
+    module Make
+        (Estimator :
+          ESTIMATOR
+            with type target = Target.classification Target.t
+             and type prediction = Target.classification Target.t
+             and type rng = Rng.t) : sig
+      type params = {
+        feature_count : int;
+        direction : direction;
+        max_fits : int option;
+        scorer_name : string;
+        estimator_params : Estimator.params;
+      }
+
+      type t
+      type fitted
+
+      val create :
+        ?direction:direction ->
+        ?max_fits:int ->
+        ?execution:Execution.t ->
+        feature_count:int ->
+        splitter:Target.classification Target.t Cross_validation.splitter ->
+        scorer:Binary_classification_scorer.t ->
+        Estimator.t ->
+        (t, Error.t) result
+
+      val selected_indices : fitted -> int array
+      val fit_count : fitted -> int
+
+      include
+        METADATA_TRANSFORMER
+          with type t := t
+           and type params := params
+           and type target = Target.classification Target.t
+           and type fitted := fitted
+           and type rng = Rng.t
+    end
+  end
+
+  module Multiclass_classification : sig
+    module Make
+        (Estimator :
+          ESTIMATOR
+            with type target = Target.classification Target.t
+             and type prediction = Target.classification Target.t
+             and type rng = Rng.t) : sig
+      type params = {
+        feature_count : int;
+        direction : direction;
+        max_fits : int option;
+        scorer_name : string;
+        estimator_params : Estimator.params;
+      }
+
+      type t
+      type fitted
+
+      val create :
+        ?direction:direction ->
+        ?max_fits:int ->
+        ?execution:Execution.t ->
+        feature_count:int ->
+        splitter:Target.classification Target.t Cross_validation.splitter ->
+        scorer:Multiclass_classification_scorer.t ->
+        Estimator.t ->
+        (t, Error.t) result
+
+      val selected_indices : fitted -> int array
+      val fit_count : fitted -> int
+
+      include
+        METADATA_TRANSFORMER
+          with type t := t
+           and type params := params
+           and type target = Target.classification Target.t
+           and type fitted := fitted
+           and type rng = Rng.t
+    end
+  end
+end
+
+(** Leakage-safe learning curves over nested training-fold prefixes.
+
+    A learning curve measures how train and validation scores change as each
+    fold receives more training rows. The splitter runs once. Every requested
+    size then uses a prefix of each base training fold while leaving its
+    validation fold unchanged, so points are directly comparable and no
+    preprocessing or supervised selection is fitted outside a training subset.
+
+    By default, prefixes preserve splitter order. With [shuffle=true], each base
+    training fold is shuffled once from its logical fold identity and the
+    supplied seed; every size still uses a nested prefix, independently of
+    execution scheduling. Curve points run in schedule order. Folds within one
+    point use the supplied bounded {!Execution.t}.
+
+    Each point contains an ordinary {!Cross_validation.report} with training
+    scores enabled, fitted models omitted, and row indices included only when
+    requested. Multiple scorers, weights, metadata routing, callbacks, timings,
+    and typed fold failures retain their cross-validation semantics. [Record] is
+    the default failure policy so later sizes can still be evaluated; [Abort]
+    returns the first error with the current training size in its context. *)
+module Learning_curve : sig
+  type training_size =
+    | Count of int  (** An absolute training-row count in every fold. *)
+    | Fraction of float
+        (** A fraction of the smallest base training fold, rounded down. *)
+
+  type schedule
+
+  val schedule :
+    ?shuffle:bool ->
+    ?max_fits:int ->
+    training_size array ->
+    (schedule, Error.t) result
+  (** Builds an immutable schedule. Sizes must be nonempty. Counts are positive;
+      fractions are finite, greater than zero, and at most one. Once base folds
+      are known, sizes must resolve to a strictly increasing sequence within the
+      smallest training fold. [max_fits], when supplied, bounds [sizes * folds]
+      before any pipeline is fitted. *)
+
+  val requested_sizes : schedule -> training_size array
+  val shuffle : schedule -> bool
+  val max_fits : schedule -> int option
+
+  type 'model point = {
+    training_samples : int;
+        (** The resolved row count used by every training fold. *)
+    evaluation : 'model Cross_validation.report;
+        (** Per-fold train/test scores, timings, indices, and failures. *)
+  }
+
+  type 'model report
+
+  val points : 'model report -> 'model point array
+  (** Returns curve points in requested schedule order as a defensive copy. *)
+
+  module Regression : sig
+    type model = Cross_validation.Regression.model
+
+    val evaluate :
+      ?return_indices:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      schedule:schedule ->
+      splitter:Target.regression Target.t Cross_validation.splitter ->
+      scorers:Regression_scorer.t array ->
+      seed:Seed.t ->
+      (Target.regression Target.t, Target.regression Target.t) Pipeline.t ->
+      Target.regression Dataset.t ->
+      (model report, Error.t) result
+  end
+
+  module Binary_classification : sig
+    type model = Cross_validation.Binary_classification.model
+
+    val evaluate :
+      ?return_indices:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      schedule:schedule ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Binary_classification_scorer.t array ->
+      seed:Seed.t ->
+      ( Target.classification Target.t,
+        Target.classification Target.t )
+      Pipeline.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+  end
+
+  module Multiclass_classification : sig
+    type model = Cross_validation.Multiclass_classification.model
+
+    val evaluate :
+      ?return_indices:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      schedule:schedule ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
       scorers:Multiclass_classification_scorer.t array ->
       seed:Seed.t ->
       ( Target.classification Target.t,
@@ -2844,25 +4783,109 @@ module Cross_validation : sig
   end
 end
 
+(** Candidate-boundary search checkpoints and partial evaluation reports.
+    Checkpoints contain data-only reports, including typed failures and timings;
+    they contain no fitted models, configurations, functions, or callbacks. *)
+module Search_checkpoint : sig
+  type snapshot
+  type 'configuration t
+
+  type entry = {
+    stage : string;
+    candidate_index : int;
+    configuration_id : string;
+    evaluation : (unit Cross_validation.report, Error.t) result;
+  }
+  (** A completed candidate evaluation, or a recorded build failure. Halving
+      stages are zero-based round numbers; other searches use ["candidates"].
+      Fold model fields are always [None]. *)
+
+  val create :
+    ?resume:snapshot ->
+    specification_id:string ->
+    configuration_id:('configuration -> string) ->
+    unit ->
+    ('configuration t, Error.t) result
+  (** Supply nonblank stable IDs. [specification_id] must version all behavior
+      that cannot be inspected: pipeline builders, configuration defaults,
+      samplers, scorers, selectors, and their code/dependency versions.
+      [configuration_id] must cover the entire immutable configuration,
+      including fields absent from reported parameters. Callers must supply the
+      same pure specifications on resume; closure identity cannot be verified
+      automatically.
+
+      Search checks feature/target values, schema, dataset and explicit metadata
+      weights/groups, actual ordered splits, seed, task, options, encoded
+      parameters, and configuration IDs before reusing results. Callback
+      presence must match because metadata requests may require or reject it;
+      the handler and execution concurrency may change. IDs and encoders must be
+      deterministic.
+
+      A session admits one search at a time. Snapshots may be taken from its
+      callbacks on the caller domain; other concurrent access is unsupported. *)
+
+  val snapshot : _ t -> snapshot
+
+  val completed : snapshot -> entry array
+  (** Defensive copies of committed candidate reports. A candidate is committed
+      after its finished callback succeeds. Cancellation leaves earlier entries
+      available, and the interrupted candidate restarts in full on resume.
+      Ordinary recorded failures are committed; control errors are not. *)
+
+  val encode : snapshot -> (bytes, Error.t) result
+
+  val decode : bytes -> (snapshot, Error.t) result
+  (** Versioned, bounded data-only encoding with a 64 MiB limit and an integrity
+      checksum. No [Marshal] or executable state is decoded. The checksum
+      detects accidental corruption; it does not authenticate untrusted
+      producers. The caller owns persistence and should replace checkpoint files
+      atomically.
+
+      Resuming reconstructs specifications, candidate reports, promotion, and
+      selection, skipping committed candidate fits. Candidate lifecycle
+      callbacks may repeat, but cached CV/fit callbacks do not.
+      Sampling/configuration IDs are checked before fitting, so checkpointed
+      randomized search prepares all initial configurations eagerly. The final
+      selector and full-data refit run again; neither fitted state nor their
+      completion is checkpointed. Score-based selection agrees with
+      uninterrupted execution for deterministic consumers. Timing-based or
+      side-effect-dependent selectors cannot provide that guarantee. *)
+end
+
 (** Typed exhaustive search over finite immutable configuration grids.
 
     Axes retain declaration order and their values retain caller order. The
     Cartesian product varies the last axis fastest. Each candidate is evaluated
     on identical split membership, while fitted fold RNGs derive from the
-    logical candidate and fold identities. Ranking uses the named [refit]
+    logical candidate and fold identities. Named refitting ranks by the [refit]
     scorer's mean test score in descending order; equal scores receive equal
     competition ranks and the lowest candidate index wins a tie.
 
     [Record] keeps failed candidates and selects from candidates whose primary
     test score aggregates successfully. [Abort] returns the first failure in
-    candidate order. The winning immutable specification is fitted once on the
-    complete dataset. For [c] candidates, [f] folds, and [s] scorers, search
-    performs at most [c * f + 1] fits and retains [O(c * (f + s))] report data.
-    An empty axis array evaluates the base configuration once. [execution]
+    candidate order. With refitting enabled, the winning immutable specification
+    is fitted once on the complete dataset. [search_with_policy] also supports
+    disabled refitting and custom multi-metric selection through
+    {!Grid_search.refit_policy}. For [c] candidates, [f] folds, and [s] scorers,
+    search performs at most [c * f + 1] fits and retains [O(c * (f + s))] report
+    data. An empty axis array evaluates the base configuration once. [execution]
     controls each candidate's fold evaluation and defaults to sequential
     execution; candidates themselves are evaluated in stable sequential order.
 *)
 module Grid_search : sig
+  (** [metadata] defaults to {!Metadata.of_dataset}: dataset weights and groups
+      are selected with each fold's exact training/test row views, including
+      inference. An explicit carrier replaces that default without merging; its
+      fields must match the complete dataset's row count. Splitters still use
+      dataset groups and scorers still use dataset weights. Search refit
+      receives the complete carrier. These inputs are never inferred from a
+      previously fitted model.
+
+      A supplied callback receives evaluation lifecycle events and is delivered
+      to nested consumers only when their per-method request opts in. Fold
+      events are buffered and dispatched on the caller domain in logical order;
+      see {!Callback} for bounds, cancellation, and failure semantics. *)
+
   type parameter_value =
     | Bool of bool
     | Int of int
@@ -2913,6 +4936,21 @@ module Grid_search : sig
     build_error : Error.t option;
   }
 
+  type 'model refit_policy =
+    | No_refit
+    | Best_score of string
+    | Custom of ('model candidate array -> (int, Error.t) result)
+        (** [No_refit] evaluates candidates without ranking or fitting a winner.
+            [Best_score name] preserves named-scorer ranking and refitting.
+            [Custom select] receives copied candidate arrays after evaluation
+            and returns an array index. The chosen candidate must have built and
+            have at least one successful test-score aggregate; the selector
+            decides which metrics it requires. Custom selection leaves ranks
+            unset. Selectors must not depend on timings if reproducibility
+            across execution backends matters. User exceptions propagate;
+            returned errors follow the failure policy, while callback/control
+            errors always abort. *)
+
   type 'model selected = {
     selected_candidate_index : int;
     selected_model : 'model;
@@ -2921,7 +4959,14 @@ module Grid_search : sig
   type 'model report
 
   val candidates : 'model report -> 'model candidate array
+
   val selection : 'model report -> ('model selected, Error.t) result
+  (** Returns the fitted winner; disabled refitting returns a typed error. *)
+
+  val refit_result : 'model report -> ('model selected option, Error.t) result
+  (** [Ok None] identifies an intentional no-refit run, including a recorded
+      report where all candidates failed. [Error] identifies selection/refit
+      failure. Candidate failures remain available independently. *)
 
   module Regression : sig
     type model = Cross_validation.Regression.model
@@ -2930,6 +4975,10 @@ module Grid_search : sig
       ?return_train_score:bool ->
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.regression Target.t, Target.regression Target.t) Scorer.t array ->
       grid:
         ( 'configuration,
           Target.regression Target.t,
@@ -2938,6 +4987,26 @@ module Grid_search : sig
       splitter:Target.regression Target.t Cross_validation.splitter ->
       scorers:Regression_scorer.t array ->
       refit:string ->
+      seed:Seed.t ->
+      Target.regression Dataset.t ->
+      (model report, Error.t) result
+
+    val search_with_policy :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.regression Target.t, Target.regression Target.t) Scorer.t array ->
+      grid:
+        ( 'configuration,
+          Target.regression Target.t,
+          Target.regression Target.t )
+        grid ->
+      splitter:Target.regression Target.t Cross_validation.splitter ->
+      scorers:Regression_scorer.t array ->
+      policy:model refit_policy ->
       seed:Seed.t ->
       Target.regression Dataset.t ->
       (model report, Error.t) result
@@ -2950,6 +5019,10 @@ module Grid_search : sig
       ?return_train_score:bool ->
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Binary_prediction.t) Scorer.t array ->
       grid:
         ( 'configuration,
           Target.classification Target.t,
@@ -2958,6 +5031,26 @@ module Grid_search : sig
       splitter:Target.classification Target.t Cross_validation.splitter ->
       scorers:Binary_classification_scorer.t array ->
       refit:string ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+
+    val search_with_policy :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Binary_prediction.t) Scorer.t array ->
+      grid:
+        ( 'configuration,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        grid ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Binary_classification_scorer.t array ->
+      policy:model refit_policy ->
       seed:Seed.t ->
       Target.classification Dataset.t ->
       (model report, Error.t) result
@@ -2970,6 +5063,10 @@ module Grid_search : sig
       ?return_train_score:bool ->
       ?failure_policy:Cross_validation.failure_policy ->
       ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Multiclass_prediction.t) Scorer.t array ->
       grid:
         ( 'configuration,
           Target.classification Target.t,
@@ -2978,6 +5075,26 @@ module Grid_search : sig
       splitter:Target.classification Target.t Cross_validation.splitter ->
       scorers:Multiclass_classification_scorer.t array ->
       refit:string ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+
+    val search_with_policy :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Multiclass_prediction.t) Scorer.t array ->
+      grid:
+        ( 'configuration,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        grid ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Multiclass_classification_scorer.t array ->
+      policy:model refit_policy ->
       seed:Seed.t ->
       Target.classification Dataset.t ->
       (model report, Error.t) result
@@ -3128,4 +5245,1023 @@ module Artifact : sig
     path:string ->
     unit ->
     (binary_classification_model loaded, Error.t) result
+end
+
+(** Regression with a learned, invertible transformation of scalar targets. *)
+module Transformed_target_regressor : sig
+  (** Implementations preserve target length and row order, fit only on supplied
+      training targets, and keep specifications immutable. Transform and inverse
+      use fitted state alone. Do not retain training metadata for inference. *)
+  module type TRANSFORMER = sig
+    include SPECIFICATION
+
+    type fitted
+
+    val fit_request : t -> Metadata.Request.t
+
+    val fit :
+      t ->
+      metadata:Metadata.t ->
+      rng:Rng.t ->
+      y:Target.regression Target.t ->
+      (fitted, Error.t) result
+
+    val transform :
+      fitted ->
+      Target.regression Target.t ->
+      (Target.regression Target.t, Error.t) result
+
+    val inverse_transform :
+      fitted ->
+      Target.regression Target.t ->
+      (Target.regression Target.t, Error.t) result
+  end
+
+  type transformer
+
+  val transformer :
+    (module TRANSFORMER with type t = 'specification and type fitted = 'fitted) ->
+    'specification ->
+    transformer
+  (** Captures the fit request once and clones the specification for every fit.
+      Weights, groups and callbacks follow the same policies as other consumers.
+  *)
+
+  val functions :
+    transform:(float -> float) ->
+    inverse_transform:(float -> float) ->
+    transformer
+  (** Pure, deterministic scalar functions, for example [log1p] and [expm1].
+      Non-finite results are typed errors; exceptions from user code propagate.
+  *)
+
+  val create :
+    ?rtol:float ->
+    ?atol:float ->
+    name:string ->
+    transformer:transformer ->
+    regressor:
+      ( Target.regression Target.t,
+        Target.regression Target.t )
+      Pipeline.estimator ->
+    unit ->
+    ( (Target.regression Target.t, Target.regression Target.t) Pipeline.estimator,
+      Error.t )
+    result
+  (** Packages a terminal regressor for ordinary or supervised pipelines, CV and
+      search. Every fit learns the target transformation on that training
+      partition, checks [inverse_transform (transform y)] against every training
+      target, then fits the regressor on transformed targets. Defaults are
+      [rtol=1e-7] and [atol=1e-9]; both must be finite and nonnegative. The
+      check uses [abs (restored - y) <= atol + rtol * abs y], evaluated without
+      overflowing the tolerance calculation. There is no opt-out.
+
+      Predictions are inverse-transformed before scoring, so scorers always
+      receive original-space targets. Target and prediction lengths are checked;
+      finite values are guaranteed by {!val:Target.regression}. Row order and
+      invertibility away from training targets remain implementer obligations.
+      Separate deterministic RNG streams fit the transformer and regressor. Fit
+      metadata is independently routed to both consumers; inverse prediction
+      requires no metadata. Child errors carry stage context. Target transforms
+      have no artifact codec, so saving this wrapper returns a typed error. *)
+end
+
+(** Partition sizes shared by resampling and train/test splitting. *)
+module Split_size : sig
+  type t =
+    | Count of int
+    | Fraction of float
+        (** Counts must be positive; fractions must be finite and strictly
+            between zero and one. Training fractions round down, test fractions
+            round up. A missing size is the complement of the other. Supplying
+            both may leave unused rows; neither partition may be empty and their
+            sum cannot exceed the source size. *)
+end
+
+(** Independent shuffled partitions; defaults to ten splits and a 10% test
+    fraction. Rows are disjoint within each split but may recur across splits.
+    Output rows retain permutation order, not sorted source order. Random
+    streams are deterministic for the same input and seed, independent of
+    execution scheduling; they do not reproduce NumPy random streams. Groups do
+    not constrain these splits; use group-aware splitting when group exclusion
+    is required. *)
+module Shuffle_split : sig
+  type params = {
+    splits : int;
+    train_size : Split_size.t option;
+    test_size : Split_size.t option;
+  }
+
+  type t
+
+  val create :
+    ?splits:int ->
+    ?train_size:Split_size.t ->
+    ?test_size:Split_size.t ->
+    unit ->
+    (t, Error.t) result
+
+  include
+    SPLITTER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type rng = Rng.t
+end
+
+(** Shuffled partitions with proportional class allocation; defaults to ten
+    splits and a 10% test fraction. Requires aligned classification labels, at
+    least two rows per class, and at least as many rows per partition as
+    classes. Largest-remainder allocation fills training first, then test from
+    remaining rows, with seeded tie breaking. Extreme imbalance can still omit a
+    rare class from a partition. Classes follow first appearance order. Random
+    streams are deterministic for the same input and seed, independent of
+    execution scheduling; they do not reproduce NumPy random streams. Groups do
+    not constrain these splits; use group-aware splitting when group exclusion
+    is required. *)
+module Stratified_shuffle_split : sig
+  type params = {
+    splits : int;
+    train_size : Split_size.t option;
+    test_size : Split_size.t option;
+  }
+
+  type t
+
+  val create :
+    ?splits:int ->
+    ?train_size:Split_size.t ->
+    ?test_size:Split_size.t ->
+    unit ->
+    (t, Error.t) result
+
+  include
+    SPLITTER
+      with type t := t
+       and type params := params
+       and type target = Target.classification Target.t
+       and type rng = Rng.t
+end
+
+(** One train/test partition; defaults to shuffling and a 25% test fraction.
+    With [shuffle=false], training takes the first rows, test takes the next
+    rows, and any unused rows follow. Without shuffling the RNG is ignored.
+    Random streams are deterministic for the same input and seed, independent of
+    execution scheduling; they do not reproduce NumPy random streams. Groups do
+    not constrain these splits; use group-aware splitting when group exclusion
+    is required. *)
+module Holdout : sig
+  type params = {
+    train_size : Split_size.t option;
+    test_size : Split_size.t option;
+    shuffle : bool;
+  }
+
+  type t
+
+  val create :
+    ?train_size:Split_size.t ->
+    ?test_size:Split_size.t ->
+    ?shuffle:bool ->
+    unit ->
+    (t, Error.t) result
+
+  include
+    SPLITTER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type rng = Rng.t
+end
+
+(** Repeated shuffled K-fold, defaulting to five folds and ten repetitions. Each
+    repetition tests every row exactly once. Splits are emitted in
+    repetition-major, then fold-major order; row indices retain source order.
+    Extending the repetition count preserves earlier repetitions. Random streams
+    are deterministic for the same input and seed, independent of execution
+    scheduling; they do not reproduce NumPy random streams. Groups do not
+    constrain these splits; use group-aware splitting when group exclusion is
+    required. *)
+module Repeated_k_fold : sig
+  type params = { folds : int; repeats : int }
+  type t
+
+  val create : ?folds:int -> ?repeats:int -> unit -> (t, Error.t) result
+
+  include
+    SPLITTER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type rng = Rng.t
+end
+
+(** Repeated shuffled stratified K-fold, with five folds and ten repetitions by
+    default. Uses the class allocation and feasibility rules of
+    {!Stratified_k_fold}; rare classes can be absent in a fold. Splits are
+    repetition-major, then fold-major, and indices retain source order.
+    Extending the repetition count preserves earlier repetitions. Random streams
+    are deterministic for the same input and seed, independent of execution
+    scheduling; they do not reproduce NumPy random streams. Groups do not
+    constrain these splits; use group-aware splitting when group exclusion is
+    required. *)
+module Repeated_stratified_k_fold : sig
+  type params = { folds : int; repeats : int }
+  type t
+
+  val create : ?folds:int -> ?repeats:int -> unit -> (t, Error.t) result
+
+  include
+    SPLITTER
+      with type t := t
+       and type params := params
+       and type target = Target.classification Target.t
+       and type rng = Rng.t
+end
+
+(** Materialized train/test datasets with all row-aligned fields selected
+    together, preserving feature schema and finiteness policy. *)
+module Train_test_split : sig
+  val split :
+    ?train_size:Split_size.t ->
+    ?test_size:Split_size.t ->
+    ?shuffle:bool ->
+    ?stratify:Target.classification Target.t ->
+    rng:Rng.t ->
+    'kind Dataset.t ->
+    unit ->
+    ('kind Dataset.t * 'kind Dataset.t, Error.t) result
+  (** Defaults to shuffling and a 25% test fraction, like {!Holdout}. Optional
+      classification labels must match the source row count and require
+      [shuffle=true]; stratification uses {!Stratified_shuffle_split}'s
+      allocation rules. Dataset groups are copied, not kept exclusive. All
+      fields follow the exact selected order; source data is immutable.
+      Materialization can fail if a selected sample-weight partition has zero
+      total weight. For row views instead of copies, use the splitter modules
+      and {!Split.of_views}. *)
+end
+
+(** User-defined test folds with explicit always-training rows. *)
+module Predefined_split : sig
+  type params = { test_folds : int array }
+  type t
+
+  val create : test_folds:int array -> unit -> (t, Error.t) result
+  (** Copies one assignment per source row. [-1] means always in training;
+      nonnegative IDs identify test folds and need not be contiguous. Other
+      negative IDs, no test folds, and an empty training partition are rejected.
+  *)
+
+  val fold_ids : t -> int array
+  (** A fresh array of distinct test IDs in ascending emission order. *)
+
+  (** [params] returns a fresh assignment array. [split] checks source length;
+      each assigned row is tested once, while [-1] rows are never tested. Each
+      training partition contains every source row outside its test fold. Row
+      views retain source order. RNG, targets, and groups are ignored;
+      caller-defined assignments are not checked for group exclusion. *)
+  include
+    SPLITTER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type rng = Rng.t
+end
+
+(** Exhaustive single-row testing in source order. *)
+module Leave_one_out : sig
+  type t
+  type params = unit
+
+  val create : unit -> t
+
+  (** Requires at least two rows. Each row is tested once against all remaining
+      training rows. RNG, targets, and groups are ignored. Views are emitted
+      eagerly and require quadratic total index storage. Single-row scores such
+      as R-squared can be undefined; select an appropriate scorer. *)
+  include
+    SPLITTER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type rng = Rng.t
+end
+
+(** Exhaustive single-group testing with complete group exclusion. *)
+module Leave_one_group_out : sig
+  type t
+  type params = unit
+
+  val create : unit -> t
+
+  (** Requires aligned groups and at least two distinct group IDs. Test groups
+      are emitted in ascending integer-ID order, with rows in source order.
+      Every row is tested once; each training partition contains all other
+      groups. RNG and targets are ignored. Eager views require storage
+      proportional to row count times distinct group count. *)
+  include
+    SPLITTER
+      with type t := t
+       and type params := params
+       and type target = unit
+       and type rng = Rng.t
+end
+
+(** Greedy class balancing while keeping every group intact. *)
+module Stratified_group_k_fold : sig
+  type params = { folds : int; shuffle : bool }
+  type t
+
+  val create : ?folds:int -> ?shuffle:bool -> unit -> (t, Error.t) result
+
+  (** Defaults to five folds without shuffling. Requires at least two folds,
+      aligned classification labels and groups, and at least as many distinct
+      groups as folds. Every fold is nonempty, every row is tested exactly once,
+      and a group never crosses training/test boundaries within a fold.
+
+      Groups are considered in descending standard deviation of their class
+      counts. Ties use ascending group IDs, or seeded shuffled order when
+      [shuffle=true]; unequal dispersions retain their ordering. Classes are
+      accumulated in ascending label order. Each group minimizes the mean across
+      classes of the standard deviation of per-fold fractions of that class.
+      Objectives within [1e-12] tie on fewer rows already allocated to the fold,
+      then the lowest fold index. Remaining groups fill empty folds when
+      necessary to guarantee nonempty partitions. Output row views retain source
+      order.
+
+      Class balance is a heuristic, not an optimum or a guarantee of class
+      coverage. Classes confined to too few groups may be absent from training
+      or test partitions. This remains a valid split; estimator/scorer
+      requirements are checked downstream. RNG behavior is portable but does not
+      reproduce NumPy streams. Sparse group histograms use space linear in the
+      observed group/class pairs, plus folds times class count; returned row
+      indices require space proportional to folds times row count. *)
+  include
+    SPLITTER
+      with type t := t
+       and type params := params
+       and type target = Target.classification Target.t
+       and type rng = Rng.t
+end
+
+(** Leakage-safe validation curves over one typed immutable parameter axis.
+
+    A specification retains a base configuration and an ordered, nonempty copy
+    of the caller's typed values. Its setter returns a new configuration for
+    each value, and its builder packages that configuration as a pipeline. The
+    splitter runs exactly once per evaluation; every value is therefore scored
+    on identical folds, with preprocessing and supervised selection fitted only
+    on that value's training partition.
+
+    Values are evaluated sequentially in declaration order. Folds for one value
+    use the supplied bounded {!Execution.t}. Each point retains its original
+    typed value, stable encoded parameter, aggregate scores, timings, and
+    ordinary cross-validation report. Models are not retained or refitted.
+    [Record] is the default failure policy and preserves setter, builder, fold,
+    prediction, and scorer failures; [Abort] returns the first error in value
+    and fold order. *)
+module Validation_curve : sig
+  type ('configuration, 'value, 'target, 'prediction) t
+
+  val create :
+    ?max_fits:int ->
+    name:string ->
+    base:'configuration ->
+    values:'value array ->
+    encode:('value -> Grid_search.parameter_value) ->
+    set:('configuration -> 'value -> ('configuration, Error.t) result) ->
+    build:
+      ('configuration -> (('target, 'prediction) Pipeline.t, Error.t) result) ->
+    unit ->
+    (('configuration, 'value, 'target, 'prediction) t, Error.t) result
+  (** Creates a one-parameter curve specification. [name] must not be blank and
+      [values] must not be empty. Values and configurations must be immutable;
+      [set] must not mutate the supplied base. The values array is copied.
+      [max_fits], when supplied, must be positive and bounds [values * folds]
+      before any setter, builder, or fit runs. *)
+
+  val parameter_name :
+    ('configuration, 'value, 'target, 'prediction) t -> string
+
+  val parameter_values :
+    ('configuration, 'value, 'target, 'prediction) t -> 'value array
+  (** Returns a defensive copy in evaluation order. *)
+
+  val max_fits : ('configuration, 'value, 'target, 'prediction) t -> int option
+
+  type ('value, 'model) point = {
+    point_index : int;
+    parameter_value : 'value;
+    parameter : Grid_search.parameter;
+    mean_fit_time : float;
+    mean_score_time : float;
+    scores : Grid_search.score_summary array;
+    evaluation : 'model Cross_validation.report option;
+    build_error : Error.t option;
+  }
+  (** [evaluation] is absent only when the setter or builder failed. Fold and
+      scorer failures remain inside a present evaluation and its score
+      summaries. Training scores are always requested. Report timings are
+      observational rather than reproducibility guarantees. *)
+
+  type ('value, 'model) report
+
+  val points : ('value, 'model) report -> ('value, 'model) point array
+  (** Returns points and their score arrays as defensive copies. *)
+
+  module Regression : sig
+    type model = Cross_validation.Regression.model
+
+    val evaluate :
+      ?return_indices:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      specification:
+        ( 'configuration,
+          'value,
+          Target.regression Target.t,
+          Target.regression Target.t )
+        t ->
+      splitter:Target.regression Target.t Cross_validation.splitter ->
+      scorers:Regression_scorer.t array ->
+      seed:Seed.t ->
+      Target.regression Dataset.t ->
+      (('value, model) report, Error.t) result
+  end
+
+  module Binary_classification : sig
+    type model = Cross_validation.Binary_classification.model
+
+    val evaluate :
+      ?return_indices:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      specification:
+        ( 'configuration,
+          'value,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        t ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Binary_classification_scorer.t array ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (('value, model) report, Error.t) result
+  end
+
+  module Multiclass_classification : sig
+    type model = Cross_validation.Multiclass_classification.model
+
+    val evaluate :
+      ?return_indices:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      specification:
+        ( 'configuration,
+          'value,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        t ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Multiclass_classification_scorer.t array ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (('value, model) report, Error.t) result
+  end
+end
+
+(** Cross-validated permutation significance tests.
+
+    The observed target and every permuted target are evaluated on one shared,
+    validated split plan. Preprocessing and supervised pipeline stages are
+    fitted independently inside every training fold. A single scorer is used
+    because the corrected upper-tail p-value is defined for one higher-is-better
+    statistic.
+
+    Targets shuffle globally when the dataset has no groups. When dataset groups
+    are present, values move only among rows with the same group ID; groups
+    still reach the splitter and metadata consumers normally. Permutation and
+    fit seeds derive from logical permutation identities, so results do not
+    depend on scheduling. ModelKit random streams intentionally do not reproduce
+    NumPy streams.
+
+    The observed evaluation runs first. Permutations use the supplied bounded
+    {!Execution.t}; folds within each permutation run sequentially to prevent
+    nested parallelism. Any split, fit, prediction, scoring, callback, or
+    aggregation failure aborts with a typed error because omitting failed
+    permutations would invalidate the p-value. Fitted models from permutations
+    are never retained. *)
+module Permutation_test : sig
+  type t
+
+  val create : ?permutations:int -> ?max_fits:int -> unit -> (t, Error.t) result
+  (** Defaults to 100 permutations. Both arguments must be positive. [max_fits],
+      when supplied, bounds [(permutations + 1) * folds] before any fit runs;
+      the additional evaluation is the observed target. *)
+
+  val permutation_count : t -> int
+  val max_fits : t -> int option
+
+  type 'model report
+
+  val observed_score : 'model report -> float
+  (** Mean validation-fold score for the unpermuted target. *)
+
+  val permutation_scores : 'model report -> float array
+  (** Mean validation-fold scores in logical permutation order. Returns a
+      defensive copy. *)
+
+  val p_value : 'model report -> float
+  (** Corrected upper-tail estimate
+      [(1 + count (permuted >= observed)) / (1 + permutations)]. *)
+
+  val observed_evaluation : 'model report -> 'model Cross_validation.report
+  (** The ordinary unpermuted fold report. Models are omitted; indices are
+      included only when requested. *)
+
+  module Regression : sig
+    type model = Cross_validation.Regression.model
+
+    val evaluate :
+      ?return_indices:bool ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      specification:t ->
+      splitter:Target.regression Target.t Cross_validation.splitter ->
+      scorer:Regression_scorer.t ->
+      seed:Seed.t ->
+      (Target.regression Target.t, Target.regression Target.t) Pipeline.t ->
+      Target.regression Dataset.t ->
+      (model report, Error.t) result
+  end
+
+  module Binary_classification : sig
+    type model = Cross_validation.Binary_classification.model
+
+    val evaluate :
+      ?return_indices:bool ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      specification:t ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorer:Binary_classification_scorer.t ->
+      seed:Seed.t ->
+      ( Target.classification Target.t,
+        Target.classification Target.t )
+      Pipeline.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+  end
+
+  module Multiclass_classification : sig
+    type model = Cross_validation.Multiclass_classification.model
+
+    val evaluate :
+      ?return_indices:bool ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      specification:t ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorer:Multiclass_classification_scorer.t ->
+      seed:Seed.t ->
+      ( Target.classification Target.t,
+        Target.classification Target.t )
+      Pipeline.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+  end
+end
+
+(** Typed immutable parameter distributions with explicit random streams. *)
+module Parameter_distribution : sig
+  type 'a t
+
+  val choice : 'a array -> ('a t, Error.t) result
+  (** Copies a nonempty array. Values themselves must be immutable. *)
+
+  val uniform : low:float -> high:float -> unit -> (float t, Error.t) result
+  val log_uniform : low:float -> high:float -> unit -> (float t, Error.t) result
+
+  val int_uniform : low:int -> high:int -> unit -> (int t, Error.t) result
+  (** Bounds are lower-inclusive and upper-exclusive. Float bounds must be
+      finite; log-uniform bounds must also be positive. Integer sampling avoids
+      modulo bias and supports the complete OCaml integer range of bounds. *)
+
+  val custom : (Rng.t -> ('a, Error.t) result) -> 'a t
+  (** Samplers must be deterministic for their RNG and must not retain mutable
+      random state. Returned errors are recorded as candidate build failures
+      under [Record]; exceptions propagate. *)
+
+  val sample : rng:Rng.t -> 'a t -> ('a, Error.t) result
+end
+
+(** Randomized search using the same evaluation, metadata, callback and refit
+    contracts as {!Grid_search}. Finite choice-only spaces sample Cartesian
+    positions without replacement, capping iterations at the product size.
+    Duplicate choice values can still yield equal configurations. If any axis
+    uses a distribution, all axes sample with replacement. Candidate and axis
+    identities derive deterministic sampling streams, separately from fit RNGs.
+    Increasing iterations preserves the sampled prefix. Random identities do not
+    reproduce NumPy streams. *)
+module Randomized_search : sig
+  type 'configuration axis
+
+  val axis :
+    name:string ->
+    distribution:'value Parameter_distribution.t ->
+    encode:('value -> Grid_search.parameter_value) ->
+    set:('configuration -> 'value -> ('configuration, Error.t) result) ->
+    ('configuration axis, Error.t) result
+  (** Setters return new immutable configurations. Axis names must be nonblank
+      and unique. Encoders and setters must be deterministic and must not mutate
+      inputs. *)
+
+  type ('configuration, 'target, 'prediction) space
+
+  val create :
+    ?iterations:int ->
+    base:'configuration ->
+    build:
+      ('configuration -> (('target, 'prediction) Pipeline.t, Error.t) result) ->
+    'configuration axis array ->
+    (('configuration, 'target, 'prediction) space, Error.t) result
+  (** Defaults to ten iterations. An empty axis array samples the base once.
+      Iterations must fit an array; finite Cartesian products must fit an OCaml
+      integer. Sampling finite spaces uses storage proportional to iterations,
+      without expanding the complete Cartesian product. *)
+
+  val candidate_count : ('configuration, 'target, 'prediction) space -> int
+
+  type 'configuration sampled_candidate = {
+    sampled_parameters : Grid_search.parameter array;
+    sampled_configuration : ('configuration, Error.t) result;
+  }
+
+  val sample :
+    seed:Seed.t ->
+    ('configuration, 'target, 'prediction) space ->
+    'configuration sampled_candidate array
+  (** Previews typed configurations and encoded parameters without building or
+      fitting pipelines. Failed draws omit that axis's parameter; subsequent
+      axes still draw after ordinary failures. The first ordinary failure is
+      retained with candidate/axis context; control errors override it and stop
+      remaining axis draws. Search draws candidates lazily inside candidate
+      callbacks, so cancellation prevents sampling later candidates when no
+      checkpoint is supplied. Checkpointed search prepares all configurations
+      before evaluation to validate their identities; see {!Search_checkpoint}.
+  *)
+
+  type 'model report = 'model Grid_search.report
+
+  val candidates : 'model report -> 'model Grid_search.candidate array
+  val selection : 'model report -> ('model Grid_search.selected, Error.t) result
+
+  val refit_result :
+    'model report -> ('model Grid_search.selected option, Error.t) result
+
+  module Regression : sig
+    type model = Cross_validation.Regression.model
+
+    val search :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.regression Target.t, Target.regression Target.t) Scorer.t array ->
+      space:
+        ( 'configuration,
+          Target.regression Target.t,
+          Target.regression Target.t )
+        space ->
+      splitter:Target.regression Target.t Cross_validation.splitter ->
+      scorers:Regression_scorer.t array ->
+      refit:string ->
+      seed:Seed.t ->
+      Target.regression Dataset.t ->
+      (model report, Error.t) result
+
+    val search_with_policy :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.regression Target.t, Target.regression Target.t) Scorer.t array ->
+      space:
+        ( 'configuration,
+          Target.regression Target.t,
+          Target.regression Target.t )
+        space ->
+      splitter:Target.regression Target.t Cross_validation.splitter ->
+      scorers:Regression_scorer.t array ->
+      policy:model Grid_search.refit_policy ->
+      seed:Seed.t ->
+      Target.regression Dataset.t ->
+      (model report, Error.t) result
+  end
+
+  module Binary_classification : sig
+    type model = Cross_validation.Binary_classification.model
+
+    val search :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Binary_prediction.t) Scorer.t array ->
+      space:
+        ( 'configuration,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        space ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Binary_classification_scorer.t array ->
+      refit:string ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+
+    val search_with_policy :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Binary_prediction.t) Scorer.t array ->
+      space:
+        ( 'configuration,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        space ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Binary_classification_scorer.t array ->
+      policy:model Grid_search.refit_policy ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+  end
+
+  module Multiclass_classification : sig
+    type model = Cross_validation.Multiclass_classification.model
+
+    val search :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Multiclass_prediction.t) Scorer.t array ->
+      space:
+        ( 'configuration,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        space ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Multiclass_classification_scorer.t array ->
+      refit:string ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+
+    val search_with_policy :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
+      ?custom_scorers:
+        (Target.classification Target.t, Multiclass_prediction.t) Scorer.t array ->
+      space:
+        ( 'configuration,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        space ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Multiclass_classification_scorer.t array ->
+      policy:model Grid_search.refit_policy ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+  end
+end
+
+(** Successive halving with nested training-row budgets and fixed validation
+    folds. Each round fits fresh pipelines; fitted-state continuation is not
+    supported. All candidates in a round receive identical rows. Training
+    subsets are seeded prefixes, with one row per class placed first for
+    classification. Every base training and validation fold must contain every
+    class; at least one fold is required. Group separation from the splitter is
+    preserved by subsetting.
+
+    Promotion uses descending mean test score, breaking ties by original
+    candidate index, and retains [ceil(candidate_count / factor)] eligible
+    candidates. Failed promotion aggregates are ineligible. Rounds continue to
+    the maximum budget even with one survivor. Final selection sees only
+    final-round candidates; refitting uses the entire input dataset. Custom
+    selectors return an array position, while reported candidate indices retain
+    their original identities.
+
+    Configurations are sampled once and reused, with fresh builds and fits each
+    round. Specifications and user functions must obey the same purity contracts
+    as grid and randomized search. Candidate/fold seeds remain stable across
+    rounds. Callbacks include a zero-based [Stage "halving round N"] context,
+    with one outer search lifecycle and progress after each completed round.
+    Cancellation and callback failures stop evaluation and return an error. With
+    a checkpoint, completed candidates remain available through
+    {!val:Search_checkpoint.snapshot}. Timings are observational; score and
+    promotion reproducibility follows the pipeline and execution contracts. *)
+module Successive_halving : sig
+  type budget
+
+  val budget :
+    ?max_fits:int ->
+    min_samples:int ->
+    max_samples:int ->
+    factor:int ->
+    unit ->
+    (budget, Error.t) result
+  (** Training rows per fold grow geometrically, capped at [max_samples].
+      Require [1 <= min_samples <= max_samples] and [factor >= 2]. The maximum
+      must fit every base training fold; the minimum must cover every class.
+      Optional [max_fits] bounds scheduled candidate/fold fits plus an optional
+      full-data refit. This conservative bound assumes successful promotion and
+      is checked before building or fitting candidates. Overflow is a validation
+      error. Row alignment and positive total weights in all scheduled subsets
+      are also checked before candidate fitting. *)
+
+  val resources : budget -> int array
+  (** A copied array of training-row counts in round order. *)
+
+  type ('configuration, 'target, 'prediction) candidates
+
+  val of_grid :
+    ('configuration, 'target, 'prediction) Grid_search.grid ->
+    ('configuration, 'target, 'prediction) candidates
+
+  val of_randomized :
+    ('configuration, 'target, 'prediction) Randomized_search.space ->
+    ('configuration, 'target, 'prediction) candidates
+
+  type 'model round = {
+    round_index : int;
+    training_samples : int;
+    candidates : 'model Grid_search.candidate array;
+    promoted_candidate_indices : int array;
+  }
+  (** Candidates are in original-index order, ranked on the promotion score.
+      Promoted indices are in score order; the final round promotes none.
+      Evaluation reports retain train/test row indices, without fitted fold
+      models. Returned arrays are defensive copies. *)
+
+  type 'model report
+
+  val rounds : 'model report -> 'model round array
+  val selection : 'model report -> ('model Grid_search.selected, Error.t) result
+
+  val refit_result :
+    'model report -> ('model Grid_search.selected option, Error.t) result
+  (** [No_refit] yields [Ok None] after a completed final round. If promotion
+      cannot proceed, [Record] retains completed rounds with an error selection;
+      [Abort] returns the error directly. Ordinary final selection/refit
+      failures follow the same policy. Inspect candidate reports for recorded
+      evaluation failures. *)
+
+  module Regression : sig
+    type model = Cross_validation.Regression.model
+
+    val search :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
+      budget:budget ->
+      candidates:
+        ( 'configuration,
+          Target.regression Target.t,
+          Target.regression Target.t )
+        candidates ->
+      splitter:Target.regression Target.t Cross_validation.splitter ->
+      scorers:Regression_scorer.t array ->
+      refit:string ->
+      seed:Seed.t ->
+      Target.regression Dataset.t ->
+      (model report, Error.t) result
+
+    val search_with_policy :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
+      budget:budget ->
+      candidates:
+        ( 'configuration,
+          Target.regression Target.t,
+          Target.regression Target.t )
+        candidates ->
+      splitter:Target.regression Target.t Cross_validation.splitter ->
+      scorers:Regression_scorer.t array ->
+      promotion_score:string ->
+      policy:model Grid_search.refit_policy ->
+      seed:Seed.t ->
+      Target.regression Dataset.t ->
+      (model report, Error.t) result
+  end
+
+  module Binary_classification : sig
+    type model = Cross_validation.Binary_classification.model
+
+    val search :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
+      budget:budget ->
+      candidates:
+        ( 'configuration,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        candidates ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Binary_classification_scorer.t array ->
+      refit:string ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+
+    val search_with_policy :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
+      budget:budget ->
+      candidates:
+        ( 'configuration,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        candidates ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Binary_classification_scorer.t array ->
+      promotion_score:string ->
+      policy:model Grid_search.refit_policy ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+  end
+
+  module Multiclass_classification : sig
+    type model = Cross_validation.Multiclass_classification.model
+
+    val search :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
+      budget:budget ->
+      candidates:
+        ( 'configuration,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        candidates ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Multiclass_classification_scorer.t array ->
+      refit:string ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+
+    val search_with_policy :
+      ?return_train_score:bool ->
+      ?failure_policy:Cross_validation.failure_policy ->
+      ?execution:Execution.t ->
+      ?metadata:Metadata.t ->
+      ?checkpoint:'configuration Search_checkpoint.t ->
+      budget:budget ->
+      candidates:
+        ( 'configuration,
+          Target.classification Target.t,
+          Target.classification Target.t )
+        candidates ->
+      splitter:Target.classification Target.t Cross_validation.splitter ->
+      scorers:Multiclass_classification_scorer.t array ->
+      promotion_score:string ->
+      policy:model Grid_search.refit_policy ->
+      seed:Seed.t ->
+      Target.classification Dataset.t ->
+      (model report, Error.t) result
+  end
 end

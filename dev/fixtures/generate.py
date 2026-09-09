@@ -404,6 +404,541 @@ def generate_preprocessing_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_univariate_selection_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.feature_selection import (
+        SelectKBest,
+        SelectPercentile,
+        f_classif,
+        f_regression,
+    )
+
+    regression_x = np.array(
+        [
+            [-2.0, 4.0, 0.3, 7.0],
+            [-1.5, 2.25, -0.2, 7.0],
+            [-1.0, 1.0, 1.2, 7.0],
+            [-0.5, 0.25, 0.7, 7.0],
+            [0.0, 0.0, -0.8, 7.0],
+            [0.5, 0.25, 0.1, 7.0],
+            [1.0, 1.0, -1.1, 7.0],
+            [1.5, 2.25, 0.9, 7.0],
+            [2.0, 4.0, -0.4, 7.0],
+            [2.5, 6.25, 1.5, 7.0],
+        ],
+        dtype=np.float64,
+    )
+    regression_y = np.array(
+        [-3.8, -2.4, -2.1, -0.4, 0.2, 1.4, 1.7, 3.5, 3.8, 5.4],
+        dtype=np.float64,
+    )
+    regression_scores, _ = f_regression(regression_x, regression_y)
+    regression_selector = SelectKBest(f_regression, k=2).fit(
+        regression_x, regression_y
+    )
+
+    classification_x = np.array(
+        [
+            [-0.2, 0.0, 1.2, 4.0],
+            [0.1, 1.0, -0.3, 5.0],
+            [0.3, 2.0, 0.5, 3.0],
+            [-0.1, 1.0, -1.0, 4.0],
+            [2.8, 2.0, 0.1, 5.0],
+            [3.1, 0.0, 1.5, 4.0],
+            [3.3, 1.0, -0.7, 3.0],
+            [2.9, 2.0, 0.8, 5.0],
+            [6.2, 1.0, -1.4, 4.0],
+            [5.8, 2.0, 0.2, 3.0],
+            [6.1, 0.0, 1.0, 5.0],
+            [5.9, 1.0, -0.1, 4.0],
+        ],
+        dtype=np.float64,
+    )
+    classification_y = np.repeat(np.array([-3, 4, 11], dtype=np.int64), 4)
+    classification_scores, _ = f_classif(classification_x, classification_y)
+    classification_selector = SelectPercentile(f_classif, percentile=50.0).fit(
+        classification_x, classification_y
+    )
+
+    rows = ["# ModelKit sklearn univariate-selection reference fixture v1"]
+
+    def add_matrix(name: str, matrix) -> None:
+        for index, row in enumerate(matrix):
+            rows.append(f"{name}\t{index}\t{float_values(row)}")
+
+    def add_vector(name: str, values) -> None:
+        rows.append(f"{name}\t{float_values(values)}")
+
+    add_matrix("regression_x", regression_x)
+    add_vector("regression_y", regression_y)
+    add_vector("regression_scores", regression_scores)
+    add_vector("regression_selected", regression_selector.get_support(indices=True))
+    add_matrix("regression_output", regression_selector.transform(regression_x))
+    add_matrix("classification_x", classification_x)
+    add_vector("classification_y", classification_y)
+    add_vector("classification_scores", classification_scores)
+    add_vector(
+        "classification_selected",
+        classification_selector.get_support(indices=True),
+    )
+    add_matrix(
+        "classification_output",
+        classification_selector.transform(classification_x),
+    )
+
+    (fixture_dir / "univariate_selection_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "comparison": "F-scores, selected indices, and transformed dense matrices for count and percentile selection.",
+        "configuration": {
+            "classification_percentile": 50.0,
+            "regression_k": 2,
+        },
+        "environment": environment.metadata(),
+        "fixture": "univariate_selection_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.feature_selection.f_regression",
+            "sklearn.feature_selection.f_classif",
+            "sklearn.feature_selection.SelectKBest",
+            "sklearn.feature_selection.SelectPercentile",
+        ],
+        "schema_version": 1,
+    }
+    (fixture_dir / "univariate_selection_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def generate_model_based_selection_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.feature_selection import SelectFromModel
+    from sklearn.linear_model import LinearRegression, RidgeClassifier
+
+    regression_x = np.array(
+        [
+            [-2.0, 4.0, 0.3, 1.0],
+            [-1.5, 2.25, -0.2, 0.0],
+            [-1.0, 1.0, 1.2, -1.0],
+            [-0.5, 0.25, 0.7, 1.0],
+            [0.0, 0.0, -0.8, 0.0],
+            [0.5, 0.25, 0.1, -1.0],
+            [1.0, 1.0, -1.1, 1.0],
+            [1.5, 2.25, 0.9, 0.0],
+            [2.0, 4.0, -0.4, -1.0],
+            [2.5, 6.25, 1.5, 1.0],
+        ],
+        dtype=np.float64,
+    )
+    regression_y = (
+        4.0 * regression_x[:, 0]
+        - 0.8 * regression_x[:, 1]
+        + 0.15 * regression_x[:, 2]
+        + 0.02 * regression_x[:, 3]
+        + 1.5
+    )
+    regression_selector = SelectFromModel(
+        LinearRegression(), threshold="mean", max_features=2
+    ).fit(regression_x, regression_y)
+    regression_importances = np.abs(regression_selector.estimator_.coef_)
+
+    classification_x = np.array(
+        [
+            [-0.2, 0.0, 1.2, 0.0],
+            [0.1, 1.0, -0.3, 1.0],
+            [0.3, 2.0, 0.5, -1.0],
+            [-0.1, 1.0, -1.0, 0.5],
+            [2.8, 2.0, 0.1, -0.5],
+            [3.1, 0.0, 1.5, 1.0],
+            [3.3, 1.0, -0.7, 0.0],
+            [2.9, 2.0, 0.8, -1.0],
+            [6.2, 1.0, -1.4, 0.5],
+            [5.8, 2.0, 0.2, -0.5],
+            [6.1, 0.0, 1.0, 1.0],
+            [5.9, 1.0, -0.1, 0.0],
+        ],
+        dtype=np.float64,
+    )
+    classification_y = np.repeat(np.array([-3, 4, 11], dtype=np.int64), 4)
+    classification_selector = SelectFromModel(
+        RidgeClassifier(alpha=0.5),
+        threshold="median",
+        max_features=2,
+        norm_order=1,
+    ).fit(classification_x, classification_y)
+    classification_importances = np.linalg.norm(
+        classification_selector.estimator_.coef_, ord=1, axis=0
+    )
+
+    rows = ["# ModelKit sklearn model-based-selection reference fixture v1"]
+
+    def add_matrix(name: str, matrix) -> None:
+        for index, row in enumerate(matrix):
+            rows.append(f"{name}\t{index}\t{float_values(row)}")
+
+    def add_vector(name: str, values) -> None:
+        rows.append(f"{name}\t{float_values(values)}")
+
+    add_matrix("regression_x", regression_x)
+    add_vector("regression_y", regression_y)
+    add_vector("regression_importances", regression_importances)
+    add_vector("regression_threshold", [regression_selector.threshold_])
+    add_vector("regression_selected", regression_selector.get_support(indices=True))
+    add_matrix("regression_output", regression_selector.transform(regression_x))
+    add_matrix("classification_x", classification_x)
+    add_vector("classification_y", classification_y)
+    add_vector("classification_importances", classification_importances)
+    add_vector("classification_threshold", [classification_selector.threshold_])
+    add_vector(
+        "classification_selected",
+        classification_selector.get_support(indices=True),
+    )
+    add_matrix(
+        "classification_output",
+        classification_selector.transform(classification_x),
+    )
+
+    (fixture_dir / "model_based_selection_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "comparison": "Fitted coefficient importances, resolved thresholds, selected indices, and transformed dense matrices.",
+        "configuration": {
+            "classification_estimator": "RidgeClassifier(alpha=0.5)",
+            "classification_norm_order": 1,
+            "classification_threshold": "median",
+            "max_features": 2,
+            "regression_estimator": "LinearRegression()",
+            "regression_threshold": "mean",
+        },
+        "environment": environment.metadata(),
+        "fixture": "model_based_selection_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.feature_selection.SelectFromModel",
+            "sklearn.linear_model.LinearRegression",
+            "sklearn.linear_model.RidgeClassifier",
+        ],
+        "schema_version": 1,
+    }
+    (fixture_dir / "model_based_selection_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def generate_recursive_feature_elimination_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.feature_selection import RFE, RFECV, SequentialFeatureSelector
+    from sklearn.linear_model import LinearRegression, RidgeClassifier
+    from sklearn.model_selection import KFold, StratifiedKFold
+
+    regression_x = np.array(
+        [
+            [-2.0, 4.0, 0.3, 1.0, -1.0],
+            [-1.5, 2.25, -0.2, 0.0, 1.0],
+            [-1.0, 1.0, 1.2, -1.0, 0.0],
+            [-0.5, 0.25, 0.7, 1.0, -1.0],
+            [0.0, 0.0, -0.8, 0.0, 1.0],
+            [0.5, 0.25, 0.1, -1.0, 0.0],
+            [1.0, 1.0, -1.1, 1.0, -1.0],
+            [1.5, 2.25, 0.9, 0.0, 1.0],
+            [2.0, 4.0, -0.4, -1.0, 0.0],
+            [2.5, 6.25, 1.5, 1.0, -1.0],
+        ],
+        dtype=np.float64,
+    )
+    regression_y = (
+        4.0 * regression_x[:, 0]
+        - 0.8 * regression_x[:, 1]
+        + 0.15 * regression_x[:, 2]
+        + 0.02 * regression_x[:, 3]
+        + 0.4 * regression_x[:, 4]
+        + 1.5
+    )
+    regression_selector = RFE(
+        LinearRegression(), n_features_to_select=2, step=1
+    ).fit(regression_x, regression_y)
+
+    classification_x = np.array(
+        [
+            [-0.2, 0.0, 1.2, 0.0, 1.0],
+            [0.1, 1.0, -0.3, 1.0, -1.0],
+            [0.3, 2.0, 0.5, -1.0, 0.0],
+            [-0.1, 1.0, -1.0, 0.5, 1.0],
+            [2.8, 2.0, 0.1, -0.5, -1.0],
+            [3.1, 0.0, 1.5, 1.0, 0.0],
+            [3.3, 1.0, -0.7, 0.0, 1.0],
+            [2.9, 2.0, 0.8, -1.0, -1.0],
+            [6.2, 1.0, -1.4, 0.5, 0.0],
+            [5.8, 2.0, 0.2, -0.5, 1.0],
+            [6.1, 0.0, 1.0, 1.0, -1.0],
+            [5.9, 1.0, -0.1, 0.0, 0.0],
+        ],
+        dtype=np.float64,
+    )
+    classification_y = np.repeat(np.array([-3, 4, 11], dtype=np.int64), 4)
+    classification_selector = RFE(
+        RidgeClassifier(alpha=0.5), n_features_to_select=2, step=0.4
+    ).fit(classification_x, classification_y)
+
+    rows = ["# ModelKit sklearn recursive-feature-elimination reference fixture v1"]
+
+    def add_matrix(name: str, matrix) -> None:
+        for index, row in enumerate(matrix):
+            rows.append(f"{name}\t{index}\t{float_values(row)}")
+
+    def add_vector(name: str, values) -> None:
+        rows.append(f"{name}\t{float_values(values)}")
+
+    add_matrix("regression_x", regression_x)
+    add_vector("regression_y", regression_y)
+    add_vector("regression_selected", regression_selector.get_support(indices=True))
+    add_vector("regression_ranking", regression_selector.ranking_)
+    add_vector("regression_importances", np.abs(regression_selector.estimator_.coef_))
+    add_matrix("regression_output", regression_selector.transform(regression_x))
+    add_matrix("classification_x", classification_x)
+    add_vector("classification_y", classification_y)
+    add_vector(
+        "classification_selected",
+        classification_selector.get_support(indices=True),
+    )
+    add_vector("classification_ranking", classification_selector.ranking_)
+    add_vector(
+        "classification_importances",
+        np.linalg.norm(classification_selector.estimator_.coef_, ord=1, axis=0),
+    )
+    add_matrix(
+        "classification_output",
+        classification_selector.transform(classification_x),
+    )
+
+    (fixture_dir / "recursive_feature_elimination_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "comparison": "Selected indices, elimination rankings, final-estimator importances, and transformed dense matrices.",
+        "configuration": {
+            "classification_estimator": "RidgeClassifier(alpha=0.5)",
+            "classification_feature_count": 2,
+            "classification_step": 0.4,
+            "regression_estimator": "LinearRegression()",
+            "regression_feature_count": 2,
+            "regression_step": 1,
+        },
+        "environment": environment.metadata(),
+        "fixture": "recursive_feature_elimination_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.feature_selection.RFE",
+            "sklearn.linear_model.LinearRegression",
+            "sklearn.linear_model.RidgeClassifier",
+        ],
+        "schema_version": 1,
+    }
+    (fixture_dir / "recursive_feature_elimination_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    regression_cv_selector = RFECV(
+        LinearRegression(),
+        step=1,
+        min_features_to_select=1,
+        cv=KFold(n_splits=3, shuffle=False),
+        scoring="neg_mean_squared_error",
+    ).fit(regression_x, regression_y)
+    classification_cv_selector = RFECV(
+        RidgeClassifier(alpha=0.5),
+        step=0.4,
+        min_features_to_select=1,
+        cv=StratifiedKFold(n_splits=3, shuffle=False),
+        scoring="accuracy",
+    ).fit(classification_x, classification_y)
+
+    cv_rows = [
+        "# ModelKit sklearn recursive-feature-elimination CV reference fixture v1"
+    ]
+
+    def add_cv_matrix(name: str, matrix) -> None:
+        for index, row in enumerate(matrix):
+            cv_rows.append(f"{name}\t{index}\t{float_values(row)}")
+
+    def add_cv_vector(name: str, values) -> None:
+        cv_rows.append(f"{name}\t{float_values(values)}")
+
+    def add_cv_results(prefix: str, selector) -> None:
+        results = selector.cv_results_
+        add_cv_vector(f"{prefix}_feature_counts", results["n_features"])
+        add_cv_vector(f"{prefix}_mean_scores", results["mean_test_score"])
+        add_cv_vector(f"{prefix}_standard_deviations", results["std_test_score"])
+        for fold in range(3):
+            add_cv_vector(
+                f"{prefix}_fold_{fold}_scores", results[f"split{fold}_test_score"]
+            )
+
+    add_cv_matrix("regression_x", regression_x)
+    add_cv_vector("regression_y", regression_y)
+    add_cv_results("regression", regression_cv_selector)
+    add_cv_vector(
+        "regression_selected", regression_cv_selector.get_support(indices=True)
+    )
+    add_cv_vector("regression_ranking", regression_cv_selector.ranking_)
+    add_cv_vector(
+        "regression_importances", np.abs(regression_cv_selector.estimator_.coef_)
+    )
+    add_cv_matrix("regression_output", regression_cv_selector.transform(regression_x))
+    add_cv_matrix("classification_x", classification_x)
+    add_cv_vector("classification_y", classification_y)
+    add_cv_results("classification", classification_cv_selector)
+    add_cv_vector(
+        "classification_selected",
+        classification_cv_selector.get_support(indices=True),
+    )
+    add_cv_vector("classification_ranking", classification_cv_selector.ranking_)
+    add_cv_vector(
+        "classification_importances",
+        np.linalg.norm(
+            classification_cv_selector.estimator_.coef_, ord=1, axis=0
+        ),
+    )
+    add_cv_matrix(
+        "classification_output", classification_cv_selector.transform(classification_x)
+    )
+
+    (fixture_dir / "recursive_feature_elimination_cv_v1.tsv").write_text(
+        "\n".join(cv_rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    cv_metadata = {
+        "comparison": "Fold scores by ascending feature count, selected indices, rankings, final-estimator importances, and transformed dense matrices.",
+        "configuration": {
+            "classification_cv": "StratifiedKFold(n_splits=3, shuffle=False)",
+            "classification_estimator": "RidgeClassifier(alpha=0.5)",
+            "classification_scoring": "accuracy",
+            "classification_step": 0.4,
+            "minimum_feature_count": 1,
+            "regression_cv": "KFold(n_splits=3, shuffle=False)",
+            "regression_estimator": "LinearRegression()",
+            "regression_scoring": "neg_mean_squared_error",
+            "regression_step": 1,
+        },
+        "environment": environment.metadata(),
+        "fixture": "recursive_feature_elimination_cv_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.feature_selection.RFECV",
+            "sklearn.linear_model.LinearRegression",
+            "sklearn.linear_model.RidgeClassifier",
+            "sklearn.model_selection.KFold",
+            "sklearn.model_selection.StratifiedKFold",
+        ],
+        "schema_version": 1,
+    }
+    (
+        fixture_dir / "recursive_feature_elimination_cv_v1.metadata.json"
+    ).write_text(
+        json.dumps(cv_metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    sequential_selectors = {
+        "regression_forward": SequentialFeatureSelector(
+            LinearRegression(),
+            n_features_to_select=2,
+            direction="forward",
+            scoring="neg_mean_squared_error",
+            cv=KFold(n_splits=3, shuffle=False),
+            n_jobs=1,
+        ).fit(regression_x, regression_y),
+        "regression_backward": SequentialFeatureSelector(
+            LinearRegression(),
+            n_features_to_select=2,
+            direction="backward",
+            scoring="neg_mean_squared_error",
+            cv=KFold(n_splits=3, shuffle=False),
+            n_jobs=1,
+        ).fit(regression_x, regression_y),
+        "classification_forward": SequentialFeatureSelector(
+            RidgeClassifier(alpha=0.5),
+            n_features_to_select=2,
+            direction="forward",
+            scoring="accuracy",
+            cv=StratifiedKFold(n_splits=3, shuffle=False),
+            n_jobs=1,
+        ).fit(classification_x, classification_y),
+        "classification_backward": SequentialFeatureSelector(
+            RidgeClassifier(alpha=0.5),
+            n_features_to_select=2,
+            direction="backward",
+            scoring="accuracy",
+            cv=StratifiedKFold(n_splits=3, shuffle=False),
+            n_jobs=1,
+        ).fit(classification_x, classification_y),
+    }
+    sequential_rows = [
+        "# ModelKit sklearn sequential-feature-selection reference fixture v1"
+    ]
+
+    def add_sequential_matrix(name: str, matrix) -> None:
+        for index, row in enumerate(matrix):
+            sequential_rows.append(f"{name}\t{index}\t{float_values(row)}")
+
+    def add_sequential_vector(name: str, values) -> None:
+        sequential_rows.append(f"{name}\t{float_values(values)}")
+
+    add_sequential_matrix("regression_x", regression_x)
+    add_sequential_vector("regression_y", regression_y)
+    add_sequential_matrix("classification_x", classification_x)
+    add_sequential_vector("classification_y", classification_y)
+    for name, selector in sequential_selectors.items():
+        add_sequential_vector(f"{name}_selected", selector.get_support(indices=True))
+        source = regression_x if name.startswith("regression") else classification_x
+        add_sequential_matrix(f"{name}_output", selector.transform(source))
+
+    (fixture_dir / "sequential_feature_selection_v1.tsv").write_text(
+        "\n".join(sequential_rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    sequential_metadata = {
+        "comparison": "Selected indices and transformed dense matrices for forward and backward regression and multiclass selection.",
+        "configuration": {
+            "classification_cv": "StratifiedKFold(n_splits=3, shuffle=False)",
+            "classification_estimator": "RidgeClassifier(alpha=0.5)",
+            "classification_scoring": "accuracy",
+            "feature_count": 2,
+            "regression_cv": "KFold(n_splits=3, shuffle=False)",
+            "regression_estimator": "LinearRegression()",
+            "regression_scoring": "neg_mean_squared_error",
+        },
+        "environment": environment.metadata(),
+        "fixture": "sequential_feature_selection_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.feature_selection.SequentialFeatureSelector",
+            "sklearn.linear_model.LinearRegression",
+            "sklearn.linear_model.RidgeClassifier",
+            "sklearn.model_selection.KFold",
+            "sklearn.model_selection.StratifiedKFold",
+        ],
+        "schema_version": 1,
+    }
+    (fixture_dir / "sequential_feature_selection_v1.metadata.json").write_text(
+        json.dumps(sequential_metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def generate_transform_fixture(fixture_dir: Path) -> None:
     import numpy as np
     from sklearn.impute import MissingIndicator
@@ -1782,15 +2317,697 @@ def generate_ranking_metrics_fixture(fixture_dir: Path) -> None:
     )
 
 
+def generate_column_transformer_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.compose import ColumnTransformer
+    from sklearn.impute import SimpleImputer
+    from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+    train = np.array(
+        [
+            [-4.0, 1.0, 10.0, np.nan, 90.0],
+            [-2.0, 2.0, 20.0, 2.0, 91.0],
+            [0.0, 1.0, 40.0, 4.0, 92.0],
+            [8.0, 3.0, 100.0, np.nan, 93.0],
+        ],
+        dtype=np.float64,
+    )
+    test = np.array(
+        [[100.0, 9.0, 1000.0, np.nan, -1.0], [-8.0, 1.0, 0.0, 9.0, -2.0]],
+        dtype=np.float64,
+    )
+    cases = {
+        "mixed": ColumnTransformer(
+            [
+                ("scale", StandardScaler(), [2, 0]),
+                ("impute", SimpleImputer(strategy="mean"), [3]),
+                ("category", "passthrough", [1]),
+                ("discard", "drop", [4]),
+            ],
+            remainder="passthrough",
+        ),
+        "overlap": ColumnTransformer(
+            [
+                ("scale", StandardScaler(), [0]),
+                ("raw", "passthrough", [0, 2]),
+                ("discard", "drop", [3]),
+            ],
+            remainder="passthrough",
+        ),
+        "encoding": ColumnTransformer(
+            [
+                ("scale", StandardScaler(), [0]),
+                (
+                    "encode",
+                    OneHotEncoder(sparse_output=False, handle_unknown="ignore"),
+                    [1],
+                ),
+                ("unused", StandardScaler(), []),
+            ]
+        ),
+    }
+    rows = ["# ModelKit sklearn column transformer reference fixture v1"]
+
+    def add_matrix(name: str, values) -> None:
+        for index, values in enumerate(values):
+            rows.append(f"{name}\t{index}\t{float_values(values)}")
+
+    add_matrix("train", train)
+    add_matrix("test", test)
+    for name, transformer in cases.items():
+        add_matrix(f"{name}_train", transformer.fit_transform(train))
+        add_matrix(f"{name}_test", transformer.transform(test))
+        if name != "encoding":
+            rows.append(f"{name}_names\t" + ",".join(transformer.get_feature_names_out()))
+
+    (fixture_dir / "column_transformer_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {
+            "cases": list(cases),
+            "dense_output": True,
+            "fit_rows": 4,
+            "inference_rows": 2,
+            "absolute_tolerance": 1e-12,
+            "relative_tolerance": 1e-12,
+            "naming": (
+                "Exact names for scale, impute, passthrough, and remainder; "
+                "encoders retain ModelKit's existing generated feature-name convention."
+            ),
+        },
+        "environment": environment.metadata(),
+        "fixture": "column_transformer_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.compose.ColumnTransformer",
+            "sklearn.preprocessing.StandardScaler",
+            "sklearn.preprocessing.OneHotEncoder",
+            "sklearn.impute.SimpleImputer",
+        ],
+        "schema_version": 1,
+    }
+    (fixture_dir / "column_transformer_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def generate_nested_composition_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.compose import ColumnTransformer
+    from sklearn.impute import SimpleImputer
+    from sklearn.pipeline import FeatureUnion, Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    train = np.array([[np.nan, 1.0], [2.0, 2.0], [4.0, np.nan], [6.0, 8.0]])
+    test = np.array([[10.0, np.nan], [np.nan, -3.0]])
+    union = FeatureUnion(
+        [
+            ("scaled", Pipeline([("impute", SimpleImputer()), ("scale", StandardScaler())])),
+            ("imputed", SimpleImputer()),
+            ("unused", "drop"),
+        ]
+    )
+    nested = Pipeline(
+        [
+            (
+                "columns",
+                ColumnTransformer(
+                    [
+                        (
+                            "numeric",
+                            Pipeline(
+                                [
+                                    ("impute", SimpleImputer()),
+                                    (
+                                        "views",
+                                        FeatureUnion(
+                                            [("scaled", StandardScaler()), ("raw", "passthrough")]
+                                        ),
+                                    ),
+                                ]
+                            ),
+                            [0],
+                        ),
+                        ("other", SimpleImputer(), [1]),
+                    ]
+                ),
+            ),
+            ("scale", StandardScaler()),
+        ]
+    )
+    rows = ["# ModelKit sklearn nested composition reference fixture v1"]
+
+    def add_matrix(name: str, values) -> None:
+        for row, values in enumerate(values):
+            rows.append(f"{name}\t{row}\t{float_values(values)}")
+
+    add_matrix("train", train)
+    add_matrix("test", test)
+    for name, specification in [("union", union), ("nested", nested)]:
+        add_matrix(f"{name}_train", specification.fit_transform(train))
+        add_matrix(f"{name}_test", specification.transform(test))
+        rows.append(f"{name}_names\t" + ",".join(specification.get_feature_names_out()))
+    (fixture_dir / "nested_composition_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {
+            "dense_output": True,
+            "fit_rows": 4,
+            "inference_rows": 2,
+            "absolute_tolerance": 1e-12,
+            "relative_tolerance": 1e-12,
+            "cases": ["union", "nested"],
+        },
+        "environment": environment.metadata(),
+        "fixture": "nested_composition_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "references": [
+            "sklearn.pipeline.FeatureUnion",
+            "sklearn.pipeline.Pipeline",
+            "sklearn.compose.ColumnTransformer",
+            "sklearn.impute.SimpleImputer",
+            "sklearn.preprocessing.StandardScaler",
+        ],
+        "schema_version": 1,
+    }
+    (fixture_dir / "nested_composition_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def generate_transformed_target_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.compose import TransformedTargetRegressor
+    from sklearn.linear_model import LinearRegression
+
+    train = np.arange(6, dtype=np.float64)
+    target = np.expm1([0.4, 0.9, 0.8, 1.8, 1.1, 2.0])
+    weights = np.array([1., 2., 1., 3., 2., 1.])
+    test = np.array([-1., 0.5, 6.])
+    model = TransformedTargetRegressor(
+        regressor=LinearRegression(), func=np.log1p, inverse_func=np.expm1,
+        check_inverse=True,
+    ).fit(train[:, None], target, sample_weight=weights)
+    rows = ["# ModelKit sklearn reference fixture v1"]
+    for name, values in [
+        ("train", train), ("target", target), ("weights", weights),
+        ("test", test), ("prediction", model.predict(test[:, None])),
+    ]:
+        rows.append(f"{name}\t{float_values(values)}")
+    (fixture_dir / "transformed_target_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {"absolute_tolerance": 1e-12, "relative_tolerance": 1e-12,
+                          "func": "log1p", "inverse_func": "expm1", "weighted": True},
+        "environment": environment.metadata(),
+        "fixture": "transformed_target_v1", "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0", "schema_version": 1,
+        "references": ["sklearn.compose.TransformedTargetRegressor", "sklearn.linear_model.LinearRegression"],
+    }
+    (fixture_dir / "transformed_target_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
+    )
+
+
+def generate_resampling_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.model_selection import (
+        RepeatedKFold, RepeatedStratifiedKFold, ShuffleSplit,
+        StratifiedShuffleSplit, train_test_split,
+    )
+
+    labels = np.repeat([0, 1, 2], [20, 12, 8])
+    x = np.arange(len(labels))[:, None]
+    rows = ["# ModelKit sklearn resampling semantics fixture v1"]
+
+    def add(name, values):
+        rows.append(f"{name}\t{comma_separated(values)}")
+
+    add("labels", labels)
+    train, test = train_test_split(np.arange(11), test_size=0.3, shuffle=False)
+    add("holdout_train", train)
+    add("holdout_test", test)
+    for index, (train, test) in enumerate(
+        ShuffleSplit(n_splits=3, test_size=0.3, random_state=1729).split(x)
+    ):
+        add(f"shuffle_sizes_{index}", [len(train), len(test)])
+    for index, (train, test) in enumerate(
+        StratifiedShuffleSplit(n_splits=3, train_size=20, test_size=10,
+                               random_state=1729).split(x, labels)
+    ):
+        add(f"stratified_train_{index}", np.bincount(labels[train], minlength=3))
+        add(f"stratified_test_{index}", np.bincount(labels[test], minlength=3))
+    for index, (train, test) in enumerate(
+        RepeatedKFold(n_splits=4, n_repeats=2, random_state=1729).split(x)
+    ):
+        add(f"repeated_sizes_{index}", [len(train), len(test)])
+    for index, (_, test) in enumerate(
+        RepeatedStratifiedKFold(n_splits=4, n_repeats=2,
+                                random_state=1729).split(x, labels)
+    ):
+        add(f"repeated_stratified_test_{index}", np.bincount(labels[test], minlength=3))
+    (fixture_dir / "resampling_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {"random_state": 1729, "folds": 4, "repeats": 2,
+                          "shuffle_test_fraction": 0.3,
+                          "stratified_train_count": 20, "stratified_test_count": 10},
+        "comparison": "Exact unshuffled rows, partition sizes and untied class allocations; random row identities intentionally differ between RNG implementations.",
+        "environment": environment.metadata(), "fixture": "resampling_v1",
+        "generator": "dev/fixtures/generate.py", "license": "Apache-2.0",
+        "schema_version": 1,
+        "references": ["sklearn.model_selection.train_test_split",
+                       "sklearn.model_selection.ShuffleSplit",
+                       "sklearn.model_selection.StratifiedShuffleSplit",
+                       "sklearn.model_selection.RepeatedKFold",
+                       "sklearn.model_selection.RepeatedStratifiedKFold"],
+    }
+    (fixture_dir / "resampling_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
+    )
+
+
+def generate_partitioning_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.model_selection import (
+        LeaveOneGroupOut, LeaveOneOut, PredefinedSplit, StratifiedGroupKFold,
+    )
+
+    assignments = np.array([-1, 8, 8, 2, 2, -1, 99, 99])
+    leave_groups = np.array([10, -3, 10, 2, -3, 2])
+    groups = np.repeat([-10, 2, 9, 20, 35, 50], [5, 4, 3, 4, 6, 2])
+    labels = np.array([0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 0, 1,
+                       1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1])
+    rows = ["# ModelKit sklearn partitioning reference fixture v1"]
+
+    def add(name, values):
+        rows.append(f"{name}\t{comma_separated(values)}")
+
+    add("assignments", assignments)
+    add("leave_groups", leave_groups)
+    add("groups", groups)
+    add("labels", labels)
+    cases = {
+        "predefined": PredefinedSplit(assignments).split(),
+        "leave_one_out": LeaveOneOut().split(np.zeros((4, 1))),
+        "leave_one_group_out": LeaveOneGroupOut().split(
+            np.zeros((len(leave_groups), 1)), groups=leave_groups),
+        "stratified_group": StratifiedGroupKFold(n_splits=3).split(
+            np.zeros((len(groups), 1)), labels, groups),
+    }
+    for name, splits in cases.items():
+        for index, (train, test) in enumerate(splits):
+            add(f"{name}_{index}_train", train)
+            add(f"{name}_{index}_test", test)
+    (fixture_dir / "partitioning_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {"stratified_group_folds": 3, "shuffle": False},
+        "comparison": "Exact source row identities for unshuffled fixtures; grouped balancing is heuristic, with ModelKit additionally guaranteeing nonempty folds.",
+        "environment": environment.metadata(), "fixture": "partitioning_v1",
+        "generator": "dev/fixtures/generate.py", "license": "Apache-2.0",
+        "schema_version": 1,
+        "references": ["sklearn.model_selection.PredefinedSplit",
+                       "sklearn.model_selection.LeaveOneOut",
+                       "sklearn.model_selection.LeaveOneGroupOut",
+                       "sklearn.model_selection.StratifiedGroupKFold"],
+    }
+    (fixture_dir / "partitioning_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
+    )
+
+
+def generate_randomized_search_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.linear_model import LinearRegression
+    from sklearn.model_selection import KFold, RandomizedSearchCV
+
+    x = np.arange(1., 13.)[:, None]
+    y = np.array([3., 6., 6., 10., 11., 14., 14., 18., 19., 22., 22., 26.])
+    model = RandomizedSearchCV(
+        LinearRegression(), {"fit_intercept": [False, True]}, n_iter=2,
+        cv=KFold(n_splits=3), random_state=19,
+        scoring=["neg_mean_squared_error", "neg_mean_absolute_error"],
+        refit="neg_mean_squared_error", return_train_score=True,
+    ).fit(x, y)
+    rows = ["# ModelKit sklearn randomized search reference fixture v1"]
+
+    def add(name, values):
+        rows.append(f"{name}\t{float_values(values)}")
+
+    add("x", x[:, 0])
+    add("y", y)
+    add("test_x", [0., 13.])
+    for index, parameters in enumerate(model.cv_results_["params"]):
+        label = "intercept" if parameters["fit_intercept"] else "no_intercept"
+        for metric in ["neg_mean_squared_error", "neg_mean_absolute_error"]:
+            for partition in ["train", "test"]:
+                add(f"{label}_{partition}_{metric}",
+                    [model.cv_results_[f"mean_{partition}_{metric}"][index]])
+    add("selected_intercept", [int(model.best_params_["fit_intercept"])])
+    add("prediction", model.predict(np.array([[0.], [13.]])))
+    (fixture_dir / "randomized_search_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {"random_state": 19, "folds": 3, "iterations": 2,
+                          "fit_intercept": [False, True], "absolute_tolerance": 1e-10},
+        "comparison": "Complete finite candidate set compared by parameter value, train/test means, named selection and full-data refit predictions; candidate order is RNG-specific.",
+        "environment": environment.metadata(), "fixture": "randomized_search_v1",
+        "generator": "dev/fixtures/generate.py", "license": "Apache-2.0",
+        "schema_version": 1,
+        "references": ["sklearn.model_selection.RandomizedSearchCV",
+                       "sklearn.linear_model.LinearRegression"],
+    }
+    (fixture_dir / "randomized_search_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
+    )
+
+
+def generate_cross_val_prediction_fixture(fixture_dir: Path) -> None:
+    import warnings
+
+    import numpy as np
+    from sklearn.base import BaseEstimator, ClassifierMixin
+    from sklearn.linear_model import LinearRegression
+    from sklearn.model_selection import KFold, cross_val_predict
+
+    class FirstClassClassifier(ClassifierMixin, BaseEstimator):
+        def fit(self, x, y):
+            self.classes_ = np.unique(y)
+            return self
+
+        def predict(self, x):
+            return np.full(len(x), self.classes_[0])
+
+        def predict_proba(self, x):
+            probabilities = np.zeros((len(x), len(self.classes_)))
+            probabilities[:, 0] = 1.0
+            return probabilities
+
+    regression_x = np.arange(12.0)[:, None]
+    regression_y = np.array(
+        [1.0, 3.2, 4.8, 7.1, 8.9, 11.2, 12.8, 15.1, 16.9, 19.2, 20.8, 23.1]
+    )
+    folds = KFold(n_splits=3, shuffle=False)
+    regression_prediction = cross_val_predict(
+        LinearRegression(), regression_x, regression_y, cv=folds
+    )
+    classification_x = np.arange(9.0)[:, None]
+    classification_y = np.repeat([10, 20, 30], 3)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        class_probabilities = cross_val_predict(
+            FirstClassClassifier(),
+            classification_x,
+            classification_y,
+            cv=KFold(n_splits=3, shuffle=False),
+            method="predict_proba",
+        )
+    rows = ["# ModelKit sklearn cross-validation prediction fixture v1"]
+
+    def add(name, values):
+        rows.append(f"{name}\t{float_values(values)}")
+
+    add("regression_x", regression_x[:, 0])
+    add("regression_y", regression_y)
+    add("regression_prediction", regression_prediction)
+    rows.append("classification_y\t" + comma_separated(classification_y))
+    rows.append("classification_classes\t10,20,30")
+    for row, probabilities in enumerate(class_probabilities):
+        add(f"classification_probability_{row}", probabilities)
+    (fixture_dir / "cross_val_prediction_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {
+            "folds": 3,
+            "shuffle": False,
+            "absolute_tolerance": 1e-9,
+        },
+        "comparison": "Regression predictions and globally aligned probability columns in original source-row order; the classifier deliberately omits one dataset class from every training fold.",
+        "environment": environment.metadata(),
+        "fixture": "cross_val_prediction_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "schema_version": 1,
+        "references": [
+            "sklearn.model_selection.cross_val_predict",
+            "sklearn.linear_model.LinearRegression",
+        ],
+    }
+    (fixture_dir / "cross_val_prediction_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def generate_learning_curve_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.linear_model import LinearRegression
+    from sklearn.model_selection import KFold, learning_curve
+
+    x = np.arange(12.0)[:, None]
+    y = np.array(
+        [1.0, 3.2, 4.8, 7.1, 8.9, 11.2, 12.8, 15.1, 16.9, 19.2, 20.8, 23.1]
+    )
+    train_sizes, train_scores, test_scores = learning_curve(
+        LinearRegression(),
+        x,
+        y,
+        cv=KFold(n_splits=3, shuffle=False),
+        scoring="neg_mean_absolute_error",
+        train_sizes=np.array([0.25, 0.5, 1.0]),
+        shuffle=False,
+    )
+    rows = ["# ModelKit sklearn learning-curve fixture v1"]
+    rows.append("x\t" + float_values(x[:, 0]))
+    rows.append("y\t" + float_values(y))
+    rows.append("training_sizes\t" + comma_separated(train_sizes))
+    for point, scores in enumerate(train_scores):
+        rows.append(f"train_scores_{point}\t{float_values(scores)}")
+    for point, scores in enumerate(test_scores):
+        rows.append(f"test_scores_{point}\t{float_values(scores)}")
+    (fixture_dir / "learning_curve_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {
+            "folds": 3,
+            "scoring": "neg_mean_absolute_error",
+            "shuffle": False,
+            "train_sizes": [0.25, 0.5, 1.0],
+            "absolute_tolerance": 1e-9,
+        },
+        "comparison": "Resolved training sizes and per-fold train/test scores over identical KFold partitions and nested training prefixes.",
+        "environment": environment.metadata(),
+        "fixture": "learning_curve_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "schema_version": 1,
+        "references": [
+            "sklearn.model_selection.learning_curve",
+            "sklearn.linear_model.LinearRegression",
+        ],
+    }
+    (fixture_dir / "learning_curve_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def generate_validation_curve_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.linear_model import Ridge
+    from sklearn.model_selection import KFold, validation_curve
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    raw = np.arange(-4.0, 11.0)
+    x = np.column_stack((raw, raw * raw))
+    y = np.array(
+        [
+            15.2,
+            9.1,
+            5.4,
+            2.8,
+            1.2,
+            0.7,
+            1.5,
+            3.4,
+            6.8,
+            11.1,
+            16.9,
+            23.7,
+            31.8,
+            41.0,
+            51.6,
+        ]
+    )
+    alphas = np.array([0.0, 0.5, 5.0])
+    estimator = Pipeline(
+        [
+            ("scale", StandardScaler()),
+            ("ridge", Ridge(fit_intercept=True, solver="svd")),
+        ]
+    )
+    train_scores, test_scores = validation_curve(
+        estimator,
+        x,
+        y,
+        param_name="ridge__alpha",
+        param_range=alphas,
+        cv=KFold(n_splits=3, shuffle=False),
+        scoring="neg_mean_squared_error",
+    )
+    rows = ["# ModelKit sklearn validation-curve fixture v1"]
+    rows.append("feature_0\t" + float_values(x[:, 0]))
+    rows.append("feature_1\t" + float_values(x[:, 1]))
+    rows.append("target\t" + float_values(y))
+    rows.append("alphas\t" + float_values(alphas))
+    for point, scores in enumerate(train_scores):
+        rows.append(f"train_scores_{point}\t{float_values(scores)}")
+    for point, scores in enumerate(test_scores):
+        rows.append(f"test_scores_{point}\t{float_values(scores)}")
+    (fixture_dir / "validation_curve_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {
+            "absolute_tolerance": 1e-7,
+            "alphas": alphas.tolist(),
+            "folds": 3,
+            "ridge_solver": "svd",
+            "scoring": "neg_mean_squared_error",
+            "shuffle": False,
+            "standard_scaling": True,
+        },
+        "comparison": "Per-alpha, per-fold train/test scores over one shared KFold partition with fold-local standard scaling.",
+        "environment": environment.metadata(),
+        "fixture": "validation_curve_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "schema_version": 1,
+        "references": [
+            "sklearn.model_selection.validation_curve",
+            "sklearn.linear_model.Ridge",
+            "sklearn.preprocessing.StandardScaler",
+        ],
+    }
+    (fixture_dir / "validation_curve_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def generate_permutation_test_fixture(fixture_dir: Path) -> None:
+    import numpy as np
+    from sklearn.linear_model import Ridge
+    from sklearn.model_selection import KFold, permutation_test_score
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    target = np.repeat(np.arange(6, dtype=float), 2)
+    groups = np.repeat(np.arange(6), 2)
+    feature_0 = np.linspace(-2.0, 3.5, target.size)
+    x = np.column_stack((feature_0, np.sin(feature_0)))
+    estimator = Pipeline(
+        [
+            ("scale", StandardScaler()),
+            ("ridge", Ridge(alpha=0.5, fit_intercept=True, solver="svd")),
+        ]
+    )
+    folds = list(KFold(n_splits=3, shuffle=False).split(x, target))
+    observed, permutation_scores, p_value = permutation_test_score(
+        estimator,
+        x,
+        target,
+        groups=groups,
+        cv=folds,
+        n_permutations=5,
+        random_state=73,
+        scoring="neg_mean_squared_error",
+    )
+    rows = [
+        "# ModelKit sklearn permutation-test fixture v1",
+        "feature_0\t" + float_values(x[:, 0]),
+        "feature_1\t" + float_values(x[:, 1]),
+        "target\t" + float_values(target),
+        "groups\t" + comma_separated(groups),
+        "observed_score\t" + float_value(observed),
+        "permutation_scores\t" + float_values(permutation_scores),
+        "p_value\t" + float_value(p_value),
+    ]
+    (fixture_dir / "permutation_test_v1.tsv").write_text(
+        "\n".join(rows) + "\n", encoding="utf-8", newline="\n"
+    )
+    metadata = {
+        "configuration": {
+            "folds": 3,
+            "groups": "two rows per group; target is constant within each group",
+            "n_permutations": 5,
+            "random_state": 73,
+            "ridge_alpha": 0.5,
+            "ridge_solver": "svd",
+            "scoring": "neg_mean_squared_error",
+            "shuffle": False,
+            "standard_scaling": True,
+        },
+        "comparison": "Observed score, within-group permutation scores, and corrected upper-tail p-value.",
+        "environment": environment.metadata(),
+        "fixture": "permutation_test_v1",
+        "generator": "dev/fixtures/generate.py",
+        "license": "Apache-2.0",
+        "schema_version": 1,
+        "references": [
+            "sklearn.model_selection.permutation_test_score",
+            "sklearn.linear_model.Ridge",
+            "sklearn.preprocessing.StandardScaler",
+        ],
+    }
+    (fixture_dir / "permutation_test_v1.metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
 def main() -> None:
     environment.validate()
     fixture_dir = ROOT / "test" / "fixtures" / "sklearn"
     fixture_dir.mkdir(parents=True, exist_ok=True)
     generate_split_fixture(fixture_dir)
     generate_splitter_fixture(fixture_dir)
+    generate_resampling_fixture(fixture_dir)
+    generate_partitioning_fixture(fixture_dir)
+    generate_randomized_search_fixture(fixture_dir)
+    generate_cross_val_prediction_fixture(fixture_dir)
+    generate_learning_curve_fixture(fixture_dir)
+    generate_validation_curve_fixture(fixture_dir)
+    generate_permutation_test_fixture(fixture_dir)
     generate_metrics_fixture(fixture_dir)
     generate_preprocessing_fixture(fixture_dir)
+    generate_univariate_selection_fixture(fixture_dir)
+    generate_model_based_selection_fixture(fixture_dir)
+    generate_recursive_feature_elimination_fixture(fixture_dir)
     generate_transform_fixture(fixture_dir)
+    generate_column_transformer_fixture(fixture_dir)
+    generate_nested_composition_fixture(fixture_dir)
+    generate_transformed_target_fixture(fixture_dir)
     generate_linear_model_fixture(fixture_dir)
     generate_regularized_linear_fixture(fixture_dir)
     generate_ridge_classifier_fixture(fixture_dir)
