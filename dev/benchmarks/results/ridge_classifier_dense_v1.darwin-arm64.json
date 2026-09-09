@@ -15,7 +15,7 @@
     },
     "python": "3.14.3"
   },
-  "generated_at": "2026-09-03T23:13:53.900972+00:00",
+  "generated_at": "2026-09-09T04:56:33.194564+00:00",
   "methodology": {
     "measurement": "interleaved fresh-process wall time and sampled resident set size",
     "rss_sample_interval_seconds": 0.001,
@@ -29,10 +29,10 @@
   "runs": {
     "modelkit": [
       {
-        "elapsed_ns": 124729041,
-        "peak_rss_bytes": 16449536,
+        "elapsed_ns": 121032042,
+        "peak_rss_bytes": 15990784,
         "worker": {
-          "allocated_words": 27395780,
+          "allocated_words": 22395780,
           "checksum": "0.78689550156209498:0.68610862260416527:7:7:-1.2275466624614848:-0.32443424517650654:0.55198090763798513:-1.2028443134857376:-0.29349257279446284:0.49633688628019351:9:9",
           "features": 12,
           "ocaml": "5.3.0",
@@ -68,10 +68,10 @@
         }
       },
       {
-        "elapsed_ns": 126116250,
-        "peak_rss_bytes": 14778368,
+        "elapsed_ns": 120026875,
+        "peak_rss_bytes": 15450112,
         "worker": {
-          "allocated_words": 27395780,
+          "allocated_words": 22395780,
           "checksum": "0.78689550156209498:0.68610862260416527:7:7:-1.2275466624614848:-0.32443424517650654:0.55198090763798513:-1.2028443134857376:-0.29349257279446284:0.49633688628019351:9:9",
           "features": 12,
           "ocaml": "5.3.0",
@@ -107,10 +107,10 @@
         }
       },
       {
-        "elapsed_ns": 125287875,
-        "peak_rss_bytes": 16187392,
+        "elapsed_ns": 121171875,
+        "peak_rss_bytes": 14237696,
         "worker": {
-          "allocated_words": 27395780,
+          "allocated_words": 22395780,
           "checksum": "0.78689550156209498:0.68610862260416527:7:7:-1.2275466624614848:-0.32443424517650654:0.55198090763798513:-1.2028443134857376:-0.29349257279446284:0.49633688628019351:9:9",
           "features": 12,
           "ocaml": "5.3.0",
@@ -148,8 +148,8 @@
     ],
     "sklearn": [
       {
-        "elapsed_ns": 730852791,
-        "peak_rss_bytes": 132202496,
+        "elapsed_ns": 756655334,
+        "peak_rss_bytes": 135675904,
         "worker": {
           "allocated_words": null,
           "checksum": "c993b9905b183d9f413f812fe1291f4e528a0f7659272eb7e78fce208e960d74",
@@ -186,8 +186,8 @@
         }
       },
       {
-        "elapsed_ns": 728040125,
-        "peak_rss_bytes": 130973696,
+        "elapsed_ns": 811402791,
+        "peak_rss_bytes": 134758400,
         "worker": {
           "allocated_words": null,
           "checksum": "c993b9905b183d9f413f812fe1291f4e528a0f7659272eb7e78fce208e960d74",
@@ -224,8 +224,8 @@
         }
       },
       {
-        "elapsed_ns": 732596917,
-        "peak_rss_bytes": 133775360,
+        "elapsed_ns": 746328375,
+        "peak_rss_bytes": 136314880,
         "worker": {
           "allocated_words": null,
           "checksum": "c993b9905b183d9f413f812fe1291f4e528a0f7659272eb7e78fce208e960d74",

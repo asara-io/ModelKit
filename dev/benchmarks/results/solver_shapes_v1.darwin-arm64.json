@@ -15,7 +15,7 @@
     },
     "python": "3.14.3"
   },
-  "generated_at": "2026-09-05T00:23:58.121457+00:00",
+  "generated_at": "2026-09-09T05:00:55.273497+00:00",
   "methodology": {
     "measurement": "interleaved fresh-process wall time and sampled resident set size",
     "rss_sample_interval_seconds": 0.001,
@@ -29,8 +29,8 @@
   "runs": {
     "modelkit": [
       {
-        "elapsed_ns": 58945043708,
-        "peak_rss_bytes": 79511552,
+        "elapsed_ns": 59024668667,
+        "peak_rss_bytes": 93011968,
         "worker": {
           "allocated_words": 7210618855,
           "checksum": "745c36cd687a6f7c09ab497d392b968c",
@@ -49,28 +49,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": 79932641,
                   "converged": true,
-                  "elapsed_ns": 505640029,
+                  "elapsed_ns": 506679058,
                   "iterations": 11,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": 461065804,
                   "converged": true,
-                  "elapsed_ns": 2277993917,
+                  "elapsed_ns": 2258391857,
                   "iterations": 12,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": 6320261,
                   "converged": true,
-                  "elapsed_ns": 36409854,
+                  "elapsed_ns": 37096023,
                   "iterations": 1,
                   "rank": 8
                 },
                 "ridge_regression": {
                   "allocated_words": 6320834,
                   "converged": true,
-                  "elapsed_ns": 35685062,
+                  "elapsed_ns": 35907983,
                   "iterations": 1,
                   "rank": 8
                 }
@@ -85,28 +85,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": 777716785,
                   "converged": true,
-                  "elapsed_ns": 4798532962,
+                  "elapsed_ns": 4796014070,
                   "iterations": 9,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": 3338053496,
                   "converged": true,
-                  "elapsed_ns": 24385833978,
+                  "elapsed_ns": 24473387956,
                   "iterations": 9,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": 6750661,
                   "converged": true,
-                  "elapsed_ns": 255146980,
+                  "elapsed_ns": 238896131,
                   "iterations": 1,
                   "rank": 200
                 },
                 "ridge_regression": {
                   "allocated_words": 7072066,
                   "converged": true,
-                  "elapsed_ns": 279486894,
+                  "elapsed_ns": 264472007,
                   "iterations": 1,
                   "rank": 200
                 }
@@ -121,28 +121,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": 452381352,
                   "converged": true,
-                  "elapsed_ns": 3593070983,
+                  "elapsed_ns": 3602763891,
                   "iterations": 8,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": 1796373776,
                   "converged": true,
-                  "elapsed_ns": 20708292007,
+                  "elapsed_ns": 20750443935,
                   "iterations": 8,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": 1682082,
                   "converged": true,
-                  "elapsed_ns": 71051120,
+                  "elapsed_ns": 70053815,
                   "iterations": 1,
                   "rank": 299
                 },
                 "ridge_regression": {
                   "allocated_words": 2942710,
                   "converged": true,
-                  "elapsed_ns": 274487018,
+                  "elapsed_ns": 257962942,
                   "iterations": 1,
                   "rank": 400
                 }
@@ -157,28 +157,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": 46886146,
                   "converged": true,
-                  "elapsed_ns": 314678192,
+                  "elapsed_ns": 295058965,
                   "iterations": 10,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": 179662126,
                   "converged": true,
-                  "elapsed_ns": 1177356958,
+                  "elapsed_ns": 1199635028,
                   "iterations": 10,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": 1870361,
                   "converged": true,
-                  "elapsed_ns": 16954898,
+                  "elapsed_ns": 17014980,
                   "iterations": 1,
                   "rank": 16
                 },
                 "ridge_regression": {
                   "allocated_words": 2154282,
                   "converged": true,
-                  "elapsed_ns": 18945932,
+                  "elapsed_ns": 19639015,
                   "iterations": 1,
                   "rank": 24
                 }
@@ -242,8 +242,8 @@
         }
       },
       {
-        "elapsed_ns": 58915569167,
-        "peak_rss_bytes": 76103680,
+        "elapsed_ns": 59171909125,
+        "peak_rss_bytes": 72990720,
         "worker": {
           "allocated_words": 7210618855,
           "checksum": "745c36cd687a6f7c09ab497d392b968c",
@@ -262,28 +262,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": 79932641,
                   "converged": true,
-                  "elapsed_ns": 512130022,
+                  "elapsed_ns": 508829832,
                   "iterations": 11,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": 461065804,
                   "converged": true,
-                  "elapsed_ns": 2247272014,
+                  "elapsed_ns": 2272824048,
                   "iterations": 12,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": 6320261,
                   "converged": true,
-                  "elapsed_ns": 36144018,
+                  "elapsed_ns": 36597013,
                   "iterations": 1,
                   "rank": 8
                 },
                 "ridge_regression": {
                   "allocated_words": 6320834,
                   "converged": true,
-                  "elapsed_ns": 35470008,
+                  "elapsed_ns": 35747051,
                   "iterations": 1,
                   "rank": 8
                 }
@@ -298,28 +298,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": 777716785,
                   "converged": true,
-                  "elapsed_ns": 4808313131,
+                  "elapsed_ns": 4885591983,
                   "iterations": 9,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": 3338053496,
                   "converged": true,
-                  "elapsed_ns": 24317848920,
+                  "elapsed_ns": 24577641963,
                   "iterations": 9,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": 6750661,
                   "converged": true,
-                  "elapsed_ns": 254456996,
+                  "elapsed_ns": 237448930,
                   "iterations": 1,
                   "rank": 200
                 },
                 "ridge_regression": {
                   "allocated_words": 7072066,
                   "converged": true,
-                  "elapsed_ns": 278637886,
+                  "elapsed_ns": 266474962,
                   "iterations": 1,
                   "rank": 200
                 }
@@ -334,28 +334,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": 452381352,
                   "converged": true,
-                  "elapsed_ns": 3595946788,
+                  "elapsed_ns": 3590525150,
                   "iterations": 8,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": 1796373776,
                   "converged": true,
-                  "elapsed_ns": 20780851840,
+                  "elapsed_ns": 20698608875,
                   "iterations": 8,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": 1682082,
                   "converged": true,
-                  "elapsed_ns": 71804046,
+                  "elapsed_ns": 69199085,
                   "iterations": 1,
                   "rank": 299
                 },
                 "ridge_regression": {
                   "allocated_words": 2942710,
                   "converged": true,
-                  "elapsed_ns": 272206068,
+                  "elapsed_ns": 258062839,
                   "iterations": 1,
                   "rank": 400
                 }
@@ -370,28 +370,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": 46886146,
                   "converged": true,
-                  "elapsed_ns": 286214828,
+                  "elapsed_ns": 292308092,
                   "iterations": 10,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": 179662126,
                   "converged": true,
-                  "elapsed_ns": 1187988996,
+                  "elapsed_ns": 1201114177,
                   "iterations": 10,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": 1870361,
                   "converged": true,
-                  "elapsed_ns": 17243862,
+                  "elapsed_ns": 17032146,
                   "iterations": 1,
                   "rank": 16
                 },
                 "ridge_regression": {
                   "allocated_words": 2154282,
                   "converged": true,
-                  "elapsed_ns": 19313097,
+                  "elapsed_ns": 20249128,
                   "iterations": 1,
                   "rank": 24
                 }
@@ -455,8 +455,8 @@
         }
       },
       {
-        "elapsed_ns": 59010607917,
-        "peak_rss_bytes": 73285632,
+        "elapsed_ns": 59623831583,
+        "peak_rss_bytes": 100057088,
         "worker": {
           "allocated_words": 7210618855,
           "checksum": "745c36cd687a6f7c09ab497d392b968c",
@@ -475,28 +475,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": 79932641,
                   "converged": true,
-                  "elapsed_ns": 511185884,
+                  "elapsed_ns": 509037017,
                   "iterations": 11,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": 461065804,
                   "converged": true,
-                  "elapsed_ns": 2261489152,
+                  "elapsed_ns": 2273400068,
                   "iterations": 12,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": 6320261,
                   "converged": true,
-                  "elapsed_ns": 36952018,
+                  "elapsed_ns": 36651849,
                   "iterations": 1,
                   "rank": 8
                 },
                 "ridge_regression": {
                   "allocated_words": 6320834,
                   "converged": true,
-                  "elapsed_ns": 36276817,
+                  "elapsed_ns": 35794973,
                   "iterations": 1,
                   "rank": 8
                 }
@@ -511,28 +511,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": 777716785,
                   "converged": true,
-                  "elapsed_ns": 4814157962,
+                  "elapsed_ns": 4847671985,
                   "iterations": 9,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": 3338053496,
                   "converged": true,
-                  "elapsed_ns": 24368597030,
+                  "elapsed_ns": 24925713062,
                   "iterations": 9,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": 6750661,
                   "converged": true,
-                  "elapsed_ns": 255900859,
+                  "elapsed_ns": 239356994,
                   "iterations": 1,
                   "rank": 200
                 },
                 "ridge_regression": {
                   "allocated_words": 7072066,
                   "converged": true,
-                  "elapsed_ns": 280457019,
+                  "elapsed_ns": 264853954,
                   "iterations": 1,
                   "rank": 200
                 }
@@ -547,28 +547,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": 452381352,
                   "converged": true,
-                  "elapsed_ns": 3598228931,
+                  "elapsed_ns": 3599025964,
                   "iterations": 8,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": 1796373776,
                   "converged": true,
-                  "elapsed_ns": 20798076152,
+                  "elapsed_ns": 20773437023,
                   "iterations": 8,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": 1682082,
                   "converged": true,
-                  "elapsed_ns": 71312904,
+                  "elapsed_ns": 69252967,
                   "iterations": 1,
                   "rank": 299
                 },
                 "ridge_regression": {
                   "allocated_words": 2942710,
                   "converged": true,
-                  "elapsed_ns": 272770166,
+                  "elapsed_ns": 259598970,
                   "iterations": 1,
                   "rank": 400
                 }
@@ -583,28 +583,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": 46886146,
                   "converged": true,
-                  "elapsed_ns": 287760019,
+                  "elapsed_ns": 297388076,
                   "iterations": 10,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": 179662126,
                   "converged": true,
-                  "elapsed_ns": 1181708097,
+                  "elapsed_ns": 1253315925,
                   "iterations": 10,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": 1870361,
                   "converged": true,
-                  "elapsed_ns": 17140865,
+                  "elapsed_ns": 17287969,
                   "iterations": 1,
                   "rank": 16
                 },
                 "ridge_regression": {
                   "allocated_words": 2154282,
                   "converged": true,
-                  "elapsed_ns": 19100904,
+                  "elapsed_ns": 19555091,
                   "iterations": 1,
                   "rank": 24
                 }
@@ -670,8 +670,8 @@
     ],
     "sklearn": [
       {
-        "elapsed_ns": 1287681792,
-        "peak_rss_bytes": 191447040,
+        "elapsed_ns": 1649088041,
+        "peak_rss_bytes": 205799424,
         "worker": {
           "allocated_words": null,
           "checksum": "429de6ab1b84df38eb50d64b0fa92fb74459b1f653e222fa842ba7120d2f08d0",
@@ -689,28 +689,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 19762291,
+                  "elapsed_ns": 20523167,
                   "iterations": 11,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 70383333,
+                  "elapsed_ns": 68930334,
                   "iterations": 11,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 5360375,
+                  "elapsed_ns": 6460208,
                   "iterations": 0,
                   "rank": 8
                 },
                 "ridge_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 2326083,
+                  "elapsed_ns": 2395208,
                   "iterations": 0,
                   "rank": null
                 }
@@ -725,28 +725,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 15524834,
+                  "elapsed_ns": 15919208,
                   "iterations": 8,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 104896625,
+                  "elapsed_ns": 107352333,
                   "iterations": 9,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 14364000,
+                  "elapsed_ns": 13963375,
                   "iterations": 0,
                   "rank": 200
                 },
                 "ridge_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 2597375,
+                  "elapsed_ns": 2396250,
                   "iterations": 0,
                   "rank": null
                 }
@@ -761,28 +761,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 23121875,
+                  "elapsed_ns": 23789500,
                   "iterations": 8,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 235345083,
+                  "elapsed_ns": 247602875,
                   "iterations": 8,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 10823916,
+                  "elapsed_ns": 10801250,
                   "iterations": 0,
                   "rank": 299
                 },
                 "ridge_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 1691875,
+                  "elapsed_ns": 1645041,
                   "iterations": 0,
                   "rank": null
                 }
@@ -797,28 +797,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 4341792,
+                  "elapsed_ns": 4388625,
                   "iterations": 10,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 14989250,
+                  "elapsed_ns": 16743416,
                   "iterations": 10,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 2235834,
+                  "elapsed_ns": 2651000,
                   "iterations": 0,
                   "rank": 16
                 },
                 "ridge_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 823625,
+                  "elapsed_ns": 913750,
                   "iterations": 0,
                   "rank": null
                 }
@@ -882,8 +882,8 @@
         }
       },
       {
-        "elapsed_ns": 1281727291,
-        "peak_rss_bytes": 183304192,
+        "elapsed_ns": 1285929750,
+        "peak_rss_bytes": 203210752,
         "worker": {
           "allocated_words": null,
           "checksum": "429de6ab1b84df38eb50d64b0fa92fb74459b1f653e222fa842ba7120d2f08d0",
@@ -901,28 +901,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 19532416,
+                  "elapsed_ns": 19971792,
                   "iterations": 11,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 66772125,
+                  "elapsed_ns": 68924542,
                   "iterations": 11,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 5266958,
+                  "elapsed_ns": 5486125,
                   "iterations": 0,
                   "rank": 8
                 },
                 "ridge_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 2294625,
+                  "elapsed_ns": 3149291,
                   "iterations": 0,
                   "rank": null
                 }
@@ -937,28 +937,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 14323709,
+                  "elapsed_ns": 14928000,
                   "iterations": 8,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 104530500,
+                  "elapsed_ns": 106242625,
                   "iterations": 9,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 14033667,
+                  "elapsed_ns": 14246208,
                   "iterations": 0,
                   "rank": 200
                 },
                 "ridge_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 2344666,
+                  "elapsed_ns": 2411459,
                   "iterations": 0,
                   "rank": null
                 }
@@ -973,28 +973,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 22349333,
+                  "elapsed_ns": 23543000,
                   "iterations": 8,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 231031875,
+                  "elapsed_ns": 235052584,
                   "iterations": 8,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 10810291,
+                  "elapsed_ns": 10691333,
                   "iterations": 0,
                   "rank": 299
                 },
                 "ridge_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 1690625,
+                  "elapsed_ns": 1600875,
                   "iterations": 0,
                   "rank": null
                 }
@@ -1009,28 +1009,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 3892125,
+                  "elapsed_ns": 4265708,
                   "iterations": 10,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 12572083,
+                  "elapsed_ns": 14031125,
                   "iterations": 10,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 2225084,
+                  "elapsed_ns": 2569875,
                   "iterations": 0,
                   "rank": 16
                 },
                 "ridge_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 776417,
+                  "elapsed_ns": 857792,
                   "iterations": 0,
                   "rank": null
                 }
@@ -1094,8 +1094,8 @@
         }
       },
       {
-        "elapsed_ns": 1320600917,
-        "peak_rss_bytes": 217006080,
+        "elapsed_ns": 1662702417,
+        "peak_rss_bytes": 199639040,
         "worker": {
           "allocated_words": null,
           "checksum": "429de6ab1b84df38eb50d64b0fa92fb74459b1f653e222fa842ba7120d2f08d0",
@@ -1113,28 +1113,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 20082042,
+                  "elapsed_ns": 25189250,
                   "iterations": 11,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 68076208,
+                  "elapsed_ns": 69710292,
                   "iterations": 11,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 5618125,
+                  "elapsed_ns": 7031041,
                   "iterations": 0,
                   "rank": 8
                 },
                 "ridge_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 2284917,
+                  "elapsed_ns": 2564292,
                   "iterations": 0,
                   "rank": null
                 }
@@ -1149,28 +1149,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 15413625,
+                  "elapsed_ns": 14884584,
                   "iterations": 8,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 109850833,
+                  "elapsed_ns": 108341417,
                   "iterations": 9,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 14700084,
+                  "elapsed_ns": 14294667,
                   "iterations": 0,
                   "rank": 200
                 },
                 "ridge_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 2818000,
+                  "elapsed_ns": 2501792,
                   "iterations": 0,
                   "rank": null
                 }
@@ -1185,28 +1185,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 22637000,
+                  "elapsed_ns": 23477833,
                   "iterations": 8,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 239111375,
+                  "elapsed_ns": 239924375,
                   "iterations": 8,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 10825375,
+                  "elapsed_ns": 10705917,
                   "iterations": 0,
                   "rank": 299
                 },
                 "ridge_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 1671125,
+                  "elapsed_ns": 1658083,
                   "iterations": 0,
                   "rank": null
                 }
@@ -1221,28 +1221,28 @@
                 "binary_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 4436958,
+                  "elapsed_ns": 4157917,
                   "iterations": 10,
                   "rank": null
                 },
                 "multinomial_logistic_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 17886875,
+                  "elapsed_ns": 14630292,
                   "iterations": 10,
                   "rank": null
                 },
                 "ordinary_least_squares": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 2437250,
+                  "elapsed_ns": 2155084,
                   "iterations": 0,
                   "rank": 16
                 },
                 "ridge_regression": {
                   "allocated_words": null,
                   "converged": true,
-                  "elapsed_ns": 920500,
+                  "elapsed_ns": 793250,
                   "iterations": 0,
                   "rank": null
                 }
