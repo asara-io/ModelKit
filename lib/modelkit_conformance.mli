@@ -1,4 +1,5 @@
 open Modelkit_data
+open Modelkit_metadata
 open Modelkit_protocols
 
 (** Framework-neutral protocol checks for third-party components.
@@ -36,6 +37,31 @@ module Conformance : sig
 
     val check :
       (module ESTIMATOR
+         with type t = 'specification
+          and type params = 'params
+          and type target = 'target
+          and type prediction = 'prediction
+          and type fitted = 'fitted
+          and type rng = 'rng) ->
+      ('specification, 'params, 'target, 'prediction, 'fitted, 'rng) fixture ->
+      report
+  end
+
+  module Metadata_estimator : sig
+    type ('specification, 'params, 'target, 'prediction, 'fitted, 'rng) fixture = {
+      specification : 'specification;
+      rng : unit -> 'rng;
+      feature_schema : Feature_schema.t;
+      x : Matrix.t;
+      y : 'target;
+      metadata : Metadata.t;
+      equal_params : 'params -> 'params -> bool;
+      prediction_length : 'prediction -> int;
+      equal_prediction : 'prediction -> 'prediction -> bool;
+    }
+
+    val check :
+      (module METADATA_ESTIMATOR
          with type t = 'specification
           and type params = 'params
           and type target = 'target

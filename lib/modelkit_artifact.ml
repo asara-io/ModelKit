@@ -57,6 +57,23 @@ module Artifact = struct
 
   let current_producer_version = "0.5.0-dev"
 
+  let modelkit_provenance ?(version = current_producer_version) implementation =
+    Pipeline.provenance ~package:"modelkit" ~version ~implementation
+
+  let transformer_implementation encoded =
+    match encoded.Pipeline.component_tag with
+    | 1 -> Ok "Simple_imputer"
+    | 2 -> Ok "Standard_scaler"
+    | 3 -> Ok "Variance_threshold"
+    | _ -> failure ~operation:"decode" "unknown transformer component tag"
+
+  let estimator_implementation encoded =
+    match encoded.Pipeline.component_tag with
+    | 16 -> Ok "Linear_regression"
+    | 17 -> Ok "Ridge_regression"
+    | 18 -> Ok "Logistic_regression"
+    | _ -> failure ~operation:"decode" "unknown estimator component tag"
+
   let limits ?(max_bytes = default_limits.max_bytes)
       ?(max_components = default_limits.max_components)
       ?(max_features = default_limits.max_features)
@@ -552,7 +569,8 @@ module Artifact = struct
     Ok (component 18 (Writer.contents writer))
 
   let simple_imputer_stage ~name specification =
-    Pipeline.transformer_internal ~encode:encode_simple_imputer
+    let* provenance = modelkit_provenance "Simple_imputer" in
+    Pipeline.transformer_internal ~encode:encode_simple_imputer ~provenance
       ~cache_codec:
         (Modelkit_transform_cache.Transform_cache.Codec.of_module
            (module Simple_imputer))
@@ -561,7 +579,8 @@ module Artifact = struct
       specification
 
   let standard_scaler_stage ?route_sample_weight ~name specification =
-    Pipeline.transformer_internal ~encode:encode_standard_scaler
+    let* provenance = modelkit_provenance "Standard_scaler" in
+    Pipeline.transformer_internal ~encode:encode_standard_scaler ~provenance
       ~cache_codec:
         (Modelkit_transform_cache.Transform_cache.Codec.of_module
            (module Standard_scaler))
@@ -570,22 +589,29 @@ module Artifact = struct
       specification
 
   let variance_threshold_stage ~name specification =
-    Pipeline.transformer_internal ~encode:encode_variance_threshold ~name
+    let* provenance = modelkit_provenance "Variance_threshold" in
+    Pipeline.transformer_internal ~encode:encode_variance_threshold ~provenance
+      ~name
       (module Variance_threshold)
       specification
 
   let linear_regression_estimator ~name specification =
-    Pipeline.estimator_internal ~encode:encode_linear_regression ~name
+    let* provenance = modelkit_provenance "Linear_regression" in
+    Pipeline.estimator_internal ~encode:encode_linear_regression ~provenance
+      ~name
       (module Linear_regression)
       specification
 
   let ridge_regression_estimator ~name specification =
-    Pipeline.estimator_internal ~encode:encode_ridge_regression ~name
+    let* provenance = modelkit_provenance "Ridge_regression" in
+    Pipeline.estimator_internal ~encode:encode_ridge_regression ~provenance
+      ~name
       (module Ridge_regression)
       specification
 
   let logistic_regression_estimator ?class_weight ~name specification =
-    Pipeline.classifier_internal ~encode:encode_logistic_regression
+    let* provenance = modelkit_provenance "Logistic_regression" in
+    Pipeline.classifier_internal ~encode:encode_logistic_regression ~provenance
       ?class_weight ~name
       (module Logistic_regression)
       ~decision_function:Logistic_regression.decision_function
@@ -833,6 +859,7 @@ module Artifact = struct
               apply_transform =
                 (fun ~metadata:_ -> Simple_imputer.transform fitted);
               fitted_transform_metadata_check = (fun _ -> Ok ());
+              transformer_provenance = None;
               encode_transformer = Some (fun () -> encode_simple_imputer fitted);
             }
     | 2 ->
@@ -875,6 +902,7 @@ module Artifact = struct
               apply_transform =
                 (fun ~metadata:_ -> Standard_scaler.transform fitted);
               fitted_transform_metadata_check = (fun _ -> Ok ());
+              transformer_provenance = None;
               encode_transformer =
                 Some (fun () -> encode_standard_scaler fitted);
             }
@@ -932,6 +960,7 @@ module Artifact = struct
                 apply_transform =
                   (fun ~metadata:_ -> Variance_threshold.transform fitted);
                 fitted_transform_metadata_check = (fun _ -> Ok ());
+                transformer_provenance = None;
                 encode_transformer =
                   Some (fun () -> encode_variance_threshold fitted);
               }
@@ -978,6 +1007,7 @@ module Artifact = struct
           terminal_decision_function = None;
           terminal_predict_proba = None;
           terminal_classes = None;
+          estimator_provenance = None;
           encode_estimator = Some (fun () -> encode_ridge_regression fitted);
         }
     else
@@ -997,6 +1027,7 @@ module Artifact = struct
           terminal_decision_function = None;
           terminal_predict_proba = None;
           terminal_classes = None;
+          estimator_provenance = None;
           encode_estimator = Some (fun () -> encode_linear_regression fitted);
         }
 
@@ -1064,6 +1095,7 @@ module Artifact = struct
               Some (Logistic_regression.predict_proba fitted);
             terminal_classes =
               Some (fun () -> Logistic_regression.classes fitted);
+            estimator_provenance = None;
             encode_estimator =
               Some (fun () -> encode_logistic_regression fitted);
           }
@@ -1148,6 +1180,16 @@ module Artifact = struct
             decode_transformer ~limits ~name ~input_schema ~output_schema
               encoded
           in
+          let* implementation = transformer_implementation encoded in
+          let* provenance =
+            modelkit_provenance ~version:producer_version implementation
+          in
+          let transformer =
+            {
+              transformer with
+              Pipeline.transformer_provenance = Some provenance;
+            }
+          in
           transformers.(index) <- Some transformer;
           read_transformer (index + 1) output_schema)
     in
@@ -1165,6 +1207,16 @@ module Artifact = struct
         else
           decode_estimator ~limits ~name:terminal_name
             ~schema:pipeline_output_schema encoded
+      in
+      let* implementation = estimator_implementation encoded in
+      let* provenance =
+        modelkit_provenance ~version:producer_version implementation
+      in
+      let fitted_estimator =
+        {
+          fitted_estimator with
+          Pipeline.estimator_provenance = Some provenance;
+        }
       in
       let* () = Reader.finish reader in
       let fitted_transformers =

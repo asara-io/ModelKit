@@ -952,6 +952,31 @@ module Conformance : sig
       report
   end
 
+  module Metadata_estimator : sig
+    type ('specification, 'params, 'target, 'prediction, 'fitted, 'rng) fixture = {
+      specification : 'specification;
+      rng : unit -> 'rng;
+      feature_schema : Feature_schema.t;
+      x : Matrix.t;
+      y : 'target;
+      metadata : Metadata.t;
+      equal_params : 'params -> 'params -> bool;
+      prediction_length : 'prediction -> int;
+      equal_prediction : 'prediction -> 'prediction -> bool;
+    }
+
+    val check :
+      (module METADATA_ESTIMATOR
+         with type t = 'specification
+          and type params = 'params
+          and type target = 'target
+          and type prediction = 'prediction
+          and type fitted = 'fitted
+          and type rng = 'rng) ->
+      ('specification, 'params, 'target, 'prediction, 'fitted, 'rng) fixture ->
+      report
+  end
+
   module Transformer : sig
     type ('specification, 'params, 'target, 'fitted, 'rng) fixture = {
       specification : 'specification;
@@ -1893,7 +1918,37 @@ module Pipeline : sig
   type ('target, 'prediction) fitted
   type capabilities = { decision_function : bool; predict_proba : bool }
 
+  type provenance
+  (** Identity supplied by a component package. Provenance describes code that
+      produced fitted state; it does not grant artifact serialization support.
+  *)
+
+  val provenance :
+    package:string ->
+    version:string ->
+    implementation:string ->
+    (provenance, Error.t) result
+
+  val provenance_package : provenance -> string
+  val provenance_version : provenance -> string
+  val provenance_implementation : provenance -> string
+
+  (** [Portable_artifact] means a reviewed data-only ModelKit codec is attached
+      to that fitted component. *)
+  type serialization_support = Portable_artifact | Unsupported
+
+  type component_report = {
+    component_name : string;
+    provenance : provenance option;
+    serialization_support : serialization_support;
+  }
+  (** Artifact support and optional producer identity for one fitted component.
+  *)
+
+  type artifact_report
+
   val metadata_transformer :
+    ?provenance:provenance ->
     name:string ->
     (module METADATA_TRANSFORMER
        with type t = 'specification
@@ -1908,6 +1963,7 @@ module Pipeline : sig
 
   val transformer :
     ?route_sample_weight:bool ->
+    ?provenance:provenance ->
     name:string ->
     (module TRANSFORMER
        with type t = 'specification
@@ -1923,6 +1979,7 @@ module Pipeline : sig
 
   val cacheable_transformer :
     ?route_sample_weight:bool ->
+    ?provenance:provenance ->
     name:string ->
     (module Transform_cache.CACHEABLE_TRANSFORMER
        with type t = 'specification
@@ -1937,6 +1994,7 @@ module Pipeline : sig
       does not cache terminal estimators or transformed matrices. *)
 
   val metadata_estimator :
+    ?provenance:provenance ->
     name:string ->
     (module METADATA_ESTIMATOR
        with type t = 'specification
@@ -1962,6 +2020,7 @@ module Pipeline : sig
       needed, belongs to the consumer. No artifact codec is supplied. *)
 
   val estimator :
+    ?provenance:provenance ->
     name:string ->
     (module ESTIMATOR
        with type t = 'specification
@@ -1988,6 +2047,7 @@ module Pipeline : sig
 
   val classifier :
     ?class_weight:Class_weight.t ->
+    ?provenance:provenance ->
     name:string ->
     (module ESTIMATOR
        with type t = 'specification
@@ -2108,6 +2168,15 @@ module Pipeline : sig
   val transformer_names : ('target, 'prediction) t -> string array
   val estimator_name : ('target, 'prediction) t -> string
   val capabilities : ('target, 'prediction) t -> capabilities
+
+  val artifact_report : ('target, 'prediction) fitted -> artifact_report
+  (** Reports component provenance and whether every fitted component has a
+      reviewed portable artifact codec. An unsupported component may still be
+      fitted and used normally; artifact encoding returns a typed error. *)
+
+  val artifact_transformers : artifact_report -> component_report array
+  val artifact_estimator : artifact_report -> component_report
+  val portable_artifact_supported : artifact_report -> bool
 
   val fit_with_metadata :
     ('target, 'prediction) t ->

@@ -1,4 +1,5 @@
 open Modelkit_data
+open Modelkit_metadata
 open Modelkit_protocols
 
 module Conformance = struct
@@ -107,6 +108,100 @@ module Conformance = struct
                         (Implementation.clone fixture.specification)))
                   "clone changed the training parameters");
             run "fit accepts the valid fixture" (fun () ->
+                protocol (Lazy.force fitted) |> Result.map (fun _ -> ()));
+            run "fitted parameters match the specification" (fun () ->
+                let ( let* ) = Result.bind in
+                let* fitted = protocol (Lazy.force fitted) in
+                require
+                  (fixture.equal_params
+                     (Implementation.params fixture.specification)
+                     (Implementation.fitted_params fitted))
+                  "fitted_params differs from the admitted specification");
+            run "fitted schema matches the training schema" (fun () ->
+                let ( let* ) = Result.bind in
+                let* fitted = protocol (Lazy.force fitted) in
+                require
+                  (Feature_schema.equal fixture.feature_schema
+                     (Implementation.feature_schema fitted))
+                  "feature_schema differs from the training schema");
+            run "prediction preserves row count" (fun () ->
+                let ( let* ) = Result.bind in
+                let* prediction = protocol (predict ()) in
+                require
+                  (fixture.prediction_length prediction = Matrix.rows fixture.x)
+                  "predict returned a different number of rows");
+            run "repeated prediction is deterministic" (fun () ->
+                let ( let* ) = Result.bind in
+                let* first = protocol (predict ()) in
+                let* second = protocol (predict ()) in
+                require
+                  (fixture.equal_prediction first second)
+                  "repeated prediction returned different values");
+          |];
+      }
+  end
+
+  module Metadata_estimator = struct
+    type ('specification, 'params, 'target, 'prediction, 'fitted, 'rng) fixture = {
+      specification : 'specification;
+      rng : unit -> 'rng;
+      feature_schema : Feature_schema.t;
+      x : Matrix.t;
+      y : 'target;
+      metadata : Metadata.t;
+      equal_params : 'params -> 'params -> bool;
+      prediction_length : 'prediction -> int;
+      equal_prediction : 'prediction -> 'prediction -> bool;
+    }
+
+    let check (type specification params target prediction fitted rng)
+        (module Implementation : METADATA_ESTIMATOR
+          with type t = specification
+           and type params = params
+           and type target = target
+           and type prediction = prediction
+           and type fitted = fitted
+           and type rng = rng)
+        (fixture :
+          (specification, params, target, prediction, fitted, rng) fixture) =
+      let request = Implementation.fit_request fixture.specification in
+      let validate_metadata () =
+        let ( let* ) = Result.bind in
+        let* () =
+          Metadata.validate ~rows:(Matrix.rows fixture.x) fixture.metadata
+        in
+        Metadata.validate_request request fixture.metadata
+      in
+      let fit () =
+        let ( let* ) = Result.bind in
+        let* () = validate_metadata () in
+        Metadata.consume ~name:"conformance estimator"
+          ~operation:Modelkit_callback.Callback.Fit request fixture.metadata
+          (fun metadata ->
+            Implementation.fit fixture.specification ~metadata
+              ~rng:(fixture.rng ()) ~feature_schema:fixture.feature_schema
+              ~x:fixture.x ~y:fixture.y ())
+      in
+      let fitted = lazy (fit ()) in
+      let predict () =
+        let ( let* ) = Result.bind in
+        let* fitted = Lazy.force fitted in
+        Implementation.predict fitted ~feature_schema:fixture.feature_schema
+          ~x:fixture.x
+      in
+      {
+        report_checks =
+          [|
+            run "clone preserves parameters" (fun () ->
+                require
+                  (fixture.equal_params
+                     (Implementation.params fixture.specification)
+                     (Implementation.params
+                        (Implementation.clone fixture.specification)))
+                  "clone changed the training parameters");
+            run "fit request accepts the valid fixture" (fun () ->
+                protocol (validate_metadata ()));
+            run "fit accepts routed metadata" (fun () ->
                 protocol (Lazy.force fitted) |> Result.map (fun _ -> ()));
             run "fitted parameters match the specification" (fun () ->
                 let ( let* ) = Result.bind in

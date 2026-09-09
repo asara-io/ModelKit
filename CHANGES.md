@@ -1,5 +1,11 @@
 # 0.5.0-dev (unreleased)
 
+- Publish the third-party estimator authoring guide, metadata-aware conformance
+  checks, component provenance, and explicit fitted-pipeline artifact-support
+  reports. A separately built public-only consumer participates unchanged in
+  nested composition, metadata routing, parallel cross-validation, and
+  randomized search; external codecs remain opt-in reviewed work and unsupported
+  encoding returns a typed error.
 - Add candidate-boundary search checkpoints with partial evaluation reports,
   bounded data-only serialization, full data/split/configuration identity checks,
   and deterministic resumption across process restarts and execution backends.

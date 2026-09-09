@@ -7,6 +7,25 @@ module Transform_cache = Modelkit_transform_cache.Transform_cache
 module Pipeline = struct
   type capabilities = { decision_function : bool; predict_proba : bool }
 
+  type provenance = {
+    package : string;
+    version : string;
+    implementation : string;
+  }
+
+  type serialization_support = Portable_artifact | Unsupported
+
+  type component_report = {
+    component_name : string;
+    provenance : provenance option;
+    serialization_support : serialization_support;
+  }
+
+  type artifact_report = {
+    artifact_transformer_reports : component_report array;
+    artifact_estimator_report : component_report;
+  }
+
   type encoded_component = {
     component_tag : int;
     component_version : int;
@@ -23,6 +42,7 @@ module Pipeline = struct
       feature_schema:Feature_schema.t ->
       x:Matrix.t ->
       (Matrix.t, Error.t) result;
+    transformer_provenance : provenance option;
     encode_transformer : (unit -> (encoded_component, Error.t) result) option;
   }
 
@@ -78,6 +98,7 @@ module Pipeline = struct
       (Matrix.t, Error.t) result)
       option;
     terminal_classes : (unit -> int array) option;
+    estimator_provenance : provenance option;
     encode_estimator : (unit -> (encoded_component, Error.t) result) option;
   }
 
@@ -120,6 +141,24 @@ module Pipeline = struct
            ~reason:"must not be blank"
            ~remediation:"choose a non-empty stage name")
     else Ok ()
+
+  let provenance ~package ~version ~implementation =
+    let validate field value =
+      if String.trim value = "" then
+        Error
+          (validation_error ~name:("provenance " ^ field)
+             ~reason:"must not be blank"
+             ~remediation:("supply the component " ^ field))
+      else Ok ()
+    in
+    let* () = validate "package" package in
+    let* () = validate "version" version in
+    let* () = validate "implementation" implementation in
+    Ok { package; version; implementation }
+
+  let provenance_package provenance = provenance.package
+  let provenance_version provenance = provenance.version
+  let provenance_implementation provenance = provenance.implementation
 
   let duplicate_name name =
     validation_error ~name:"pipeline stage names"
@@ -201,7 +240,7 @@ module Pipeline = struct
           |]
 
   let fit_transformer (type specification target fitted) ?encode ?cache_codec
-      ~route_sample_weight ~name
+      ?provenance ~route_sample_weight ~name
       (module Transformer : TRANSFORMER
         with type t = specification
          and type target = target
@@ -224,6 +263,7 @@ module Pipeline = struct
           transform_output_schema = output_schema;
           fitted_transform_metadata_check = (fun _ -> Ok ());
           apply_transform = (fun ~metadata:_ -> Transformer.transform fitted);
+          transformer_provenance = provenance;
           encode_transformer =
             Option.map (fun encode () -> encode fitted) encode;
         }
@@ -273,11 +313,11 @@ module Pipeline = struct
         | Transform_cache.Store.Hit payload -> recover_hit payload)
 
   let transformer_internal ?encode ?cache_codec ?(route_sample_weight = false)
-      ~name transformer specification =
+      ?provenance ~name transformer specification =
     let* () = validate_name name in
     let fit_transform ~cache ~metadata ~rng ~feature_schema ~x =
-      fit_transformer ?encode ?cache_codec ~route_sample_weight ~name
-        transformer specification
+      fit_transformer ?encode ?cache_codec ?provenance ~route_sample_weight
+        ~name transformer specification
         ~sample_weight:(Metadata.sample_weight metadata)
         ~cache ~rng ~feature_schema ~x ~y:None ~target_identity:None
     in
@@ -293,11 +333,13 @@ module Pipeline = struct
         transformer_transform_metadata_check = (fun _ -> Ok ());
       }
 
-  let transformer ?route_sample_weight ~name transformer specification =
-    transformer_internal ?route_sample_weight ~name transformer specification
+  let transformer ?route_sample_weight ?provenance ~name transformer
+      specification =
+    transformer_internal ?route_sample_weight ?provenance ~name transformer
+      specification
 
   let cacheable_transformer (type specification params fitted)
-      ?route_sample_weight ~name
+      ?route_sample_weight ?provenance ~name
       (module Transformer : Transform_cache.CACHEABLE_TRANSFORMER
         with type t = specification
          and type params = params
@@ -305,11 +347,13 @@ module Pipeline = struct
          and type fitted = fitted
          and type rng = Rng.t) specification =
     let codec = Transform_cache.Codec.of_module (module Transformer) in
-    transformer_internal ?route_sample_weight ~cache_codec:codec ~name
+    transformer_internal ?route_sample_weight ?provenance ~cache_codec:codec
+      ~name
       (module Transformer)
       specification
 
-  let package_metadata_transformer (type specification target fitted) ~name
+  let package_metadata_transformer (type specification target fitted)
+      ?provenance ~name
       (module Transformer : METADATA_TRANSFORMER
         with type t = specification
          and type target = target
@@ -350,6 +394,7 @@ module Pipeline = struct
           transform_output_schema = output_schema;
           apply_transform;
           fitted_transform_metadata_check = validate_transform_metadata;
+          transformer_provenance = provenance;
           encode_transformer = None;
         }
       in
@@ -357,10 +402,10 @@ module Pipeline = struct
     in
     (validate_fit_metadata, validate_transform_metadata, fit_transform)
 
-  let metadata_transformer ~name transformer specification =
+  let metadata_transformer ?provenance ~name transformer specification =
     let* () = validate_name name in
     let validate_fit_metadata, validate_transform_metadata, fit =
-      package_metadata_transformer ~name transformer specification
+      package_metadata_transformer ?provenance ~name transformer specification
     in
     let fit_transform ~cache:_ ~metadata ~rng ~feature_schema ~x =
       fit ~metadata ~rng ~feature_schema ~x ~y:None
@@ -374,8 +419,9 @@ module Pipeline = struct
         fit_transform;
       }
 
-  let package_fitted_estimator ?encode ~name ~expected_schema ~fitted_schema
-      ~predict ?decision_function ?predict_proba ?classes fitted =
+  let package_fitted_estimator ?encode ?provenance ~name ~expected_schema
+      ~fitted_schema ~predict ?decision_function ?predict_proba ?classes fitted
+      =
     let* () =
       validate_fitted_schema ~stage:name ~expected:expected_schema fitted_schema
     in
@@ -389,11 +435,12 @@ module Pipeline = struct
           Option.map (fun dispatch -> dispatch fitted) predict_proba;
         terminal_classes =
           Option.map (fun dispatch () -> dispatch fitted) classes;
+        estimator_provenance = provenance;
         encode_estimator = Option.map (fun encode () -> encode fitted) encode;
       }
 
   let estimator_internal (type specification target prediction fitted) ?encode
-      ?resolve_weights ~name
+      ?resolve_weights ?provenance ~name
       (module Estimator : ESTIMATOR
         with type t = specification
          and type target = target
@@ -418,7 +465,8 @@ module Pipeline = struct
       let* fitted =
         Estimator.fit specification ?sample_weight ~rng ~feature_schema ~x ~y ()
       in
-      package_fitted_estimator ?encode ~name ~expected_schema:feature_schema
+      package_fitted_estimator ?encode ?provenance ~name
+        ~expected_schema:feature_schema
         ~fitted_schema:(Estimator.feature_schema fitted)
         ~predict:Estimator.predict ?decision_function ?predict_proba ?classes
         fitted
@@ -431,7 +479,8 @@ module Pipeline = struct
         estimator_fit_metadata_check = (fun _ -> Ok ());
       }
 
-  let metadata_estimator (type specification target prediction fitted) ~name
+  let metadata_estimator (type specification target prediction fitted)
+      ?provenance ~name
       (module Estimator : METADATA_ESTIMATOR
         with type t = specification
          and type target = target
@@ -453,7 +502,7 @@ module Pipeline = struct
           (fun metadata ->
             Estimator.fit specification ~metadata ~rng ~feature_schema ~x ~y ())
       in
-      package_fitted_estimator ~name ~expected_schema:feature_schema
+      package_fitted_estimator ?provenance ~name ~expected_schema:feature_schema
         ~fitted_schema:(Estimator.feature_schema fitted)
         ~predict:Estimator.predict ?decision_function ?predict_proba ?classes
         fitted
@@ -466,25 +515,25 @@ module Pipeline = struct
         estimator_fit_metadata_check = Metadata.validate_request fit_request;
       }
 
-  let estimator ~name estimator ?decision_function ?predict_proba ?classes
-      specification =
-    estimator_internal ~name estimator ?decision_function ?predict_proba
-      ?classes specification
+  let estimator ?provenance ~name estimator ?decision_function ?predict_proba
+      ?classes specification =
+    estimator_internal ?provenance ~name estimator ?decision_function
+      ?predict_proba ?classes specification
 
   let class_weight_resolver class_weight ?sample_weight y =
     Result.map Option.some
       (Modelkit_class_weight.Class_weight.resolve class_weight ?sample_weight y)
 
-  let classifier_internal ?encode ?class_weight ~name estimator
+  let classifier_internal ?encode ?class_weight ?provenance ~name estimator
       ?decision_function ?predict_proba ?classes specification =
-    estimator_internal ?encode
+    estimator_internal ?encode ?provenance
       ?resolve_weights:(Option.map class_weight_resolver class_weight)
       ~name estimator ?decision_function ?predict_proba ?classes specification
 
-  let classifier ?class_weight ~name estimator ?decision_function ?predict_proba
-      ?classes specification =
-    classifier_internal ?class_weight ~name estimator ?decision_function
-      ?predict_proba ?classes specification
+  let classifier ?class_weight ?provenance ~name estimator ?decision_function
+      ?predict_proba ?classes specification =
+    classifier_internal ?class_weight ?provenance ~name estimator
+      ?decision_function ?predict_proba ?classes specification
 
   let empty = { reversed_transformers = []; names = [] }
 
@@ -650,6 +699,40 @@ module Pipeline = struct
 
   let capabilities specification =
     specification.estimator.estimator_capabilities
+
+  let component_report ~name ~provenance ~encode =
+    {
+      component_name = name;
+      provenance;
+      serialization_support =
+        (match encode with Some _ -> Portable_artifact | None -> Unsupported);
+    }
+
+  let artifact_report fitted =
+    {
+      artifact_transformer_reports =
+        Array.map
+          (fun transformer ->
+            component_report ~name:transformer.stage_name
+              ~provenance:transformer.transformer_provenance
+              ~encode:transformer.encode_transformer)
+          fitted.fitted_transformers;
+      artifact_estimator_report =
+        component_report ~name:fitted.fitted_estimator.terminal_name
+          ~provenance:fitted.fitted_estimator.estimator_provenance
+          ~encode:fitted.fitted_estimator.encode_estimator;
+    }
+
+  let artifact_transformers report =
+    Array.copy report.artifact_transformer_reports
+
+  let artifact_estimator report = report.artifact_estimator_report
+
+  let portable_artifact_supported report =
+    report.artifact_estimator_report.serialization_support = Portable_artifact
+    && Array.for_all
+         (fun component -> component.serialization_support = Portable_artifact)
+         report.artifact_transformer_reports
 
   let child_rng root ~kind ~name ~index =
     let seed =

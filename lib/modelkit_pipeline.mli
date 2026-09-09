@@ -5,6 +5,35 @@ open Modelkit_protocols
 module Pipeline : sig
   type capabilities = { decision_function : bool; predict_proba : bool }
 
+  type provenance
+  (** Identity supplied by a component package. Provenance describes code that
+      produced fitted state; it does not grant artifact serialization support.
+  *)
+
+  val provenance :
+    package:string ->
+    version:string ->
+    implementation:string ->
+    (provenance, Error.t) result
+
+  val provenance_package : provenance -> string
+  val provenance_version : provenance -> string
+  val provenance_implementation : provenance -> string
+
+  (** [Portable_artifact] means a reviewed data-only ModelKit codec is attached
+      to that fitted component. *)
+  type serialization_support = Portable_artifact | Unsupported
+
+  type component_report = {
+    component_name : string;
+    provenance : provenance option;
+    serialization_support : serialization_support;
+  }
+  (** Artifact support and optional producer identity for one fitted component.
+  *)
+
+  type artifact_report
+
   type encoded_component = {
     component_tag : int;
     component_version : int;
@@ -21,6 +50,7 @@ module Pipeline : sig
       feature_schema:Feature_schema.t ->
       x:Matrix.t ->
       (Matrix.t, Error.t) result;
+    transformer_provenance : provenance option;
     encode_transformer : (unit -> (encoded_component, Error.t) result) option;
   }
 
@@ -76,6 +106,7 @@ module Pipeline : sig
       (Matrix.t, Error.t) result)
       option;
     terminal_classes : (unit -> int array) option;
+    estimator_provenance : provenance option;
     encode_estimator : (unit -> (encoded_component, Error.t) result) option;
   }
 
@@ -117,6 +148,7 @@ module Pipeline : sig
     ?cache_codec:
       ('specification, 'fitted) Modelkit_transform_cache.Transform_cache.Codec.t ->
     ?route_sample_weight:bool ->
+    ?provenance:provenance ->
     name:string ->
     (module TRANSFORMER
        with type t = 'specification
@@ -127,6 +159,7 @@ module Pipeline : sig
     (transformer, Error.t) result
 
   val metadata_transformer :
+    ?provenance:provenance ->
     name:string ->
     (module METADATA_TRANSFORMER
        with type t = 'specification
@@ -141,6 +174,7 @@ module Pipeline : sig
 
   val transformer :
     ?route_sample_weight:bool ->
+    ?provenance:provenance ->
     name:string ->
     (module TRANSFORMER
        with type t = 'specification
@@ -152,6 +186,7 @@ module Pipeline : sig
 
   val cacheable_transformer :
     ?route_sample_weight:bool ->
+    ?provenance:provenance ->
     name:string ->
     (module Modelkit_transform_cache.Transform_cache.CACHEABLE_TRANSFORMER
        with type t = 'specification
@@ -170,6 +205,7 @@ module Pipeline : sig
       (?sample_weight:Sample_weight.t ->
       'target ->
       (Sample_weight.t option, Error.t) result) ->
+    ?provenance:provenance ->
     name:string ->
     (module ESTIMATOR
        with type t = 'specification
@@ -192,6 +228,7 @@ module Pipeline : sig
     (('target, 'prediction) estimator, Error.t) result
 
   val metadata_estimator :
+    ?provenance:provenance ->
     name:string ->
     (module METADATA_ESTIMATOR
        with type t = 'specification
@@ -217,6 +254,7 @@ module Pipeline : sig
       needed, belongs to the consumer. No artifact codec is supplied. *)
 
   val estimator :
+    ?provenance:provenance ->
     name:string ->
     (module ESTIMATOR
        with type t = 'specification
@@ -241,6 +279,7 @@ module Pipeline : sig
   val classifier_internal :
     ?encode:('fitted -> (encoded_component, Error.t) result) ->
     ?class_weight:Modelkit_class_weight.Class_weight.t ->
+    ?provenance:provenance ->
     name:string ->
     (module ESTIMATOR
        with type t = 'specification
@@ -264,6 +303,7 @@ module Pipeline : sig
 
   val classifier :
     ?class_weight:Modelkit_class_weight.Class_weight.t ->
+    ?provenance:provenance ->
     name:string ->
     (module ESTIMATOR
        with type t = 'specification
@@ -376,6 +416,15 @@ module Pipeline : sig
   val transformer_names : ('target, 'prediction) t -> string array
   val estimator_name : ('target, 'prediction) t -> string
   val capabilities : ('target, 'prediction) t -> capabilities
+
+  val artifact_report : ('target, 'prediction) fitted -> artifact_report
+  (** Reports component provenance and whether every fitted component has a
+      reviewed portable artifact codec. An unsupported component may still be
+      fitted and used normally; artifact encoding returns a typed error. *)
+
+  val artifact_transformers : artifact_report -> component_report array
+  val artifact_estimator : artifact_report -> component_report
+  val portable_artifact_supported : artifact_report -> bool
 
   val fit_with_metadata :
     ('target, 'prediction) t ->

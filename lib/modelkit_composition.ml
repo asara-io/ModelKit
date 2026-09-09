@@ -206,6 +206,7 @@ module Stage = struct
                   ~metadata:(Metadata.scope (Error.Stage name) metadata)
                   ~feature_schema ~x);
             fitted_transform_metadata_check = validate_transform_metadata;
+            transformer_provenance = None;
             encode_transformer = None;
           }
         in

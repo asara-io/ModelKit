@@ -104,6 +104,11 @@ scores, and repeatability. Reports are data rather than Alcotest values, so a
 third-party package can make them fail its preferred test runner by asserting
 {!val:Modelkit.Conformance.passed}.
 
+The {!page-authoring_estimators} guide covers protocol selection, immutable
+state, metadata requests, pipeline packaging, conformance fixtures, execution
+ownership, provenance, and the portable-artifact boundary for external
+estimators.
+
 {1 Transform-cache foundation}
 
 {!Modelkit.Transform_cache} defines the data and ownership contracts for

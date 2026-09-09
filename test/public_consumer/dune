@@ -1,0 +1,10 @@
+(library
+ (name third_party_estimator)
+ (modules third_party_estimator)
+ (libraries modelkit))
+
+(test
+ (name public_consumer_test)
+ (modules public_consumer_test)
+ (package modelkit-parallel)
+ (libraries third_party_estimator modelkit modelkit-parallel alcotest))
