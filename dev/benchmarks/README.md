@@ -9,7 +9,7 @@ a public performance claim.
 The committed macOS arm64 reports were refreshed together on 8 September 2026
 for the 0.5.0 development checkpoint. They use:
 
-- ModelKit 0.5.0-dev and OCaml 5.3.0;
+- ModelKit 0.5.0 and OCaml 5.3.0;
 - Python 3.14.3;
 - scikit-learn 1.9.0, NumPy 2.5.2, and SciPy 1.18.0; and
 - an eight-core arm64 host running macOS 15.5.

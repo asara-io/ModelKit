@@ -1,4 +1,4 @@
-# 0.5.0-dev (unreleased)
+# 0.5.0 (2026-09-09)
 
 - Publish the third-party estimator authoring guide, metadata-aware conformance
   checks, component provenance, and explicit fitted-pipeline artifact-support
@@ -26,7 +26,7 @@
   aligned train/test dataset splitting with explicit counts and fractional sizes.
 - Add transformed-target regression with fold-local target fitting, metadata
   requests, checked inverse transforms, and original-space predictions.
-- Record producer version 0.5.0-dev in newly written artifacts while retaining
+- Record producer version 0.5.0 in newly written artifacts while retaining
   compatibility with existing readers and golden artifacts.
 
 # 0.4.1 (2026-09-04)

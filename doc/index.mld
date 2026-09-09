@@ -8,7 +8,7 @@ The supported API is the flat {!Modelkit} namespace documented below. Physical
 additional public namespaces or compatibility targets. Optional integrations,
 such as bounded Domainslib execution, are distributed as separate packages.
 
-Version 0.5.0-dev provides immutable dense {!Modelkit.Dataset} admission, explicit
+Version 0.5.0 provides immutable dense {!Modelkit.Dataset} admission, explicit
 feature-finiteness policies, stable schema fingerprints, zero-copy row-index
 views, and copy/view reports for opaque float64 {!Modelkit.Vector} and
 {!Modelkit.Matrix} values, together with checked {!Modelkit.Csr_matrix}
@@ -176,7 +176,7 @@ The portable {!Modelkit.Reference_backend.feature_matrix_vector_product} and
 {!Modelkit.Reference_backend.transposed_feature_matrix_vector_product} functions
 dispatch without densifying CSR input. Dense and sparse forms agree for finite
 operands; sparse kernels visit only stored entries. Estimators and workflow APIs
-remain dense-only in 0.5.0-dev; sparse estimator integration is scheduled for a
+remain dense-only in 0.5.0; sparse estimator integration is scheduled for a
 later release.
 
 {@ocaml[

@@ -55,7 +55,7 @@ module Artifact = struct
       max_metadata_entries = 128;
     }
 
-  let current_producer_version = "0.5.0-dev"
+  let current_producer_version = "0.5.0"
 
   let modelkit_provenance ?(version = current_producer_version) implementation =
     Pipeline.provenance ~package:"modelkit" ~version ~implementation
