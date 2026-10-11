@@ -1,3 +1,14 @@
+# 0.6.0-dev (unreleased)
+
+- Add the optional `modelkit-xgboost` package with immutable CPU histogram-tree
+  specifications, checked float32 input conversion, allocation/rounding reports,
+  and scoped native interoperability.
+- Add weighted squared-error XGBoost regression with native missing-value
+  routing, deterministic seeds, schema-checked prediction, pipeline packaging,
+  provenance, and pinned parity coverage for tested native versions.
+- Record producer version 0.6.0-dev in newly written built-in artifacts while
+  retaining the existing schema, readers, and golden-artifact compatibility.
+
 # 0.5.0 (2026-09-09)
 
 - Publish the third-party estimator authoring guide, metadata-aware conformance
