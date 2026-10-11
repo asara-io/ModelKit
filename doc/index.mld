@@ -8,6 +8,12 @@ The supported API is the flat {!Modelkit} namespace documented below. Physical
 additional public namespaces or compatibility targets. Optional integrations,
 such as bounded Domainslib execution, are distributed as separate packages.
 
+The optional [modelkit-xgboost] package provides immutable CPU histogram-tree
+specifications, checked float32 native input, allocation/rounding reports, and
+scoped DMatrix/booster interoperability. Its separate odoc guide documents the
+native precision, platform, threading, and lifetime contracts. Packaged XGBoost
+estimators and fitted-pipeline codecs are not yet available.
+
 Version 0.5.0 provides immutable dense {!Modelkit.Dataset} admission, explicit
 feature-finiteness policies, stable schema fingerprints, zero-copy row-index
 views, and copy/view reports for opaque float64 {!Modelkit.Vector} and

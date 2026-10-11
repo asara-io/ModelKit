@@ -1,0 +1,28 @@
+(library
+ (name modelkit_xgboost)
+ (public_name modelkit-xgboost)
+ (modules modelkit_xgboost)
+ (libraries modelkit xgboost))
+
+(test
+ (name modelkit_xgboost_test)
+ (modules modelkit_xgboost_test)
+ (package modelkit-xgboost)
+ (libraries modelkit modelkit-xgboost xgboost alcotest)
+ (action
+  (setenv
+   OMP_NUM_THREADS
+   1
+   (setenv
+    OMP_THREAD_LIMIT
+    1
+    (run %{test})))))
+
+(documentation
+ (package modelkit-xgboost)
+ (mld_files index))
+
+(mdx
+ (files index.mld)
+ (libraries modelkit modelkit-xgboost)
+ (package modelkit-xgboost))

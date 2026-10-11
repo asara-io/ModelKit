@@ -53,6 +53,20 @@
   (alcotest (and :with-test (>= 1.9.0)))))
 
 (package
+ (name modelkit-xgboost)
+ (synopsis "Checked XGBoost specifications and native input for ModelKit")
+ (description
+  "ModelKit XGBoost provides immutable CPU histogram-tree specifications, checked float32 input conversion, allocation reports, and scoped native interoperability without adding XGBoost dependencies to ModelKit's portable core.")
+ (tags
+  (data-science machine-learning adapters xgboost))
+ (depends
+  (ocaml (>= 5.2))
+  (modelkit (= :version))
+  (xgboost (= 0.2.1))
+  (mdx (and :with-test (>= 2.4.0)))
+  (alcotest (and :with-test (>= 1.9.0)))))
+
+(package
  (name modelkit-talon)
  (synopsis "Checked Talon dataframe column admission for ModelKit")
  (description

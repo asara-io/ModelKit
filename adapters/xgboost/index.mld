@@ -1,0 +1,80 @@
+{0 ModelKit XGBoost}
+
+The optional [modelkit-xgboost] package provides checked input conversion,
+immutable CPU histogram-tree specifications, and scoped interoperability with
+the OCaml [xgboost] binding. Installing [modelkit] does not install this package
+or its native dependencies. This input/interoperability API does not yet expose
+a packaged fitted estimator or a ModelKit artifact codec.
+
+{1 Installation and compatibility}
+
+Install [modelkit-xgboost] separately. The package pins OCaml binding 0.2.1,
+requires OCaml 5.2+, and admits native libxgboost major version three. The binding
+uses a system libxgboost 3.0+ discovered through pkg-config or its vendored
+source-build fallback; CMake, a C++ toolchain, and OpenMP are native build/runtime
+dependencies. Windows is excluded by the binding. Local verification uses
+OCaml 5.3.0, binding 0.2.1, and libxgboost 3.4.2 on macOS arm64; this is evidence
+for that combination, not certification of every native 3.x release.
+
+{1 Immutable specifications}
+
+{!Modelkit_xgboost.Specification.create} validates histogram-tree parameters.
+[clone] preserves the unfitted specification and [params] returns immutable
+values; parameter search builders create a fresh specification for each
+candidate. Booster creation sets CPU execution, histogram trees, an RNG-derived
+seed, and the configured [nthread]. It does not set a training objective or
+train a model.
+
+{@ocaml[
+let specification =
+  Modelkit_xgboost.Specification.create ~rounds:20 ~max_depth:3 ()
+  |> Result.get_ok
+let () = assert ((Modelkit_xgboost.Specification.params specification).Modelkit_xgboost.Specification.threads = 1)
+]}
+
+{1 Numeric admission}
+
+{!val:Modelkit_xgboost.Input.features} copies a nonempty ModelKit matrix to
+row-major float32 storage and retains its ordered feature schema. Native NaN
+means missing; infinity is rejected. Regression targets and weights remain
+finite after conversion. Already encoded classification labels must lie in
+the range from zero inclusive to [class_count] exclusive and be exactly
+representable as float32; learning the mapping from original labels is the
+estimator's responsibility.
+
+Float32 conversion is lossy. Each input reports its allocated float32 payload,
+full-size temporary staging payload, source shape, and count of changed finite
+values. These reports exclude native DMatrix/booster allocations and OCaml
+headers. Finite feature/target underflow to zero is permitted and reported;
+positive weights rounding to zero fail because that would change which rows
+participate. Infinities and finite values rounding to infinity fail with typed
+row/column context. Converted buffers are opaque and immutable to callers.
+
+{@ocaml[
+let x = Modelkit.Matrix.of_arrays [| [| 0.1; Float.nan |]; [| 2.; 3. |] |]
+        |> Result.get_ok
+let schema = Modelkit.Feature_schema.of_matrix x |> Result.get_ok
+let converted = Modelkit_xgboost.Input.features ~feature_schema:schema x
+                |> Result.get_ok
+let report = Modelkit_xgboost.Input.feature_report converted
+let () = assert (Modelkit_xgboost.Input.payload_bytes report = 16L)
+let () = assert (Modelkit_xgboost.Input.rounded_values report = 1)
+]}
+
+{1 Native interoperability and lifetime}
+
+{!Modelkit_xgboost.Native.with_dmatrix} validates target/weight alignment before
+allocating native state, creates a fresh DMatrix, and releases it when the
+callback exits. {!Modelkit_xgboost.Native.with_booster} similarly scopes a new
+configured booster. Nest the booster scope inside its training DMatrix scope.
+Callbacks borrow upstream handles: do not free them, retain them, or use them
+after the scope ends. Binding failures become {!Modelkit.Error.t}; unrelated
+callback exceptions propagate after cleanup. Returning a typed callback error
+also releases both resources.
+
+Booster thread limits do not constrain DMatrix construction. Binding 0.2.1 has
+no constructor thread-limit argument. For bounded native concurrency, configure
+OpenMP before starting the process, for example [OMP_NUM_THREADS=1] and
+[OMP_THREAD_LIMIT=1] when parallel folds each use one native thread. This package
+does not mutate process-global settings. [modelkit-parallel]'s [inner_threads]
+value is diagnostic and does not configure OpenMP or XGBoost.

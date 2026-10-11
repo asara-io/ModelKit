@@ -1,10 +1,10 @@
 # Optional adapters
 
-This directory contains optional packages that convert ecosystem data into ModelKit's portable representations. Adapters depend inward on `modelkit`; the portable package never depends on an adapter.
+This directory contains optional data and estimator integrations. Adapters depend inward on `modelkit`; the portable package never depends on an adapter.
 
 ## Shared contract
 
-Every adapter returns the records defined by `Modelkit.Admission`: a `conversion` pairs one admitted value with its `Conversion_report`, `features` carries the matrix, schema, optional explicit null mask, and feature reports, and `dataset` carries a complete `Modelkit.Dataset.t` with the feature null mask and every report produced during admission. `Admission.retained_payload_bytes`, `temporary_payload_bytes`, and `allocated_payload_bytes` total a report list.
+Data-admission adapters return the records defined by `Modelkit.Admission`: a `conversion` pairs one admitted value with its `Conversion_report`, `features` carries the matrix, schema, optional explicit null mask, and feature reports, and `dataset` carries a complete `Modelkit.Dataset.t` with the feature null mask and every report produced during admission. `Admission.retained_payload_bytes`, `temporary_payload_bytes`, and `allocated_payload_bytes` total a report list.
 
 The shared semantics are:
 
@@ -15,6 +15,21 @@ The shared semantics are:
 - Payload accounting counts numeric payload only. Float payloads copy directly into their retained storage with no full-size staging; integer payloads pass through one OCaml-int staging array before the retained target or group storage, and that staging array is reported as temporary payload.
 
 These semantics are enforced by the source-neutral conformance suite in `test/adapter_conformance.ml`. Each adapter test executable instantiates `Adapter_conformance.Make` with a module that builds the adapter's own source values from plain OCaml arrays, so the same eight conformance cases run against every adapter alongside its source-specific tests.
+
+## XGBoost
+
+`modelkit-xgboost` converts ModelKit data outward to opaque float32 native input,
+validates immutable CPU histogram-tree specifications, and provides scoped
+DMatrix/booster interoperability. It currently provides input and native
+lifetime foundations; packaged estimators and fitted-pipeline codecs are not
+yet available. Its odoc guide documents precision, allocation, error, lifetime,
+and OpenMP boundaries. This outward conversion has its own report type because
+native storage is additional to the immutable float64 ModelKit source.
+
+The package pins OCaml binding 0.2.1 and excludes Windows. Local native tests
+cover libxgboost 3.4.2 with OCaml 5.3.0 on macOS arm64. Native major version three
+is admitted, with broader compatibility evidence to be published as it is
+verified. The portable package has no XGBoost dependency.
 
 ## Nx
 
