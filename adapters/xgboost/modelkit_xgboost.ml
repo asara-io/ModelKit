@@ -111,9 +111,12 @@ module Specification = struct
   let clone specification = specification
   let params specification = specification
 
-  let native_parameters specification ~rng =
+  let native_seed rng =
     let bits, _ = Rng.next_int64 rng in
-    let seed = Int64.to_string (Int64.logand bits 0x7fffffffL) in
+    Int64.logand bits 0x7fffffffL
+
+  let native_parameters specification ~rng =
+    let seed = Int64.to_string (native_seed rng) in
     let float value = Printf.sprintf "%.17g" value in
     [
       ("booster", "gbtree");
@@ -188,10 +191,10 @@ module Input = struct
       invalid "positive weight would round to zero in float32"
     else Ok converted
 
-  let features ~feature_schema x =
+  let features_internal ~allow_empty ~feature_schema x =
     let* () = Feature_schema.validate_matrix feature_schema x |> map_data in
     let rows, columns = Matrix.shape x in
-    if rows = 0 || columns = 0 then
+    if (rows = 0 && not allow_empty) || columns = 0 then
       validation ~name:"features" "must have at least one row and one column"
     else
       let matrix =
@@ -226,6 +229,9 @@ module Input = struct
               rounded = !rounded;
             };
         }
+
+  let features ~feature_schema x =
+    features_internal ~allow_empty:false ~feature_schema x
 
   let vector ~name ~positive ~temporary_bytes length get =
     let values =
@@ -379,4 +385,200 @@ module Native = struct
             Xgboost.Booster.set_params booster
               (Specification.native_parameters specification ~rng);
             callback booster))
+end
+
+module Regressor_implementation = struct
+  type t = Specification.t
+  type params = Specification.params
+  type target = Target.regression Target.t
+  type prediction = target
+  type rng = Rng.t
+
+  type report = {
+    rounds : int;
+    native_version : int * int * int;
+    native_seed : int64;
+    feature_conversion : Input.report;
+    target_conversion : Input.report;
+    weight_conversion : Input.report option;
+  }
+
+  type fitted = {
+    specification : t;
+    schema : Feature_schema.t;
+    booster : Xgboost.Booster.t;
+    prediction_mutex : Mutex.t;
+    fit_report : report;
+  }
+
+  let clone = Specification.clone
+  let params = Specification.params
+  let fitted_params fitted = Specification.params fitted.specification
+  let feature_schema fitted = fitted.schema
+  let report fitted = fitted.fit_report
+  let capabilities = Capability.estimator ~sample_weight:Capability.Supported ()
+
+  let validate_native_model ~columns ~rounds booster =
+    if Xgboost.Booster.num_features booster <> columns then
+      validation ~name:"XGBoost fitted features"
+        "native feature count differs from the training schema"
+    else if Xgboost.Booster.boosted_rounds booster <> rounds then
+      validation ~name:"XGBoost fitted rounds"
+        "native boosting rounds differ from the specification"
+    else Ok ()
+
+  let detached_booster specification ~columns bytes =
+    Native.protect "XGBoost fitted model" (fun () ->
+        let booster = Xgboost.Booster.create () in
+        let transferred = ref false in
+        Fun.protect
+          ~finally:(fun () ->
+            if not !transferred then Xgboost.Booster.free booster)
+          (fun () ->
+            Xgboost.Booster.load_model_buffer booster bytes;
+            Xgboost.Booster.set_params booster
+              [
+                ("device", "cpu");
+                ( "nthread",
+                  string_of_int
+                    (Specification.params specification).Specification.threads
+                );
+              ];
+            let* () =
+              validate_native_model ~columns
+                ~rounds:
+                  (Specification.params specification).Specification.rounds
+                booster
+            in
+            transferred := true;
+            Ok booster))
+
+  let fit specification ?sample_weight ~rng ~feature_schema ~x ~y () =
+    let* () = Feature_schema.validate_matrix feature_schema x |> map_data in
+    let rows = Matrix.rows x in
+    let* () = Native.aligned ~name:"target" ~rows (Target.length y) in
+    let* () =
+      match sample_weight with
+      | None -> Ok ()
+      | Some weights ->
+          Native.aligned ~name:"sample_weight" ~rows
+            (Sample_weight.length weights)
+    in
+    let* native_version = Native.version () in
+    let* features = Input.features ~feature_schema x in
+    let* target = Input.regression_target y in
+    let* weights =
+      match sample_weight with
+      | None -> Ok None
+      | Some weights -> Input.sample_weight weights |> Result.map Option.some
+    in
+    let rounds = (Specification.params specification).Specification.rounds in
+    let* bytes =
+      Native.with_dmatrix ~target ?sample_weight:weights features (fun matrix ->
+          Native.with_booster ~cache:[ matrix ] ~specification ~rng
+            (fun booster ->
+              Xgboost.Booster.set_param booster "objective" "reg:squarederror";
+              for iter = 0 to rounds - 1 do
+                Xgboost.Booster.update_one_iter booster ~iter ~dtrain:matrix
+              done;
+              let* () =
+                validate_native_model ~columns:(Matrix.columns x) ~rounds
+                  booster
+              in
+              Ok (Xgboost.Booster.save_model_buffer booster)))
+    in
+    (* A reloaded model has no training cache or references to training buffers. *)
+    let* booster =
+      detached_booster specification ~columns:(Matrix.columns x) bytes
+    in
+    Ok
+      {
+        specification = clone specification;
+        schema = feature_schema;
+        booster;
+        prediction_mutex = Mutex.create ();
+        fit_report =
+          {
+            rounds;
+            native_version;
+            native_seed = Specification.native_seed rng;
+            feature_conversion = Input.feature_report features;
+            target_conversion = Input.target_report target;
+            weight_conversion = Option.map Input.weight_report weights;
+          };
+      }
+
+  let predict_with_report fitted ~feature_schema ~x =
+    if not (Feature_schema.equal fitted.schema feature_schema) then
+      Error
+        (Error.make
+           ~remediation:"Pass the fitted feature names in their original order."
+           (Error.Feature_schema_mismatch
+              { expected = fitted.schema; observed = feature_schema }))
+    else
+      let* features =
+        Input.features_internal ~allow_empty:true ~feature_schema x
+      in
+      let rows = Matrix.rows x in
+      let* prediction =
+        if rows = 0 then Target.regression (Vector.of_array [||]) |> map_data
+        else
+          Native.protect "XGBoost regression prediction" (fun () ->
+              Mutex.lock fitted.prediction_mutex;
+              let values =
+                Fun.protect
+                  ~finally:(fun () -> Mutex.unlock fitted.prediction_mutex)
+                  (fun () ->
+                    let values =
+                      Xgboost.Booster.predict_dense fitted.booster
+                        features.Input.feature_matrix
+                    in
+                    (* The binding's output copy must finish before native finalization. *)
+                    ignore (Sys.opaque_identity fitted.booster);
+                    values)
+              in
+              let* () =
+                Native.aligned ~name:"prediction" ~rows
+                  (Bigarray.Array1.dim values)
+              in
+              let rec finite row =
+                if row = rows then Ok ()
+                else if Float.is_finite values.{row} then finite (row + 1)
+                else
+                  Error
+                    (Error.make
+                       ~remediation:
+                         "Rescale extreme targets or regularize the fitted \
+                          model."
+                       (Error.Numerical
+                          {
+                            operation = "XGBoost regression prediction";
+                            reason =
+                              Format.sprintf "nonfinite prediction at row %d"
+                                row;
+                          }))
+              in
+              let* () = finite 0 in
+              let* vector =
+                Vector.init ~length:rows (fun row -> values.{row}) |> map_data
+              in
+              Target.regression vector |> map_data)
+      in
+      Ok (prediction, Input.feature_report features)
+
+  let predict fitted ~feature_schema ~x =
+    predict_with_report fitted ~feature_schema ~x |> Result.map fst
+end
+
+module Regressor = struct
+  include Regressor_implementation
+
+  let estimator ?(name = "xgboost") specification =
+    let* provenance =
+      Pipeline.provenance ~package:"modelkit-xgboost"
+        ~version:Modelkit_xgboost_version.value ~implementation:"Regressor"
+    in
+    Pipeline.estimator ~provenance ~name
+      (module Regressor_implementation)
+      specification
 end

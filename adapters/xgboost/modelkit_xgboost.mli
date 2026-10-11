@@ -146,3 +146,70 @@ module Native : sig
       callback. Seed derivation is independent of worker identity. Handles are
       released under the same callback/error contract as {!with_dmatrix}. *)
 end
+
+module Regressor : sig
+  type t = Specification.t
+  type params = Specification.params
+  type fitted
+
+  type report = {
+    rounds : int;
+    native_version : int * int * int;
+    native_seed : int64;
+    feature_conversion : Input.report;
+    target_conversion : Input.report;
+    weight_conversion : Input.report option;
+  }
+
+  val capabilities : Modelkit.Capability.estimator
+
+  val report : fitted -> report
+  (** Fit diagnostics contain conversion reports and native version/seed, but no
+      training observations. Payload accounting excludes native allocations and
+      the temporary model buffer used to detach the fitted training cache. *)
+
+  (** Squared-error CPU histogram trees with a fixed training-round count.
+      Specifications are constructed with {!Specification.create}. Fitting
+      validates row alignment, schema, numeric conversion, and weights before
+      native training. Each fit creates independent native state. Native NaNs
+      route as missing values; targets and weights must fit the float32 policy.
+
+      Fitted state owns a GC-managed inference booster detached from training
+      buffers. Prediction validates exact schema identity and matrix width,
+      returns finite float64 values in row order, and accepts zero prediction
+      rows. Calls sharing one fitted value serialize native output copying;
+      distinct fitted values do not share a lock. Training and prediction do not
+      mutate the specification or expose native handles. Numerical results are
+      deterministic for fixed data, parameters, RNG, native version, and thread
+      configuration; cross-version equivalence is limited to verified fixtures.
+      Native allocations are not included in OCaml heap accounting. *)
+  include
+    Modelkit.REGRESSOR
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Modelkit.Rng.t
+
+  val predict_with_report :
+    fitted ->
+    feature_schema:Modelkit.Feature_schema.t ->
+    x:Modelkit.Matrix.t ->
+    ( Modelkit.Target.regression Modelkit.Target.t * Input.report,
+      Modelkit.Error.t )
+    result
+  (** Prediction plus its float32 input conversion report. The report excludes
+      native prediction storage and the returned float64 prediction vector. *)
+
+  val estimator :
+    ?name:string ->
+    t ->
+    ( ( Modelkit.Target.regression Modelkit.Target.t,
+        Modelkit.Target.regression Modelkit.Target.t )
+      Modelkit.Pipeline.estimator,
+      Modelkit.Error.t )
+    result
+  (** Packages the public regressor with package/version provenance. The
+      estimator receives routed sample weights and can enter ordinary or
+      supervised pipelines. No artifact codec is attached yet; portable encoding
+      returns a typed unsupported error. *)
+end

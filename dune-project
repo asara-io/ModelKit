@@ -54,9 +54,9 @@
 
 (package
  (name modelkit-xgboost)
- (synopsis "Checked XGBoost specifications and native input for ModelKit")
+ (synopsis "CPU histogram-tree regression with XGBoost for ModelKit")
  (description
-  "ModelKit XGBoost provides immutable CPU histogram-tree specifications, checked float32 input conversion, allocation reports, and scoped native interoperability without adding XGBoost dependencies to ModelKit's portable core.")
+  "ModelKit XGBoost provides weighted CPU histogram-tree regression, immutable specifications, checked float32 input conversion, native missing-value routing, allocation reports, and schema-checked pipeline prediction without adding XGBoost dependencies to ModelKit's portable core.")
  (tags
   (data-science machine-learning adapters xgboost))
  (depends

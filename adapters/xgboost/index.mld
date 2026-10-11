@@ -1,10 +1,10 @@
 {0 ModelKit XGBoost}
 
-The optional [modelkit-xgboost] package provides checked input conversion,
-immutable CPU histogram-tree specifications, and scoped interoperability with
-the OCaml [xgboost] binding. Installing [modelkit] does not install this package
-or its native dependencies. This input/interoperability API does not yet expose
-a packaged fitted estimator or a ModelKit artifact codec.
+The optional [modelkit-xgboost] package provides weighted squared-error CPU
+histogram-tree regression, native missing-value routing, checked input
+conversion, immutable specifications, and scoped native interoperability.
+Installing [modelkit] does not install this package or its native dependencies.
+Packaged classification and ModelKit artifact codecs are not yet available.
 
 {1 Installation and compatibility}
 
@@ -13,8 +13,9 @@ requires OCaml 5.2+, and admits native libxgboost major version three. The bindi
 uses a system libxgboost 3.0+ discovered through pkg-config or its vendored
 source-build fallback; CMake, a C++ toolchain, and OpenMP are native build/runtime
 dependencies. Windows is excluded by the binding. Local verification uses
-OCaml 5.3.0, binding 0.2.1, and libxgboost 3.4.2 on macOS arm64; this is evidence
-for that combination, not certification of every native 3.x release.
+OCaml 5.3.0, binding 0.2.1, and native libxgboost 3.0.4 and 3.4.2 on macOS arm64.
+Separate pinned Python references use XGBoost 3.0.4 and 3.4.1. These combinations
+are verified; other native releases require their own compatibility evidence.
 
 {1 Immutable specifications}
 
@@ -60,6 +61,84 @@ let report = Modelkit_xgboost.Input.feature_report converted
 let () = assert (Modelkit_xgboost.Input.payload_bytes report = 16L)
 let () = assert (Modelkit_xgboost.Input.rounded_values report = 1)
 ]}
+
+{1 Fit and predict regression}
+
+{!Modelkit_xgboost.Regressor} implements the public {!module-type:Modelkit.REGRESSOR}
+protocol. Every fit builds independent native state, runs exactly the configured
+number of rounds with squared-error loss, and returns a separate fitted value.
+Optional sample weights are routed to the native DMatrix; zero weights remain
+zero. Feature NaNs route through native missing-value handling. Training shape,
+schema, target/weight alignment, and float32 admission fail with typed errors.
+
+{@ocaml[
+let y = Modelkit.Vector.of_array [| 1.; 2. |] |> Modelkit.Target.regression
+        |> Result.get_ok
+let weights = Modelkit.Sample_weight.of_array ~expected_length:2 [| 1.; 2. |]
+              |> Result.get_ok
+let fitted =
+  Modelkit_xgboost.Regressor.fit specification ~sample_weight:weights
+    ~rng:(Modelkit.Rng.create (Modelkit.Seed.of_int 41))
+    ~feature_schema:schema ~x ~y ()
+  |> Result.get_ok
+let predictions, conversion =
+  Modelkit_xgboost.Regressor.predict_with_report fitted ~feature_schema:schema ~x
+  |> Result.get_ok
+let () = assert (Modelkit.Target.length predictions = 2)
+let () = assert (Modelkit_xgboost.Input.payload_bytes conversion = 16L)
+]}
+
+Prediction validates the fitted schema's exact names/order and feature count,
+returns finite float64 values in source row order, and supports empty batches
+with the fitted column count. {!val:Modelkit_xgboost.Regressor.report} exposes native
+version, effective seed, rounds, and input conversion reports. Prediction's
+conversion report describes only its float32 feature buffer; native output
+storage and the returned float64 vector are additional allocations.
+
+Fit detaches the learned model from training caches using an internal
+XGBoost-produced model buffer, then releases the training booster and DMatrix.
+The fitted value retains no training observations. It owns a GC-managed private
+inference booster; native allocations are additional to OCaml heap accounting.
+Admission costs linear time and float32 payload in the number of input values.
+Cache detachment adds one model-buffer write/read during fit, with temporary
+space proportional to model size. Prediction converts its feature batch once
+and calls native in-place prediction. Calls sharing a fitted value serialize
+native output copying; separate fitted values can predict independently.
+
+Repeated fits/predictions are deterministic for fixed data, parameters, RNG,
+native version, and thread configuration. Native sampling changes between
+3.0.4 and 3.4.2, so the same seed alone does not reproduce a sampled model across
+these versions. Pin the native runtime when reproducing training results. The
+committed parity fixtures cover dense, weighted, missing/all-missing, sampled,
+regularized, large-scale, constant-feature/target, single-row, and zero-learning
+rate cases at absolute and relative prediction tolerances of [2e-6].
+
+{1 Pipeline integration}
+
+{!Modelkit_xgboost.Regressor.estimator} packages the immutable specification
+using public ModelKit modules and reports package/version provenance. It accepts
+routed sample weights and works as the terminal estimator of ordinary and
+supervised pipelines. Add preprocessing through the usual pipeline APIs.
+
+{@ocaml[
+let estimator = Modelkit_xgboost.Regressor.estimator ~name:"trees" specification
+                |> Result.get_ok
+let pipeline = Modelkit.Pipeline.set_estimator Modelkit.Pipeline.empty estimator
+               |> Result.get_ok
+let fitted_pipeline =
+  Modelkit.Pipeline.fit pipeline ~sample_weight:weights
+    ~rng:(Modelkit.Rng.create (Modelkit.Seed.of_int 41))
+    ~feature_schema:schema ~x ~y ()
+  |> Result.get_ok
+let predicted = Modelkit.Pipeline.predict fitted_pipeline ~feature_schema:schema ~x
+                |> Result.get_ok
+let () = assert (Modelkit.Target.length predicted = 2)
+]}
+
+This packaging currently reports [Pipeline.Unsupported] for portable artifact
+encoding. The internal cache-detachment buffer is not a public ModelKit
+pipeline codec; encoding a pipeline containing this estimator returns a typed
+artifact error.
 
 {1 Native interoperability and lifetime}
 

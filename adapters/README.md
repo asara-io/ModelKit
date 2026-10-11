@@ -19,17 +19,20 @@ These semantics are enforced by the source-neutral conformance suite in `test/ad
 ## XGBoost
 
 `modelkit-xgboost` converts ModelKit data outward to opaque float32 native input,
-validates immutable CPU histogram-tree specifications, and provides scoped
-DMatrix/booster interoperability. It currently provides input and native
-lifetime foundations; packaged estimators and fitted-pipeline codecs are not
-yet available. Its odoc guide documents precision, allocation, error, lifetime,
-and OpenMP boundaries. This outward conversion has its own report type because
-native storage is additional to the immutable float64 ModelKit source.
+validates immutable CPU histogram-tree specifications, and provides weighted
+squared-error regression through `Modelkit_xgboost.Regressor`. Its estimator
+helper packages the model into ordinary or supervised pipelines with provenance
+and sample-weight routing. Packaged classification and fitted-pipeline codecs
+are not yet available. Its odoc guide documents precision, allocation, error,
+lifetime, and OpenMP boundaries. Outward conversion has its own report type
+because native storage is additional to the immutable float64 ModelKit source.
 
 The package pins OCaml binding 0.2.1 and excludes Windows. Local native tests
-cover libxgboost 3.4.2 with OCaml 5.3.0 on macOS arm64. Native major version three
-is admitted, with broader compatibility evidence to be published as it is
-verified. The portable package has no XGBoost dependency.
+cover libxgboost 3.0.4 and 3.4.2 with OCaml 5.3.0 on macOS arm64, using separate
+Python reference fixtures from XGBoost 3.0.4 and 3.4.1. Sampling behavior differs
+between these native versions; reproducibility includes the native version.
+Native major version three is admitted, with broader compatibility evidence to
+be published as it is verified. The portable package has no XGBoost dependency.
 
 ## Nx
 
