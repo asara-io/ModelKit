@@ -63,6 +63,7 @@
   (ocaml (>= 5.2))
   (modelkit (= :version))
   (xgboost (= 0.2.1))
+  (modelkit-parallel (and :with-test (= :version)))
   (mdx (and :with-test (>= 2.4.0)))
   (alcotest (and :with-test (>= 1.9.0)))))
 

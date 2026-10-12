@@ -25,7 +25,13 @@ classification through `Modelkit_xgboost.Classifier`. Their estimator helpers
 provide pipeline packaging with provenance and sample-weight routing;
 classification exposes sorted original labels and aligned normalized
 probabilities. Zero-weight rows do not enter native classifier training, and
-fewer than two effective classes produce typed errors. Fitted-pipeline codecs
+fewer than two effective classes produce typed errors. Workflow tests cover
+fold-local preprocessing, weighted/group-aware CV, grid/randomized search,
+multiple-metric refit, and row-budget halving, with exact sequential/parallel
+agreement across 1-, 2-, and 4-domain backends. Native threading is bounded by
+the tested `OMP_NUM_THREADS=1 OMP_THREAD_LIMIT=1` process-start contract and
+single-thread specifications; backend `inner_threads` remains diagnostic.
+Fitted-pipeline codecs
 are not yet available. The odoc guide documents precision, allocation, error,
 lifetime, and OpenMP boundaries. Outward conversion has its own report type
 because native storage is additional to the immutable float64 ModelKit source.

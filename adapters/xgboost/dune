@@ -10,6 +10,45 @@
  (action
   (write-file %{target} "let value = \"%{version:modelkit-xgboost}\"\n")))
 
+(library
+ (name xgboost_workflow_support)
+ (wrapped false)
+ (optional)
+ (modules workflow_support)
+ (libraries modelkit modelkit-xgboost alcotest)
+ (foreign_stubs
+  (language c)
+  (names workflow_probe))
+ (c_library_flags -ldl))
+
+(test
+ (name workflow_test)
+ (modules workflow_test)
+ (package modelkit-xgboost)
+ (libraries xgboost_workflow_support alcotest unix)
+ (action
+  (setenv
+   OMP_NUM_THREADS
+   1
+   (setenv
+    OMP_THREAD_LIMIT
+    1
+    (run %{test})))))
+
+(test
+ (name parallel_workflow_test)
+ (modules parallel_workflow_test)
+ (package modelkit-xgboost)
+ (libraries xgboost_workflow_support modelkit-parallel alcotest)
+ (action
+  (setenv
+   OMP_NUM_THREADS
+   1
+   (setenv
+    OMP_THREAD_LIMIT
+    1
+    (run %{test})))))
+
 (test
  (name classification_test)
  (modules classification_test)

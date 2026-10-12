@@ -132,8 +132,11 @@ module Native : sig
       Binding errors become typed ModelKit errors; unrelated callback exceptions
       propagate after cleanup. The released binding has no constructor thread
       argument: configure OpenMP before process startup when construction must
-      have bounded native concurrency. No process-global settings are changed.
-  *)
+      have bounded native concurrency. The tested single-thread contract sets
+      both [OMP_NUM_THREADS=1] and [OMP_THREAD_LIMIT=1] before startup, with
+      [Specification.threads=1] for boosters. Backend [inner_threads]
+      diagnostics do not configure native execution. No process-global settings
+      are changed. *)
 
   val with_booster :
     ?cache:Xgboost.DMatrix.t list ->

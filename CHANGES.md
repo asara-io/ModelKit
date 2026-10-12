@@ -10,6 +10,10 @@
   encoding, sorted effective classes, sample weights, normalized probabilities,
   deterministic ties, zero-weight row exclusion, typed degenerate-target
   failures, pipeline dispatch, and pinned native-version parity coverage.
+- Verify weighted/group-aware XGBoost CV, fold-local preprocessing,
+  grid/randomized search, multiple-metric refit, and training-row-budget halving
+  across sequential and bounded parallel folds. Add executable search recipes
+  and fresh-process verification of the single-thread OpenMP startup contract.
 - Record producer version 0.6.0-dev in newly written built-in artifacts while
   retaining the existing schema, readers, and golden-artifact compatibility.
 

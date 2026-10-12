@@ -40,10 +40,10 @@ jobs:
         run: opam exec -- dune build -p modelkit,modelkit-xgboost @install
 
       - name: Install test and documentation dependencies
-        run: opam install ./modelkit.opam ./modelkit-xgboost.opam --deps-only --with-test --with-doc
+        run: opam install ./modelkit.opam ./modelkit-parallel.opam ./modelkit-xgboost.opam --deps-only --with-test --with-doc
 
       - name: Verify native integration and documentation
-        run: opam exec -- dune build --only-packages modelkit,modelkit-xgboost @all @runtest @doc @install
+        run: opam exec -- dune build --only-packages modelkit,modelkit-parallel,modelkit-xgboost @all @runtest @doc @install
 
       - name: Verify package build
-        run: opam exec -- dune build -p modelkit,modelkit-xgboost @install @runtest @doc
+        run: opam exec -- dune build -p modelkit,modelkit-parallel,modelkit-xgboost @install @runtest @doc

@@ -14,7 +14,10 @@ immutable specifications, checked
 float32 input, allocation/rounding reports, and schema-checked pipeline
 prediction. Its separate odoc guide documents the native precision, platform,
 threading, and lifetime contracts. Classification preserves original integer
-labels and aligned class probabilities. Fitted-pipeline codecs are not yet
+labels and aligned class probabilities. Weighted/group-aware CV, grid/randomized
+search, multiple-metric refit, and training-row-budget halving are verified with
+sequential and bounded parallel folds under the documented OpenMP startup
+contract. Fitted-pipeline codecs are not yet
 available.
 
 Version 0.6.0-dev provides immutable dense {!Modelkit.Dataset} admission, explicit
