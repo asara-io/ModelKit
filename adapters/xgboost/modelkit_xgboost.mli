@@ -54,12 +54,15 @@ module Input : sig
   val source_shape : report -> int array
 
   val payload_bytes : report -> int64
-  (** Float32 buffer payload allocated by this conversion, excluding upstream
-      DMatrix/booster storage, OCaml headers, and allocator overhead. *)
+  (** Retained float32 buffer payload allocated by this conversion, excluding
+      upstream DMatrix/booster storage, OCaml headers, and allocator overhead.
+  *)
 
   val temporary_payload_bytes : report -> int64
   (** Full-size staging payload discarded after conversion. Classification
-      target export requires an OCaml-int array; other conversions do not. *)
+      target export requires an OCaml-int array. Classifier fitting additionally
+      reports row-selection indices in its target report and full float32
+      feature/weight staging when zero-weight rows are removed. *)
 
   val rounded_values : report -> int
   (** Finite values changed by float32 rounding, including underflow to zero.
@@ -212,4 +215,88 @@ module Regressor : sig
       estimator receives routed sample weights and can enter ordinary or
       supervised pipelines. No artifact codec is attached yet; portable encoding
       returns a typed unsupported error. *)
+end
+
+(** Binary and multiclass CPU histogram-tree classification. *)
+module Classifier : sig
+  type t = Specification.t
+  type params = Specification.params
+  type fitted
+
+  type report = {
+    rounds : int;
+    native_version : int * int * int;
+    native_seed : int64;
+    class_count : int;
+    training_rows : int;
+    effective_rows : int;
+    feature_conversion : Input.report;
+    target_conversion : Input.report;
+    weight_conversion : Input.report option;
+  }
+
+  val capabilities : Modelkit.Capability.estimator
+
+  val report : fitted -> report
+  (** Records original/effective row counts and conversion allocations. Shapes
+      describe the original inputs; retained buffers contain positively weighted
+      rows only. Full-input float32 staging and row-index arrays are reported
+      separately. Mapping tables, class storage, native allocations, and the
+      temporary cache-detachment model buffer are excluded. *)
+
+  val classes : fitted -> int array
+  (** A fresh copy of the sorted original integer labels. Only classes with
+      positive sample weight enter the fitted vocabulary. Labels are mapped to
+      contiguous native indices, preserving values beyond float32 precision. *)
+
+  (** Specifications are created with {!Specification.create}. At least two
+      positively weighted classes are required; empty, single-class, and
+      single-effective-class targets return typed validation errors. Two
+      effective classes use binary logistic loss; three or more use multiclass
+      softmax cross-entropy. Class count is bounded by exact float32 index
+      representation. Zero-weight rows are removed before native training;
+      numeric admission still validates their features. Native feature NaNs
+      remain missing values.
+
+      Prediction returns original labels in row order. Probability ties select
+      the lowest label, including the binary probability-0.5 tie. Schema, native
+      lifetime, concurrency, version-dependent reproducibility, and thread
+      contracts match {!Regressor}. Empty prediction batches are supported. *)
+  include
+    Modelkit.CLASSIFIER
+      with type t := t
+       and type params := params
+       and type fitted := fitted
+       and type rng = Modelkit.Rng.t
+
+  val predict_proba :
+    fitted ->
+    feature_schema:Modelkit.Feature_schema.t ->
+    x:Modelkit.Matrix.t ->
+    (Modelkit.Matrix.t, Modelkit.Error.t) result
+  (** Finite float64 probabilities with one column per entry in {!classes}.
+      Binary columns are one-minus-positive-probability and positive probability
+      for the lower and higher labels. Multiclass output is checked to sum to
+      one within 1e-6, then normalized in float64 to remove float32 roundoff.
+      Invalid native probabilities are typed numerical failures. *)
+
+  val predict_proba_with_report :
+    fitted ->
+    feature_schema:Modelkit.Feature_schema.t ->
+    x:Modelkit.Matrix.t ->
+    (Modelkit.Matrix.t * Input.report, Modelkit.Error.t) result
+  (** Includes the float32 feature-conversion report. Native output buffers and
+      returned probabilities are excluded from that report. *)
+
+  val estimator :
+    ?name:string ->
+    t ->
+    ( ( Modelkit.Target.classification Modelkit.Target.t,
+        Modelkit.Target.classification Modelkit.Target.t )
+      Modelkit.Pipeline.estimator,
+      Modelkit.Error.t )
+    result
+  (** Public estimator packaging with class/probability dispatch, sample-weight
+      routing, and package/version provenance. Artifact encoding remains
+      explicitly unsupported until the reviewed pipeline codec is available. *)
 end

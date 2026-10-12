@@ -6,6 +6,10 @@
 - Add weighted squared-error XGBoost regression with native missing-value
   routing, deterministic seeds, schema-checked prediction, pipeline packaging,
   provenance, and pinned parity coverage for tested native versions.
+- Add binary/multiclass XGBoost classification with reversible integer-label
+  encoding, sorted effective classes, sample weights, normalized probabilities,
+  deterministic ties, zero-weight row exclusion, typed degenerate-target
+  failures, pipeline dispatch, and pinned native-version parity coverage.
 - Record producer version 0.6.0-dev in newly written built-in artifacts while
   retaining the existing schema, readers, and golden-artifact compatibility.
 

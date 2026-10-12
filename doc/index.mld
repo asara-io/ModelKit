@@ -9,11 +9,13 @@ additional public namespaces or compatibility targets. Optional integrations,
 such as bounded Domainslib execution, are distributed as separate packages.
 
 The optional [modelkit-xgboost] package provides weighted CPU histogram-tree
-regression, native missing-value routing, immutable specifications, checked
+regression and binary/multiclass classification, native missing-value routing,
+immutable specifications, checked
 float32 input, allocation/rounding reports, and schema-checked pipeline
 prediction. Its separate odoc guide documents the native precision, platform,
-threading, and lifetime contracts. Packaged classification and fitted-pipeline
-codecs are not yet available.
+threading, and lifetime contracts. Classification preserves original integer
+labels and aligned class probabilities. Fitted-pipeline codecs are not yet
+available.
 
 Version 0.6.0-dev provides immutable dense {!Modelkit.Dataset} admission, explicit
 feature-finiteness policies, stable schema fingerprints, zero-copy row-index

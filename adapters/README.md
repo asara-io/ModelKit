@@ -20,10 +20,13 @@ These semantics are enforced by the source-neutral conformance suite in `test/ad
 
 `modelkit-xgboost` converts ModelKit data outward to opaque float32 native input,
 validates immutable CPU histogram-tree specifications, and provides weighted
-squared-error regression through `Modelkit_xgboost.Regressor`. Its estimator
-helper packages the model into ordinary or supervised pipelines with provenance
-and sample-weight routing. Packaged classification and fitted-pipeline codecs
-are not yet available. Its odoc guide documents precision, allocation, error,
+squared-error regression through `Modelkit_xgboost.Regressor` and binary/multiclass
+classification through `Modelkit_xgboost.Classifier`. Their estimator helpers
+provide pipeline packaging with provenance and sample-weight routing;
+classification exposes sorted original labels and aligned normalized
+probabilities. Zero-weight rows do not enter native classifier training, and
+fewer than two effective classes produce typed errors. Fitted-pipeline codecs
+are not yet available. The odoc guide documents precision, allocation, error,
 lifetime, and OpenMP boundaries. Outward conversion has its own report type
 because native storage is additional to the immutable float64 ModelKit source.
 

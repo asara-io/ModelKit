@@ -1,0 +1,380 @@
+{
+  "configuration": {
+    "binary_all_missing": {
+      "classes": [
+        -16777219,
+        16777219
+      ],
+      "colsample_bytree": 1.0,
+      "learning_rate": 0.2,
+      "max_bin": 32,
+      "max_depth": 3,
+      "min_child_weight": 1.0,
+      "min_split_loss": 0.0,
+      "objective": "binary:logistic",
+      "reg_alpha": 0.0,
+      "reg_lambda": 1.0,
+      "rounds": 12,
+      "seed": 41,
+      "subsample": 1.0,
+      "threads": 1
+    },
+    "binary_constant_features": {
+      "classes": [
+        -16777219,
+        16777219
+      ],
+      "colsample_bytree": 1.0,
+      "learning_rate": 0.2,
+      "max_bin": 32,
+      "max_depth": 3,
+      "min_child_weight": 1.0,
+      "min_split_loss": 0.0,
+      "objective": "binary:logistic",
+      "reg_alpha": 0.0,
+      "reg_lambda": 1.0,
+      "rounds": 12,
+      "seed": 41,
+      "subsample": 1.0,
+      "threads": 1
+    },
+    "binary_dense": {
+      "classes": [
+        -16777219,
+        16777219
+      ],
+      "colsample_bytree": 1.0,
+      "learning_rate": 0.2,
+      "max_bin": 32,
+      "max_depth": 3,
+      "min_child_weight": 1.0,
+      "min_split_loss": 0.0,
+      "objective": "binary:logistic",
+      "reg_alpha": 0.0,
+      "reg_lambda": 1.0,
+      "rounds": 12,
+      "seed": 41,
+      "subsample": 1.0,
+      "threads": 1
+    },
+    "binary_imbalanced": {
+      "classes": [
+        -16777219,
+        16777219
+      ],
+      "colsample_bytree": 1.0,
+      "learning_rate": 0.2,
+      "max_bin": 32,
+      "max_depth": 3,
+      "min_child_weight": 1.0,
+      "min_split_loss": 0.0,
+      "objective": "binary:logistic",
+      "reg_alpha": 0.0,
+      "reg_lambda": 1.0,
+      "rounds": 12,
+      "seed": 41,
+      "subsample": 1.0,
+      "threads": 1
+    },
+    "binary_missing": {
+      "classes": [
+        -16777219,
+        16777219
+      ],
+      "colsample_bytree": 1.0,
+      "learning_rate": 0.2,
+      "max_bin": 32,
+      "max_depth": 3,
+      "min_child_weight": 1.0,
+      "min_split_loss": 0.0,
+      "objective": "binary:logistic",
+      "reg_alpha": 0.0,
+      "reg_lambda": 1.0,
+      "rounds": 12,
+      "seed": 41,
+      "subsample": 1.0,
+      "threads": 1
+    },
+    "binary_regularized": {
+      "classes": [
+        -16777219,
+        16777219
+      ],
+      "colsample_bytree": 1.0,
+      "learning_rate": 0.2,
+      "max_bin": 32,
+      "max_depth": 3,
+      "min_child_weight": 2.0,
+      "min_split_loss": 0.1,
+      "objective": "binary:logistic",
+      "reg_alpha": 0.2,
+      "reg_lambda": 3.0,
+      "rounds": 12,
+      "seed": 41,
+      "subsample": 1.0,
+      "threads": 1
+    },
+    "binary_sampled": {
+      "classes": [
+        -16777219,
+        16777219
+      ],
+      "colsample_bytree": 0.75,
+      "learning_rate": 0.2,
+      "max_bin": 32,
+      "max_depth": 3,
+      "min_child_weight": 1.0,
+      "min_split_loss": 0.0,
+      "objective": "binary:logistic",
+      "reg_alpha": 0.0,
+      "reg_lambda": 1.0,
+      "rounds": 12,
+      "seed": 41,
+      "subsample": 0.75,
+      "threads": 1
+    },
+    "binary_weighted": {
+      "classes": [
+        -16777219,
+        16777219
+      ],
+      "colsample_bytree": 1.0,
+      "learning_rate": 0.2,
+      "max_bin": 32,
+      "max_depth": 3,
+      "min_child_weight": 1.0,
+      "min_split_loss": 0.0,
+      "objective": "binary:logistic",
+      "reg_alpha": 0.0,
+      "reg_lambda": 1.0,
+      "rounds": 12,
+      "seed": 41,
+      "subsample": 1.0,
+      "threads": 1
+    },
+    "binary_zero_weight_class": {
+      "classes": [
+        -16777219,
+        16777219
+      ],
+      "colsample_bytree": 1.0,
+      "learning_rate": 0.2,
+      "max_bin": 32,
+      "max_depth": 3,
+      "min_child_weight": 1.0,
+      "min_split_loss": 0.0,
+      "objective": "binary:logistic",
+      "reg_alpha": 0.0,
+      "reg_lambda": 1.0,
+      "rounds": 12,
+      "seed": 41,
+      "subsample": 1.0,
+      "threads": 1
+    },
+    "multiclass_all_missing": {
+      "classes": [
+        -19,
+        7,
+        20000003
+      ],
+      "colsample_bytree": 1.0,
+      "learning_rate": 0.2,
+      "max_bin": 32,
+      "max_depth": 3,
+      "min_child_weight": 1.0,
+      "min_split_loss": 0.0,
+      "objective": "multi:softprob",
+      "reg_alpha": 0.0,
+      "reg_lambda": 1.0,
+      "rounds": 12,
+      "seed": 41,
+      "subsample": 1.0,
+      "threads": 1
+    },
+    "multiclass_constant_features": {
+      "classes": [
+        -19,
+        7,
+        20000003
+      ],
+      "colsample_bytree": 1.0,
+      "learning_rate": 0.2,
+      "max_bin": 32,
+      "max_depth": 3,
+      "min_child_weight": 1.0,
+      "min_split_loss": 0.0,
+      "objective": "multi:softprob",
+      "reg_alpha": 0.0,
+      "reg_lambda": 1.0,
+      "rounds": 12,
+      "seed": 41,
+      "subsample": 1.0,
+      "threads": 1
+    },
+    "multiclass_dense": {
+      "classes": [
+        -19,
+        7,
+        20000003
+      ],
+      "colsample_bytree": 1.0,
+      "learning_rate": 0.2,
+      "max_bin": 32,
+      "max_depth": 3,
+      "min_child_weight": 1.0,
+      "min_split_loss": 0.0,
+      "objective": "multi:softprob",
+      "reg_alpha": 0.0,
+      "reg_lambda": 1.0,
+      "rounds": 12,
+      "seed": 41,
+      "subsample": 1.0,
+      "threads": 1
+    },
+    "multiclass_imbalanced": {
+      "classes": [
+        -19,
+        7,
+        20000003
+      ],
+      "colsample_bytree": 1.0,
+      "learning_rate": 0.2,
+      "max_bin": 32,
+      "max_depth": 3,
+      "min_child_weight": 1.0,
+      "min_split_loss": 0.0,
+      "objective": "multi:softprob",
+      "reg_alpha": 0.0,
+      "reg_lambda": 1.0,
+      "rounds": 12,
+      "seed": 41,
+      "subsample": 1.0,
+      "threads": 1
+    },
+    "multiclass_missing": {
+      "classes": [
+        -19,
+        7,
+        20000003
+      ],
+      "colsample_bytree": 1.0,
+      "learning_rate": 0.2,
+      "max_bin": 32,
+      "max_depth": 3,
+      "min_child_weight": 1.0,
+      "min_split_loss": 0.0,
+      "objective": "multi:softprob",
+      "reg_alpha": 0.0,
+      "reg_lambda": 1.0,
+      "rounds": 12,
+      "seed": 41,
+      "subsample": 1.0,
+      "threads": 1
+    },
+    "multiclass_regularized": {
+      "classes": [
+        -19,
+        7,
+        20000003
+      ],
+      "colsample_bytree": 1.0,
+      "learning_rate": 0.2,
+      "max_bin": 32,
+      "max_depth": 3,
+      "min_child_weight": 2.0,
+      "min_split_loss": 0.1,
+      "objective": "multi:softprob",
+      "reg_alpha": 0.2,
+      "reg_lambda": 3.0,
+      "rounds": 12,
+      "seed": 41,
+      "subsample": 1.0,
+      "threads": 1
+    },
+    "multiclass_sampled": {
+      "classes": [
+        -19,
+        7,
+        20000003
+      ],
+      "colsample_bytree": 0.75,
+      "learning_rate": 0.2,
+      "max_bin": 32,
+      "max_depth": 3,
+      "min_child_weight": 1.0,
+      "min_split_loss": 0.0,
+      "objective": "multi:softprob",
+      "reg_alpha": 0.0,
+      "reg_lambda": 1.0,
+      "rounds": 12,
+      "seed": 41,
+      "subsample": 0.75,
+      "threads": 1
+    },
+    "multiclass_weighted": {
+      "classes": [
+        -19,
+        7,
+        20000003
+      ],
+      "colsample_bytree": 1.0,
+      "learning_rate": 0.2,
+      "max_bin": 32,
+      "max_depth": 3,
+      "min_child_weight": 1.0,
+      "min_split_loss": 0.0,
+      "objective": "multi:softprob",
+      "reg_alpha": 0.0,
+      "reg_lambda": 1.0,
+      "rounds": 12,
+      "seed": 41,
+      "subsample": 1.0,
+      "threads": 1
+    },
+    "multiclass_zero_weight_class": {
+      "classes": [
+        -19,
+        7,
+        20000003
+      ],
+      "colsample_bytree": 1.0,
+      "learning_rate": 0.2,
+      "max_bin": 32,
+      "max_depth": 3,
+      "min_child_weight": 1.0,
+      "min_split_loss": 0.0,
+      "objective": "multi:softprob",
+      "reg_alpha": 0.0,
+      "reg_lambda": 1.0,
+      "rounds": 12,
+      "seed": 41,
+      "subsample": 1.0,
+      "threads": 1
+    }
+  },
+  "environment": {
+    "packages": {
+      "joblib": "1.5.3",
+      "narwhals": "2.24.0",
+      "numpy": "2.5.2",
+      "psutil": "7.1.0",
+      "scikit-learn": "1.9.0",
+      "scipy": "1.18.0",
+      "threadpoolctl": "3.6.0"
+    },
+    "python": "3.14.3",
+    "xgboost": "3.4.1"
+  },
+  "fixture": "xgboost_classification_v1",
+  "generator": "dev/fixtures/generate_xgboost.py",
+  "label_policy": "sorted positively weighted original integer labels; zero-weight rows excluded",
+  "license": "Apache-2.0",
+  "precision": "float32 native input/output; float64 normalized probability rows",
+  "prediction_ties": "lowest original label",
+  "reference": "xgboost.train / Booster.inplace_predict",
+  "schema_version": 1,
+  "tolerance": {
+    "absolute": 2e-06,
+    "relative": 2e-06
+  }
+}

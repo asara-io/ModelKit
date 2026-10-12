@@ -1,10 +1,10 @@
 {0 ModelKit XGBoost}
 
-The optional [modelkit-xgboost] package provides weighted squared-error CPU
-histogram-tree regression, native missing-value routing, checked input
+The optional [modelkit-xgboost] package provides weighted CPU histogram-tree
+regression and binary/multiclass classification, native missing-value routing, checked input
 conversion, immutable specifications, and scoped native interoperability.
 Installing [modelkit] does not install this package or its native dependencies.
-Packaged classification and ModelKit artifact codecs are not yet available.
+ModelKit artifact codecs are not yet available.
 
 {1 Installation and compatibility}
 
@@ -139,6 +139,75 @@ This packaging currently reports [Pipeline.Unsupported] for portable artifact
 encoding. The internal cache-detachment buffer is not a public ModelKit
 pipeline codec; encoding a pipeline containing this estimator returns a typed
 artifact error.
+
+{1 Binary and multiclass classification}
+
+{!Modelkit_xgboost.Classifier} implements the public {!module-type:Modelkit.CLASSIFIER}
+protocol using the same immutable specifications as regression. Two effective
+classes select binary logistic loss; three or more select softmax cross-entropy.
+Fitting maps sorted original integer labels to exact contiguous float32 indices.
+The mapping preserves negative labels and labels outside float32's exact integer
+range. {!Modelkit_xgboost.Classifier.classes} returns a fresh copy of that sorted
+vocabulary. Predictions return original labels; probability columns follow
+exactly the same order. Exact ties select the lowest label, including binary
+probability 0.5.
+
+At least two classes with positive sample weight are required. Empty,
+single-class, and single-effective-class targets return typed validation errors.
+Zero-weight rows are excluded before native training and do not introduce new
+classes or affect histogram cuts. Original feature values still pass the normal
+float32/NaN admission policy. Classifier fit reports retain original input shapes
+and expose original/effective row counts. If rows are filtered, feature and
+weight conversion reports include full-input float32 staging, and the target
+report includes label-export and row-selection array payloads. Label-mapping
+tables, fitted class storage, native allocations, and model-detachment buffers
+are excluded from conversion accounting.
+
+{@ocaml[
+let labels = Modelkit.Target.classification [| -7; 16777219 |]
+let classifier =
+  Modelkit_xgboost.Classifier.fit specification ~sample_weight:weights
+    ~rng:(Modelkit.Rng.create (Modelkit.Seed.of_int 41))
+    ~feature_schema:schema ~x ~y:labels ()
+  |> Result.get_ok
+let classes = Modelkit_xgboost.Classifier.classes classifier
+let probabilities =
+  Modelkit_xgboost.Classifier.predict_proba classifier ~feature_schema:schema ~x
+  |> Result.get_ok
+let () = assert (classes = [| -7; 16777219 |])
+let () = assert (Modelkit.Matrix.shape probabilities = (2, 2))
+let classifier_estimator = Modelkit_xgboost.Classifier.estimator specification
+                           |> Result.get_ok
+let classification_pipeline =
+  Modelkit.Pipeline.set_estimator Modelkit.Pipeline.empty classifier_estimator
+  |> Result.get_ok
+let classification_model =
+  Modelkit.Pipeline.fit classification_pipeline ~sample_weight:weights
+    ~rng:(Modelkit.Rng.create (Modelkit.Seed.of_int 41))
+    ~feature_schema:schema ~x ~y:labels ()
+  |> Result.get_ok
+let aligned = Modelkit.Pipeline.predict_proba classification_model
+              ~feature_schema:schema ~x |> Result.get_ok
+let () = assert (Modelkit.Matrix.shape aligned = (2, 2))
+]}
+
+Binary probability columns are one-minus-positive-probability and positive
+probability for the lower/higher labels. Multiclass native probabilities must be
+finite, lie between zero and one, and sum to one within [1e-6]; accepted rows
+are normalized in float64 to remove float32 rounding. Invalid native output
+returns a typed numerical error. Empty prediction batches retain their class
+column count. Label-only prediction avoids allocating a full float64 probability
+matrix. Classifier prediction shares the regressor's schema, native lifetime,
+concurrency, and version-dependent reproducibility contracts. Mapping takes
+linear time in rows plus class sorting; filtering adds linear staging in input
+size, and multiclass prediction scales with rows times classes.
+
+The estimator helper publishes sample-weight, class, and probability dispatch
+with package/version provenance. Raw decision margins are not exposed. Pipeline
+artifact encoding remains explicitly unsupported until its reviewed codec is
+available. Pinned classifier references cover binary and multiclass dense,
+weighted, missing/all-missing, sampled, regularized, constant-feature,
+imbalanced, and zero-weight-class cases at absolute/relative [2e-6] tolerance.
 
 {1 Native interoperability and lifetime}
 

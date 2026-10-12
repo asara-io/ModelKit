@@ -11,6 +11,29 @@
   (write-file %{target} "let value = \"%{version:modelkit-xgboost}\"\n")))
 
 (test
+ (name classification_test)
+ (modules classification_test)
+ (package modelkit-xgboost)
+ (libraries modelkit modelkit-xgboost alcotest)
+ (deps
+  ../../test/fixtures/xgboost/classification_v1.tsv
+  ../../test/fixtures/xgboost/classification_v1_3_0_4.tsv)
+ (action
+  (setenv
+   MODELKIT_XGBOOST_CLASSIFICATION_FIXTURE
+   %{dep:../../test/fixtures/xgboost/classification_v1.tsv}
+   (setenv
+    MODELKIT_XGBOOST_CLASSIFICATION_FIXTURE_3_0
+    %{dep:../../test/fixtures/xgboost/classification_v1_3_0_4.tsv}
+    (setenv
+     OMP_NUM_THREADS
+     1
+     (setenv
+      OMP_THREAD_LIMIT
+      1
+      (run %{test})))))))
+
+(test
  (name regression_test)
  (modules regression_test)
  (package modelkit-xgboost)
