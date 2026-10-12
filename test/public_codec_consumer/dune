@@ -1,0 +1,18 @@
+(library
+ (name public_codec_fixture)
+ (wrapped false)
+ (modules codec_fixture)
+ (libraries modelkit))
+
+(test
+ (name public_codec_consumer_test)
+ (modules public_codec_consumer_test)
+ (package modelkit)
+ (libraries public_codec_fixture modelkit alcotest)
+ (deps
+  (source_tree ../fixtures/artifacts))
+ (action
+  (setenv
+   MODELKIT_EXTERNAL_ARTIFACT_FIXTURES
+   ../fixtures/artifacts
+   (run %{test}))))

@@ -20,9 +20,14 @@ module Pipeline : sig
   val provenance_version : provenance -> string
   val provenance_implementation : provenance -> string
 
-  (** [Portable_artifact] means a reviewed data-only ModelKit codec is attached
-      to that fitted component. *)
-  type serialization_support = Portable_artifact | Unsupported
+  (** [Portable_artifact] identifies built-in portable data-only codecs.
+      [External_artifact] identifies an explicitly attached external codec whose
+      payload validation, runtime dependencies, and trust policy belong to its
+      package. [Unsupported] means no artifact codec is attached. *)
+  type serialization_support =
+    | Portable_artifact
+    | External_artifact
+    | Unsupported
 
   type component_report = {
     component_name : string;
@@ -33,11 +38,13 @@ module Pipeline : sig
   *)
 
   type artifact_report
+  type codec_identity = { codec_package : string; codec_name : string }
 
   type encoded_component = {
     component_tag : int;
     component_version : int;
     component_payload : bytes;
+    component_identity : codec_identity option;
   }
 
   type fitted_transformer = {
@@ -107,6 +114,7 @@ module Pipeline : sig
       option;
     terminal_classes : (unit -> int array) option;
     estimator_provenance : provenance option;
+    estimator_codec_identity : codec_identity option;
     encode_estimator : (unit -> (encoded_component, Error.t) result) option;
   }
 
@@ -200,6 +208,7 @@ module Pipeline : sig
       attached pipeline cache. *)
 
   val estimator_internal :
+    ?codec_identity:codec_identity ->
     ?encode:('fitted -> (encoded_component, Error.t) result) ->
     ?resolve_weights:
       (?sample_weight:Sample_weight.t ->
@@ -425,6 +434,7 @@ module Pipeline : sig
   val artifact_transformers : artifact_report -> component_report array
   val artifact_estimator : artifact_report -> component_report
   val portable_artifact_supported : artifact_report -> bool
+  val artifact_supported : artifact_report -> bool
 
   val fit_with_metadata :
     ('target, 'prediction) t ->

@@ -96,17 +96,84 @@ the package claims to support.
 
 After fitting, {!val:Modelkit.Pipeline.artifact_report} lists every fitted stage
 and the terminal estimator. Each component reports its optional provenance and
-either {!Modelkit.Pipeline.Portable_artifact} or
+{!Modelkit.Pipeline.Portable_artifact}, {!Modelkit.Pipeline.External_artifact}, or
 {!Modelkit.Pipeline.Unsupported}. Provenance is descriptive identity; it never
 turns arbitrary behavior into a portable codec.
 
-Public estimator adapters intentionally attach no codec. They remain fully
+Ordinary public estimator adapters attach no codec. They remain fully
 usable for in-memory fitting and prediction, while
 {!Modelkit.Artifact.encode_regression} or its classification counterpart returns
 a typed artifact error. ModelKit artifacts contain data rather than closures or
 marshalled OCaml values. An external codec therefore requires a separately
 reviewed, package-qualified, versioned data format and is not provided by an
 ambient registry.
+
+For a reviewed terminal estimator implementing {!Modelkit.REGRESSOR}, bind its
+data-only IO functions to {!Modelkit.Artifact.Codec.regression}:
+
+{[
+let codec =
+  Modelkit.Artifact.Codec.regression
+    ~package:"acme-models" ~name:"Forecast" ~version:1
+    (module Forecast)
+    ~encode:Forecast.encode_model
+    ~decode:Forecast.decode_model
+  |> Result.get_ok
+
+let package specification =
+  let ( let* ) = Result.bind in
+  let* provenance = Modelkit.Pipeline.provenance
+      ~package:"acme-models" ~version:"1.2.0" ~implementation:"Forecast" in
+  Modelkit.Artifact.Codec.estimator ~name:"forecast" ~provenance codec specification
+
+let load bytes =
+  Modelkit.Artifact.decode_regression
+    ~decoders:[| Modelkit.Artifact.Codec.decoder codec |] bytes
+]}
+
+[Forecast.decode_model] receives [~provenance] and [~feature_schema] before its
+payload argument. It validates its own payload and restores fitted state
+without training data or refitting. Native decoders must validate supported
+runtime versions and model/schema consistency and release acquired resources
+on errors or exceptions. Inference configuration can be captured when creating
+the codec used for decoding. Package identifiers and codec names are nonempty
+ASCII letters, digits, hyphens, underscores, or dots; [modelkit] is reserved.
+The integer codec version is independent of the component's package version.
+
+{!Modelkit.Artifact.Codec.classification} similarly binds a classifier and its
+class-label callback, with optional probability and decision dispatch. Its
+decoder additionally receives a bounded, distinct, ordered [~classes] array
+and must restore that exact mapping. A generalized classification envelope can
+hold one or more classes; estimator-specific target restrictions remain the
+estimator's responsibility. The binary-specific APIs require exactly two.
+
+The decoder list is local to the load call. Missing or duplicate selections,
+unknown codec versions, malformed framing/checksums, invalid schemas/classes,
+and task mismatches fail with typed errors. The core validates the entire
+envelope before an external callback. It does not interpret opaque external
+payloads or extend its built-in safe-reader guarantee to them. Applications
+select trusted codec code and follow its artifact trust policy; a checksum
+detects corruption and does not establish authenticity.
+
+{!Modelkit.Pipeline.artifact_supported} accepts both built-in and explicitly
+attached external codecs; {!Modelkit.Pipeline.portable_artifact_supported}
+accepts only built-in portable codecs. The current extension supports external
+terminal estimators surrounded by codec-supported built-in preprocessing.
+External transformer codecs, metadata-aware terminal codecs, and nested
+composition remain unsupported and fail by component name.
+
+Existing built-in regression and binary writers retain container version one.
+External terminals use version two, which records package-qualified codec
+identity, exact format version, producer provenance, and classification labels.
+{!Modelkit.Artifact.encode_classification} always writes the generalized task in
+version two. {!Modelkit.Artifact.decode_classification} accepts that task and
+legacy binary artifacts; use it for generalized artifacts even when they have
+two classes. The binary loader continues to require the binary task tag.
+
+The separately compiled [test/public_codec_consumer] library uses public APIs
+only to demonstrate weighted pipeline round trips, explicit version selection,
+class-order preservation, bounded-reader failures, and committed version-two
+golden artifacts.
 
 The repository's separately built [test/public_consumer] library is the
 executable reference for this guide. Its one metadata-aware estimator module is

@@ -615,9 +615,15 @@ val fitted :
     Artifact.encode_binary_classification fitted
     |> Result.get_ok |> Artifact.decode_binary_classification
     |> Result.get_ok |> Artifact.model;;
-val restored : Artifact.binary_classification_model = <abstr>
+val restored : Artifact.classification_model = <abstr>
 # Pipeline.predict restored ~feature_schema:schema ~x
   |> Result.get_ok |> Target.classification_values;;
+- : int array = [|0; 1|]
+# let classification_restored = Artifact.encode_classification fitted
+    |> Result.get_ok |> Artifact.decode_classification
+    |> Result.get_ok |> Artifact.model;;
+val classification_restored : Artifact.classification_model = <abstr>
+# Pipeline.classes classification_restored |> Result.get_ok;;
 - : int array = [|0; 1|]
 # let splitter = Stratified_k_fold.create ~folds:2 () |> Result.get_ok;;
 val splitter : Stratified_k_fold.t = <abstr>
@@ -651,7 +657,8 @@ rows before the terminal classifier sees the weights. External
 estimators can also participate by implementing {!Modelkit.ESTIMATOR}. Because
 arbitrary extension modules may close over behavior that has no reviewed data
 codec, pipelines intended for persistence use the artifact-aware built-in
-constructors. Encoding any unsupported component returns a typed
+constructors or explicitly attached {!Modelkit.Artifact.Codec} terminal codecs.
+Encoding any unsupported component returns a typed
 {!Modelkit.Error.Artifact} failure.
 
 {2 Column-wise preprocessing}
@@ -1702,7 +1709,9 @@ values rather than OCaml runtime representations. The versioned envelope and
 component codecs retain feature schemas, fitted parameters, and solver reports;
 optional metadata can record a row count, root seed, sample-weight presence,
 and caller labels. Training observations, closures, commands, and [Marshal]
-values are never serialized.
+values are never serialized by supported codecs. External terminal codecs are
+explicitly attached and selected through {!Modelkit.Artifact.Codec}; their
+opaque payload validation and runtime/trust requirements belong to the adapter.
 
 The default reader bounds total bytes, component count, feature count, string
 length, and metadata count before component allocations. A declared MD5 digest
@@ -1710,7 +1719,12 @@ detects accidental corruption only; it neither authenticates nor encrypts an
 artifact. The format remains experimental during 0.x, while golden-reader tests
 preserve every released schema. Use task-specific regression or binary
 classification loaders so a wrong model kind fails while loading rather than
-during prediction.
+during prediction. The generalized classification APIs retain the full ordered
+class mapping and accept binary artifacts as well. Built-in regression/binary
+writers preserve container version one; external estimators and generalized
+classification use version two. Reader limits additionally bound class counts.
+Decoder lists are explicit on each call, and complete framing, checksums,
+schemas, provenance, and class mappings are validated before external code runs.
 
 The reference backend preserves small terms that ordinary floating-point
 summation can lose to cancellation:

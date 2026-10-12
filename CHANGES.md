@@ -16,6 +16,10 @@
   and fresh-process verification of the single-thread OpenMP startup contract.
 - Record producer version 0.6.0-dev in newly written built-in artifacts while
   retaining the existing schema, readers, and golden-artifact compatibility.
+- Add explicit, task-typed external terminal-estimator codecs with package-qualified
+  identities, per-call decoder selection, provenance, and bounded envelope
+  validation. Add generalized classification persistence and class-count limits
+  in container version two while retaining built-in version-one writers/readers.
 
 # 0.5.0 (2026-09-09)
 

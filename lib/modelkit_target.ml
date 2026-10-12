@@ -192,6 +192,7 @@ module Transformed_target_regressor = struct
           terminal_predict_proba = None;
           terminal_classes = None;
           estimator_provenance = None;
+          estimator_codec_identity = None;
           encode_estimator = None;
         }
     in
