@@ -3,7 +3,8 @@
     This package depends on the OCaml [xgboost] binding; the portable [modelkit]
     package does not. The supported binding is 0.2.1 with native libxgboost 3.x.
     Native input conversion copies float64 values to row-major float32 storage.
-    {!Native} provides scoped interoperability with upstream handles. *)
+    {!Native} provides scoped interoperability with upstream handles.
+    {!Artifact} persists trusted fitted models without refitting. *)
 
 module Specification : sig
   type params = {
@@ -117,6 +118,17 @@ module Native : sig
   (** Returns the linked native library version; unsupported majors are typed
       compatibility failures. Only major version three is admitted. *)
 
+  val with_model_buffer :
+    ?threads:int ->
+    bytes ->
+    (Xgboost.Booster.t -> ('a, Modelkit.Error.t) result) ->
+    ('a, Modelkit.Error.t) result
+  (** Borrows a fresh CPU inference booster restored from trusted
+      XGBoost-produced JSON. This expert interoperability operation does not
+      read a ModelKit envelope. The default native thread cap is one; startup
+      OpenMP bounds still apply. The callback may neither free nor retain the
+      handle. Success, typed failures, and exceptions release it. *)
+
   val with_dmatrix :
     ?target:Input.target ->
     ?sample_weight:Input.weights ->
@@ -216,8 +228,9 @@ module Regressor : sig
     result
   (** Packages the public regressor with package/version provenance. The
       estimator receives routed sample weights and can enter ordinary or
-      supervised pipelines. No artifact codec is attached yet; portable encoding
-      returns a typed unsupported error. *)
+      supervised pipelines. This helper attaches no artifact codec
+      automatically; encoding returns a typed unsupported error.
+      {!Artifact.regression_codec} supplies explicit attachment. *)
 end
 
 (** Binary and multiclass CPU histogram-tree classification. *)
@@ -300,6 +313,149 @@ module Classifier : sig
       Modelkit.Error.t )
     result
   (** Public estimator packaging with class/probability dispatch, sample-weight
-      routing, and package/version provenance. Artifact encoding remains
-      explicitly unsupported until the reviewed pipeline codec is available. *)
+      routing, and package/version provenance. This helper attaches no artifact
+      codec automatically. {!Artifact.classification_codec} supplies explicit
+      attachment. *)
+end
+
+(** Trusted native-model persistence, independent of training data and
+    refitting. Native payloads must come from this supported writer. Checksums
+    detect corruption and do not authenticate artifacts. Arbitrary external
+    model JSON remains outside XGBoost's safe-loading guarantees. *)
+module Artifact : sig
+  type limits
+
+  val default_limits : limits
+  (** Defaults: 64 MiB bytes, one million features/classes, and one MiB UTF-8
+      strings. Byte bounds apply to the complete envelope, native model JSON,
+      and temporary native configuration inspection; JSON nesting is capped at
+      64. Parsing allocates memory linear in JSON size, in addition to native
+      model storage. These bounds do not make arbitrary native JSON safe. *)
+
+  val limits :
+    ?max_bytes:int ->
+    ?max_features:int ->
+    ?max_classes:int ->
+    ?max_string_bytes:int ->
+    unit ->
+    (limits, Modelkit.Error.t) result
+
+  type provenance = {
+    fitted_adapter_version : string;
+    writer_adapter_version : string;
+    binding_version : string;
+    training_native_version : int * int * int;
+    model_native_version : int * int * int;
+    runtime_native_version : int * int * int;
+    source_word_size : int;
+    inference_threads : int;
+    prediction_begin : int;
+    prediction_end : int;
+  }
+
+  val regression_provenance : Regressor.fitted -> provenance
+
+  val classification_provenance : Classifier.fitted -> provenance
+  (** Fit and writer versions remain distinct. [model_native_version] identifies
+      the JSON used to construct this fitted value; [runtime_native_version]
+      identifies its current native runtime. Resaving writes JSON with the
+      current runtime's version while preserving original fit provenance and
+      diagnostics. Conversion byte counts describe [source_word_size], rather
+      than the loading process's word size. The fixed prediction range includes
+      all fitted rounds. [inference_threads] is the configured booster cap;
+      startup OpenMP limits may further reduce concurrency. *)
+
+  val encode_regression :
+    ?limits:limits -> Regressor.fitted -> (bytes, Modelkit.Error.t) result
+  (** Serializes XGBoost-produced model JSON with codec/container versions,
+      immutable parameters, feature schema, regression objective, conversion
+      reports, original seed/provenance, float32/native-NaN/CPU policies, and
+      the complete prediction range. No training observations, native memory
+      snapshots, [Marshal], or training-configuration dump are persisted.
+      Serialization shares the fitted prediction lock and cannot invalidate
+      concurrent predictions. *)
+
+  val encode_classification :
+    ?limits:limits -> Classifier.fitted -> (bytes, Modelkit.Error.t) result
+  (** Also retains the strictly increasing original integer-label mapping and
+      original/effective row counts. Binary and multiclass objectives have
+      distinct task tags in the model envelope. *)
+
+  val decode_regression :
+    ?limits:limits ->
+    ?threads:int ->
+    bytes ->
+    (Regressor.fitted, Modelkit.Error.t) result
+  (** Loads trusted artifacts produced by the supported writer. Framing,
+      checksum, versions, policies, specification, schema fingerprint, reports,
+      JSON metadata, feature/output dimensions, and prediction range are checked
+      before native loading. After loading, native feature/round counts,
+      objective/output dimensions, CPU execution, and thread settings are
+      verified before ownership transfers to the fitted value. Failures release
+      acquired native state; unrelated exceptions propagate after cleanup.
+
+      [threads] defaults to one and must be a positive int32 value. It affects
+      inference only; restored training parameters/reports retain their original
+      values. Native JSON writer versions must be major three and no newer than
+      the linked runtime; binding provenance must be 0.2.1. Other version
+      combinations require their own compatibility evidence. *)
+
+  val decode_classification :
+    ?limits:limits ->
+    ?threads:int ->
+    bytes ->
+    (Classifier.fitted, Modelkit.Error.t) result
+  (** Classification reader for binary and multiclass artifacts, preserving
+      original class order and aligned probabilities. It rejects regression
+      artifacts and incompatible class/objective metadata. *)
+
+  val save_regression :
+    ?limits:limits ->
+    path:string ->
+    Regressor.fitted ->
+    (unit, Modelkit.Error.t) result
+
+  val save_classification :
+    ?limits:limits ->
+    path:string ->
+    Classifier.fitted ->
+    (unit, Modelkit.Error.t) result
+  (** Save functions encode completely before opening the destination. Writes
+      replace the destination directly; atomic replacement and authentication
+      remain caller transport responsibilities. *)
+
+  val load_regression :
+    ?limits:limits ->
+    ?threads:int ->
+    path:string ->
+    unit ->
+    (Regressor.fitted, Modelkit.Error.t) result
+
+  val load_classification :
+    ?limits:limits ->
+    ?threads:int ->
+    path:string ->
+    unit ->
+    (Classifier.fitted, Modelkit.Error.t) result
+
+  val regression_codec :
+    ?limits:limits ->
+    ?threads:int ->
+    unit ->
+    ( (Specification.t, Modelkit.Target.regression) Modelkit.Artifact.Codec.t,
+      Modelkit.Error.t )
+    result
+
+  val classification_codec :
+    ?limits:limits ->
+    ?threads:int ->
+    unit ->
+    ( (Specification.t, Modelkit.Target.classification) Modelkit.Artifact.Codec.t,
+      Modelkit.Error.t )
+    result
+  (** Factories bind these payloads to the public external terminal-codec
+      contract. [threads] configures restored inference; fitting still uses the
+      specification. Decoding additionally validates outer component provenance,
+      schema, and class mapping against this native envelope before loading.
+      Ordinary estimator helpers currently attach no codec automatically. *)
 end

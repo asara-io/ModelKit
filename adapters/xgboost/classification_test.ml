@@ -391,7 +391,7 @@ let test_pipeline class_count () =
       ()
     |> get
   in
-  expect Artifact (Artifact.encode_binary_classification bare_fitted)
+  expect Artifact (Modelkit.Artifact.encode_binary_classification bare_fitted)
 
 type fixture = {
   vectors : (string, string array) Hashtbl.t;

@@ -300,6 +300,32 @@ module Input = struct
     Ok { weight_values = values; weight_conversion = report }
 end
 
+module Origin = struct
+  type t = {
+    fitted_adapter_version : string;
+    writer_adapter_version : string;
+    binding_version : string;
+    source_word_size : int;
+    model_native_version : int * int * int;
+    runtime_native_version : int * int * int;
+    inference_threads : int;
+  }
+end
+
+type model_origin = Origin.t
+
+let fitted_origin specification native_version =
+  {
+    Origin.fitted_adapter_version = Modelkit_xgboost_version.value;
+    writer_adapter_version = Modelkit_xgboost_version.value;
+    binding_version = "0.2.1";
+    source_word_size = Sys.word_size;
+    model_native_version = native_version;
+    runtime_native_version = native_version;
+    inference_threads =
+      (Specification.params specification).Specification.threads;
+  }
+
 module Native = struct
   let protect operation f =
     try f ()
@@ -395,6 +421,33 @@ module Native = struct
         "native boosting rounds differ from the specification"
     else Ok ()
 
+  let with_loaded_model ~threads bytes callback =
+    let* () =
+      Specification.integer ~name:"inference_threads" ~minimum:1 threads
+    in
+    let* _ = version () in
+    protect "XGBoost loaded model" (fun () ->
+        let booster = Xgboost.Booster.create () in
+        let retained = ref false in
+        Fun.protect
+          ~finally:(fun () ->
+            if not !retained then Xgboost.Booster.free booster)
+          (fun () ->
+            let configure () =
+              Xgboost.Booster.set_params booster
+                [ ("device", "cpu"); ("nthread", string_of_int threads) ]
+            in
+            configure ();
+            Xgboost.Booster.load_model_buffer booster bytes;
+            configure ();
+            let* value, keep = callback booster in
+            retained := keep;
+            Ok value))
+
+  let with_model_buffer ?(threads = 1) bytes callback =
+    with_loaded_model ~threads bytes (fun booster ->
+        Result.map (fun value -> (value, false)) (callback booster))
+
   let detached_booster specification ~columns bytes =
     protect "XGBoost fitted model" (fun () ->
         let booster = Xgboost.Booster.create () in
@@ -477,6 +530,7 @@ module Regressor_implementation = struct
     booster : Xgboost.Booster.t;
     prediction_mutex : Mutex.t;
     fit_report : report;
+    origin : model_origin;
   }
 
   let clone = Specification.clone
@@ -517,6 +571,7 @@ module Regressor_implementation = struct
         schema = feature_schema;
         booster;
         prediction_mutex = Mutex.create ();
+        origin = fitted_origin specification native_version;
         fit_report =
           {
             rounds;
@@ -622,6 +677,7 @@ module Classifier_implementation = struct
     booster : Xgboost.Booster.t;
     prediction_mutex : Mutex.t;
     fit_report : report;
+    origin : model_origin;
   }
 
   let clone = Specification.clone
@@ -807,6 +863,7 @@ module Classifier_implementation = struct
         class_labels;
         booster;
         prediction_mutex = Mutex.create ();
+        origin = fitted_origin specification native_version;
         fit_report =
           {
             rounds = (Specification.params specification).Specification.rounds;
@@ -939,4 +996,694 @@ module Classifier = struct
     Pipeline.estimator ~provenance ~name
       (module Classifier_implementation)
       ~predict_proba ~classes specification
+end
+
+module Artifact = struct
+  module Io = Modelkit_xgboost_io
+  module W = Io.Writer
+  module R = Io.Reader
+
+  type limits = Io.limits
+
+  let default_limits = Io.default_limits
+  let limits = Io.limits
+  let failure = Io.failure
+
+  let compatibility component reason =
+    Error
+      (Error.make
+         ~remediation:
+           "Use binding 0.2.1 and a tested libxgboost 3.x runtime at least as \
+            new as the model writer."
+         (Error.Compatibility { component; reason }))
+
+  type provenance = {
+    fitted_adapter_version : string;
+    writer_adapter_version : string;
+    binding_version : string;
+    training_native_version : int * int * int;
+    model_native_version : int * int * int;
+    runtime_native_version : int * int * int;
+    source_word_size : int;
+    inference_threads : int;
+    prediction_begin : int;
+    prediction_end : int;
+  }
+
+  let provenance (origin : model_origin) training_native_version rounds =
+    {
+      fitted_adapter_version = origin.Origin.fitted_adapter_version;
+      writer_adapter_version = origin.Origin.writer_adapter_version;
+      binding_version = origin.Origin.binding_version;
+      training_native_version;
+      model_native_version = origin.Origin.model_native_version;
+      runtime_native_version = origin.Origin.runtime_native_version;
+      source_word_size = origin.Origin.source_word_size;
+      inference_threads = origin.Origin.inference_threads;
+      prediction_begin = 0;
+      prediction_end = rounds;
+    }
+
+  let regression_provenance fitted =
+    provenance fitted.Regressor.origin
+      fitted.Regressor.fit_report.Regressor.native_version
+      fitted.Regressor.fit_report.Regressor.rounds
+
+  let classification_provenance fitted =
+    provenance fitted.Classifier.origin
+      fitted.Classifier.fit_report.Classifier.native_version
+      fitted.Classifier.fit_report.Classifier.rounds
+
+  type stored = {
+    task : int;
+    specification : Specification.t;
+    schema : Feature_schema.t;
+    classes : int array;
+    origin : model_origin;
+    training_native_version : int * int * int;
+    native_seed : int64;
+    training_rows : int;
+    effective_rows : int;
+    feature_conversion : Input.report;
+    target_conversion : Input.report;
+    weight_conversion : Input.report option;
+    model : bytes;
+  }
+
+  let objective task =
+    match task with
+    | 1 -> "reg:squarederror"
+    | 2 -> "binary:logistic"
+    | 3 -> "multi:softprob"
+    | _ -> assert false
+
+  let text limits value =
+    if
+      String.length value > limits.Io.max_string_bytes
+      || not (String.is_valid_utf_8 value)
+    then failure "model text exceeds its limit or is not UTF-8"
+    else Ok ()
+
+  let write_version writer (major, minor, patch) =
+    W.int writer major;
+    W.int writer minor;
+    W.int writer patch
+
+  let read_version reader =
+    let* major = R.int reader in
+    let* minor = R.int reader in
+    let* patch = R.int reader in
+    if major <> 3 then
+      compatibility "XGBoost model"
+        "supported native model major version is three"
+    else if minor < 0 || patch < 0 then failure "invalid native version"
+    else Ok (major, minor, patch)
+
+  let write_ints writer values =
+    W.int writer (Array.length values);
+    Array.iter (W.int writer) values
+
+  let write_schema ~limits writer schema =
+    if
+      Feature_schema.feature_count schema < 1
+      || Feature_schema.feature_count schema > limits.Io.max_features
+    then failure "feature count exceeds the model reader contract"
+    else
+      let () = W.int writer (Feature_schema.feature_count schema) in
+      let* () =
+        match Feature_schema.names schema with
+        | None ->
+            W.byte writer 0;
+            Ok ()
+        | Some names ->
+            let values = Feature_names.to_array names in
+            let rec check index =
+              if index = Array.length values then Ok ()
+              else
+                let* () = text limits values.(index) in
+                check (index + 1)
+            in
+            let* () = check 0 in
+            W.byte writer 1;
+            Array.iter (W.string writer) values;
+            Ok ()
+      in
+      let fingerprint =
+        Schema_fingerprint.to_string (Feature_schema.fingerprint schema)
+      in
+      let* () = text limits fingerprint in
+      W.string writer fingerprint;
+      Ok ()
+
+  let read_schema ~limits reader =
+    let* columns = R.length reader ~maximum:limits.Io.max_features in
+    let* named = R.byte reader in
+    let* schema =
+      match named with
+      | 0 -> Feature_schema.anonymous ~feature_count:columns |> map_data
+      | 1 ->
+          let* () =
+            R.require reader
+              (if columns > limits.Io.max_bytes / 8 then limits.Io.max_bytes
+               else columns * 8)
+          in
+          let names = Array.make columns "" in
+          let rec read index =
+            if index = columns then Ok ()
+            else
+              let* name = R.string reader in
+              names.(index) <- name;
+              read (index + 1)
+          in
+          let* () = read 0 in
+          let* names =
+            Feature_names.create ~expected_count:columns names |> map_data
+          in
+          Ok (Feature_schema.named names)
+      | _ -> failure "invalid model feature-schema tag"
+    in
+    let* fingerprint = R.string reader in
+    if
+      columns = 0
+      || fingerprint
+         <> Schema_fingerprint.to_string (Feature_schema.fingerprint schema)
+    then failure "model feature-schema fingerprint is inconsistent"
+    else Ok schema
+
+  let write_specification writer specification =
+    let p = Specification.params specification in
+    List.iter (W.int writer)
+      [
+        p.Specification.rounds;
+        p.Specification.max_depth;
+        p.Specification.max_bin;
+        p.Specification.threads;
+      ];
+    List.iter (W.float writer)
+      [
+        p.Specification.learning_rate;
+        p.Specification.min_child_weight;
+        p.Specification.min_split_loss;
+        p.Specification.reg_alpha;
+        p.Specification.reg_lambda;
+        p.Specification.subsample;
+        p.Specification.colsample_bytree;
+      ]
+
+  let read_specification reader =
+    let* rounds = R.int reader in
+    let* max_depth = R.int reader in
+    let* max_bin = R.int reader in
+    let* threads = R.int reader in
+    let* learning_rate = R.float reader in
+    let* min_child_weight = R.float reader in
+    let* min_split_loss = R.float reader in
+    let* reg_alpha = R.float reader in
+    let* reg_lambda = R.float reader in
+    let* subsample = R.float reader in
+    let* colsample_bytree = R.float reader in
+    Specification.create ~rounds ~max_depth ~max_bin ~threads ~learning_rate
+      ~min_child_weight ~min_split_loss ~reg_alpha ~reg_lambda ~subsample
+      ~colsample_bytree ()
+    |> Result.map_error
+         (Error.with_context (Error.Stage "stored XGBoost specification"))
+
+  let write_conversion writer report =
+    write_ints writer report.Input.shape;
+    W.i64 writer report.Input.bytes;
+    W.i64 writer report.Input.temporary_bytes;
+    W.int writer report.Input.rounded
+
+  let read_conversion reader =
+    let* shape = R.ints reader ~maximum:2 in
+    let* bytes = R.i64 reader in
+    let* temporary_bytes = R.i64 reader in
+    let* rounded = R.int reader in
+    if bytes < 0L || temporary_bytes < 0L || rounded < 0 then
+      failure "invalid stored conversion counts"
+    else Ok { Input.shape; bytes; temporary_bytes; rounded }
+
+  let validate_reports stored =
+    let rows = stored.training_rows and effective = stored.effective_rows in
+    let columns = Feature_schema.feature_count stored.schema in
+    let values = Int64.of_int rows in
+    if
+      rows < 1 || effective < 1 || effective > rows
+      || values > Int64.div Int64.max_int 16L
+      || values > Int64.div Int64.max_int (Int64.mul 4L (Int64.of_int columns))
+    then failure "invalid training/effective row counts"
+    else
+      let source_values = Int64.mul values (Int64.of_int columns) in
+      let size count = Int64.mul 4L count in
+      let filtered = effective <> rows in
+      let feature_bytes =
+        size (Int64.mul (Int64.of_int effective) (Int64.of_int columns))
+      in
+      let target_bytes = size (Int64.of_int effective) in
+      let word = Int64.of_int (stored.origin.Origin.source_word_size / 8) in
+      let target_temporary =
+        if stored.task = 1 then 0L
+        else
+          Int64.mul word
+            (Int64.add values (if filtered then Int64.of_int effective else 0L))
+      in
+      let feature = stored.feature_conversion
+      and target = stored.target_conversion in
+      if
+        feature.Input.shape <> [| rows; columns |]
+        || target.Input.shape <> [| rows |]
+        || feature.Input.bytes <> feature_bytes
+        || target.Input.bytes <> target_bytes
+        || (feature.Input.temporary_bytes
+           <> if filtered then size source_values else 0L)
+        || target.Input.temporary_bytes <> target_temporary
+        || Int64.of_int feature.Input.rounded > source_values
+        || target.Input.rounded > rows
+        || (stored.task <> 1 && target.Input.rounded <> 0)
+        || (stored.task = 1 && filtered)
+      then failure "stored training conversion reports are inconsistent"
+      else
+        match stored.weight_conversion with
+        | None ->
+            if filtered then
+              failure "filtered training rows require a weight report"
+            else Ok ()
+        | Some report ->
+            if
+              report.Input.shape <> [| rows |]
+              || report.Input.bytes <> target_bytes
+              || (report.Input.temporary_bytes
+                 <> if filtered then size values else 0L)
+              || report.Input.rounded > rows
+            then failure "stored weight conversion report is inconsistent"
+            else Ok ()
+
+  let validate_classes ~limits task classes effective =
+    let count = Array.length classes in
+    if
+      (task = 1 && count <> 0)
+      || (task = 2 && count <> 2)
+      || (task = 3 && count < 3)
+      || count > limits.Io.max_classes
+      || count > 16777217 || count > effective
+    then
+      failure "class count is incompatible with the model task or reader limit"
+    else
+      let rec ordered index =
+        if index >= count then Ok ()
+        else if classes.(index - 1) >= classes.(index) then
+          failure "model class mapping must be strictly increasing"
+        else ordered (index + 1)
+      in
+      ordered 1
+
+  let snapshot ~mutex booster =
+    Native.protect "XGBoost serialization" (fun () ->
+        Mutex.lock mutex;
+        Fun.protect
+          ~finally:(fun () -> Mutex.unlock mutex)
+          (fun () ->
+            let bytes =
+              Xgboost.Booster.save_model_buffer ~format:{|{"format":"json"}|}
+                booster
+            in
+            ignore (Sys.opaque_identity booster);
+            Ok bytes))
+
+  let encode_stored ~limits stored =
+    let* () = validate_reports stored in
+    let* () =
+      validate_classes ~limits stored.task stored.classes stored.effective_rows
+    in
+    let* json =
+      Io.Json.parse ~max_bytes:limits.Io.max_bytes
+        (Bytes.to_string stored.model)
+    in
+    let* model_native_version = Io.Json.version json in
+    let* () =
+      Io.Json.check_model
+        ~columns:(Feature_schema.feature_count stored.schema)
+        ~classes:(Array.length stored.classes)
+        ~rounds:(Specification.params stored.specification).Specification.rounds
+        ~objective:(objective stored.task) ~version:model_native_version json
+    in
+    let writer = W.create () in
+    let values =
+      [
+        "modelkit-xgboost";
+        (if stored.task = 1 then "Regressor" else "Classifier");
+        stored.origin.Origin.fitted_adapter_version;
+        Modelkit_xgboost_version.value;
+        stored.origin.Origin.binding_version;
+        objective stored.task;
+      ]
+    in
+    let rec validate_text = function
+      | [] -> Ok ()
+      | value :: rest ->
+          let* () = text limits value in
+          validate_text rest
+    in
+    let* () = validate_text values in
+    W.string writer "modelkit-xgboost";
+    W.string writer (if stored.task = 1 then "Regressor" else "Classifier");
+    W.int writer 1;
+    W.string writer stored.origin.Origin.fitted_adapter_version;
+    W.string writer Modelkit_xgboost_version.value;
+    W.string writer stored.origin.Origin.binding_version;
+    write_version writer stored.training_native_version;
+    write_version writer model_native_version;
+    W.int writer stored.origin.Origin.source_word_size;
+    W.byte writer 1;
+    W.byte writer 1;
+    W.byte writer 1;
+    W.string writer (objective stored.task);
+    W.int writer 0;
+    W.int writer
+      (Specification.params stored.specification).Specification.rounds;
+    write_specification writer stored.specification;
+    let* () = write_schema ~limits writer stored.schema in
+    write_ints writer stored.classes;
+    W.i64 writer stored.native_seed;
+    W.int writer stored.training_rows;
+    W.int writer stored.effective_rows;
+    write_conversion writer stored.feature_conversion;
+    write_conversion writer stored.target_conversion;
+    (match stored.weight_conversion with
+    | None -> W.byte writer 0
+    | Some report ->
+        W.byte writer 1;
+        write_conversion writer report);
+    W.bytes writer stored.model;
+    Io.frame ~limits ~task:stored.task (W.contents writer)
+
+  let decode_stored ~limits ~tasks ~threads bytes =
+    let* () =
+      Specification.integer ~name:"inference_threads" ~minimum:1 threads
+    in
+    let* task, payload = Io.unframe ~limits ~tasks bytes in
+    let reader = R.create ~limits payload in
+    let* package = R.string reader in
+    let* implementation = R.string reader in
+    let* codec_version = R.int reader in
+    if
+      package <> "modelkit-xgboost"
+      || (implementation <> if task = 1 then "Regressor" else "Classifier")
+      || codec_version <> 1
+    then failure "unsupported model codec identity/version"
+    else
+      let* fitted_adapter_version = R.string reader in
+      let* writer_adapter_version = R.string reader in
+      let* binding_version = R.string reader in
+      if
+        String.trim fitted_adapter_version = ""
+        || String.trim writer_adapter_version = ""
+      then failure "invalid adapter provenance"
+      else if binding_version <> "0.2.1" then
+        compatibility "xgboost OCaml binding"
+          "model provenance requires a different binding version"
+      else
+        let* training_native_version = read_version reader in
+        let* model_native_version = read_version reader in
+        let* source_word_size = R.int reader in
+        let* precision = R.byte reader in
+        let* missing = R.byte reader in
+        let* execution = R.byte reader in
+        let* declared_objective = R.string reader in
+        let* prediction_begin = R.int reader in
+        let* prediction_end = R.int reader in
+        if
+          (source_word_size <> 32 && source_word_size <> 64)
+          || precision <> 1 || missing <> 1 || execution <> 1
+          || declared_objective <> objective task
+          || prediction_begin <> 0
+        then
+          failure
+            "unsupported precision, missing-value, execution, or objective \
+             policy"
+        else
+          let* specification = read_specification reader in
+          if
+            prediction_end
+            <> (Specification.params specification).Specification.rounds
+          then failure "prediction range differs from the specification"
+          else
+            let* schema = read_schema ~limits reader in
+            let* classes =
+              R.ints reader ~maximum:(min limits.Io.max_classes 16777217)
+            in
+            let* native_seed = R.i64 reader in
+            let* training_rows = R.int reader in
+            let* effective_rows = R.int reader in
+            let* feature_conversion = read_conversion reader in
+            let* target_conversion = read_conversion reader in
+            let* has_weights = R.byte reader in
+            let* weight_conversion =
+              match has_weights with
+              | 0 -> Ok None
+              | 1 -> Result.map Option.some (read_conversion reader)
+              | _ -> failure "invalid weight-report tag"
+            in
+            let* model = R.bytes reader in
+            let* () = R.finish reader in
+            let origin =
+              {
+                Origin.fitted_adapter_version;
+                writer_adapter_version;
+                binding_version;
+                source_word_size;
+                model_native_version;
+                runtime_native_version = model_native_version;
+                inference_threads = threads;
+              }
+            in
+            let stored =
+              {
+                task;
+                specification;
+                schema;
+                classes;
+                origin;
+                training_native_version;
+                native_seed;
+                training_rows;
+                effective_rows;
+                feature_conversion;
+                target_conversion;
+                weight_conversion;
+                model;
+              }
+            in
+            if
+              native_seed < 0L || native_seed > 2147483647L
+              || training_native_version > model_native_version
+            then
+              failure "invalid native seed or training/model version ordering"
+            else
+              let* () = validate_reports stored in
+              let* () = validate_classes ~limits task classes effective_rows in
+              let* json =
+                Io.Json.parse ~max_bytes:limits.Io.max_bytes
+                  (Bytes.to_string model)
+              in
+              let* () =
+                Io.Json.check_model
+                  ~columns:(Feature_schema.feature_count schema)
+                  ~classes:(Array.length classes) ~rounds:prediction_end
+                  ~objective:declared_objective ~version:model_native_version
+                  json
+              in
+              let* runtime_native_version = Native.version () in
+              if runtime_native_version < model_native_version then
+                compatibility "libxgboost"
+                  "model JSON requires a native runtime at least as new as its \
+                   writer"
+              else
+                Ok
+                  {
+                    stored with
+                    origin = { origin with Origin.runtime_native_version };
+                  }
+
+  let restore ~limits stored construct =
+    Native.with_loaded_model ~threads:stored.origin.Origin.inference_threads
+      stored.model (fun booster ->
+        let* () =
+          Native.validate_native_model
+            ~columns:(Feature_schema.feature_count stored.schema)
+            ~rounds:
+              (Specification.params stored.specification).Specification.rounds
+            booster
+        in
+        let config = Xgboost.Booster.save_json_config booster in
+        let* config = Io.Json.parse ~max_bytes:limits.Io.max_bytes config in
+        let* () =
+          Io.Json.check_config
+            ~columns:(Feature_schema.feature_count stored.schema)
+            ~classes:(Array.length stored.classes)
+            ~objective:(objective stored.task)
+            ~threads:stored.origin.Origin.inference_threads config
+        in
+        Ok (construct booster, true))
+
+  let restore_regression ~limits stored =
+    restore ~limits stored (fun booster ->
+        {
+          Regressor.specification = stored.specification;
+          schema = stored.schema;
+          booster;
+          prediction_mutex = Mutex.create ();
+          origin = stored.origin;
+          fit_report =
+            {
+              Regressor.rounds =
+                (Specification.params stored.specification).Specification.rounds;
+              native_version = stored.training_native_version;
+              native_seed = stored.native_seed;
+              feature_conversion = stored.feature_conversion;
+              target_conversion = stored.target_conversion;
+              weight_conversion = stored.weight_conversion;
+            };
+        })
+
+  let restore_classification ~limits stored =
+    restore ~limits stored (fun booster ->
+        {
+          Classifier.specification = stored.specification;
+          schema = stored.schema;
+          booster;
+          class_labels = Array.copy stored.classes;
+          prediction_mutex = Mutex.create ();
+          origin = stored.origin;
+          fit_report =
+            {
+              Classifier.rounds =
+                (Specification.params stored.specification).Specification.rounds;
+              native_version = stored.training_native_version;
+              native_seed = stored.native_seed;
+              class_count = Array.length stored.classes;
+              training_rows = stored.training_rows;
+              effective_rows = stored.effective_rows;
+              feature_conversion = stored.feature_conversion;
+              target_conversion = stored.target_conversion;
+              weight_conversion = stored.weight_conversion;
+            };
+        })
+
+  let encode_regression ?(limits = default_limits) fitted =
+    let report = fitted.Regressor.fit_report in
+    let* model =
+      snapshot ~mutex:fitted.Regressor.prediction_mutex fitted.Regressor.booster
+    in
+    encode_stored ~limits
+      {
+        task = 1;
+        specification = fitted.Regressor.specification;
+        schema = fitted.Regressor.schema;
+        classes = [||];
+        origin = fitted.Regressor.origin;
+        training_native_version = report.Regressor.native_version;
+        native_seed = report.Regressor.native_seed;
+        training_rows = report.Regressor.feature_conversion.Input.shape.(0);
+        effective_rows = report.Regressor.feature_conversion.Input.shape.(0);
+        feature_conversion = report.Regressor.feature_conversion;
+        target_conversion = report.Regressor.target_conversion;
+        weight_conversion = report.Regressor.weight_conversion;
+        model;
+      }
+
+  let encode_classification ?(limits = default_limits) fitted =
+    let report = fitted.Classifier.fit_report in
+    let* model =
+      snapshot ~mutex:fitted.Classifier.prediction_mutex
+        fitted.Classifier.booster
+    in
+    encode_stored ~limits
+      {
+        task =
+          (if Array.length fitted.Classifier.class_labels = 2 then 2 else 3);
+        specification = fitted.Classifier.specification;
+        schema = fitted.Classifier.schema;
+        classes = fitted.Classifier.class_labels;
+        origin = fitted.Classifier.origin;
+        training_native_version = report.Classifier.native_version;
+        native_seed = report.Classifier.native_seed;
+        training_rows = report.Classifier.training_rows;
+        effective_rows = report.Classifier.effective_rows;
+        feature_conversion = report.Classifier.feature_conversion;
+        target_conversion = report.Classifier.target_conversion;
+        weight_conversion = report.Classifier.weight_conversion;
+        model;
+      }
+
+  let decode_regression ?(limits = default_limits) ?(threads = 1) bytes =
+    let* stored = decode_stored ~limits ~tasks:[ 1 ] ~threads bytes in
+    restore_regression ~limits stored
+
+  let decode_classification ?(limits = default_limits) ?(threads = 1) bytes =
+    let* stored = decode_stored ~limits ~tasks:[ 2; 3 ] ~threads bytes in
+    restore_classification ~limits stored
+
+  let save_regression ?limits ~path fitted =
+    let* bytes = encode_regression ?limits fitted in
+    Io.save ~path bytes
+
+  let save_classification ?limits ~path fitted =
+    let* bytes = encode_classification ?limits fitted in
+    Io.save ~path bytes
+
+  let load_regression ?(limits = default_limits) ?threads ~path () =
+    let* bytes = Io.read ~limits ~path in
+    decode_regression ~limits ?threads bytes
+
+  let load_classification ?(limits = default_limits) ?threads ~path () =
+    let* bytes = Io.read ~limits ~path in
+    decode_classification ~limits ?threads bytes
+
+  let check_component ~provenance ~feature_schema ~classes stored =
+    if
+      Pipeline.provenance_package provenance <> "modelkit-xgboost"
+      || Pipeline.provenance_version provenance
+         <> stored.origin.Origin.fitted_adapter_version
+      || Pipeline.provenance_implementation provenance
+         <> if stored.task = 1 then "Regressor" else "Classifier"
+    then
+      failure "pipeline component provenance differs from the native envelope"
+    else if
+      (not (Feature_schema.equal feature_schema stored.schema))
+      || classes <> stored.classes
+    then
+      failure
+        "pipeline component schema/classes differ from the native envelope"
+    else Ok ()
+
+  let regression_codec ?(limits = default_limits) ?(threads = 1) () =
+    let* () =
+      Specification.integer ~name:"inference_threads" ~minimum:1 threads
+    in
+    Modelkit.Artifact.Codec.regression ~package:"modelkit-xgboost"
+      ~name:"Regressor" ~version:1
+      (module Regressor_implementation)
+      ~encode:(encode_regression ~limits)
+      ~decode:(fun ~provenance ~feature_schema bytes ->
+        let* stored = decode_stored ~limits ~tasks:[ 1 ] ~threads bytes in
+        let* () =
+          check_component ~provenance ~feature_schema ~classes:[||] stored
+        in
+        restore_regression ~limits stored)
+
+  let classification_codec ?(limits = default_limits) ?(threads = 1) () =
+    let* () =
+      Specification.integer ~name:"inference_threads" ~minimum:1 threads
+    in
+    Modelkit.Artifact.Codec.classification ~package:"modelkit-xgboost"
+      ~name:"Classifier" ~version:1
+      (module Classifier_implementation)
+      ~classes:Classifier.classes ~predict_proba:Classifier.predict_proba
+      ~encode:(encode_classification ~limits)
+      ~decode:(fun ~provenance ~feature_schema ~classes bytes ->
+        let* stored = decode_stored ~limits ~tasks:[ 2; 3 ] ~threads bytes in
+        let* () = check_component ~provenance ~feature_schema ~classes stored in
+        restore_classification ~limits stored)
+      ()
 end

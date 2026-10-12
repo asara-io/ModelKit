@@ -216,7 +216,7 @@ let test_pipeline () =
     (Pipeline.provenance_package provenance);
   Alcotest.check Alcotest.bool "codec explicitly unsupported" true
     (component.Pipeline.serialization_support = Pipeline.Unsupported);
-  ignore (expect_failure (Artifact.encode_regression fitted))
+  ignore (expect_failure (Modelkit.Artifact.encode_regression fitted))
 
 type fixture = {
   vectors : (string, float array) Hashtbl.t;

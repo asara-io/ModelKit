@@ -31,8 +31,11 @@ multiple-metric refit, and row-budget halving, with exact sequential/parallel
 agreement across 1-, 2-, and 4-domain backends. Native threading is bounded by
 the tested `OMP_NUM_THREADS=1 OMP_THREAD_LIMIT=1` process-start contract and
 single-thread specifications; backend `inner_threads` remains diagnostic.
-Fitted-pipeline codecs
-are not yet available. The odoc guide documents precision, allocation, error,
+Trusted standalone fitted-model byte/file persistence retains parameters,
+schemas, labels, reports, and provenance and applies explicit inference thread
+caps. Public codec factories support explicit attachment; ordinary estimator
+helpers still attach no pipeline codec. Yojson remains an adapter-only dependency.
+The odoc guide documents precision, allocation, error,
 lifetime, and OpenMP boundaries. Outward conversion has its own report type
 because native storage is additional to the immutable float64 ModelKit source.
 

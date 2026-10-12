@@ -1,9 +1,9 @@
 (library
  (name modelkit_xgboost)
  (public_name modelkit-xgboost)
- (modules modelkit_xgboost modelkit_xgboost_version)
- (private_modules modelkit_xgboost_version)
- (libraries modelkit xgboost))
+ (modules modelkit_xgboost modelkit_xgboost_version modelkit_xgboost_io)
+ (private_modules modelkit_xgboost_version modelkit_xgboost_io)
+ (libraries modelkit xgboost yojson))
 
 (rule
  (target modelkit_xgboost_version.ml)
@@ -20,6 +20,20 @@
   (language c)
   (names workflow_probe))
  (c_library_flags -ldl))
+
+(test
+ (name artifact_test)
+ (modules artifact_test)
+ (package modelkit-xgboost)
+ (libraries modelkit modelkit-xgboost xgboost alcotest yojson)
+ (action
+  (setenv
+   OMP_NUM_THREADS
+   1
+   (setenv
+    OMP_THREAD_LIMIT
+    1
+    (run %{test})))))
 
 (test
  (name workflow_test)

@@ -17,8 +17,10 @@ threading, and lifetime contracts. Classification preserves original integer
 labels and aligned class probabilities. Weighted/group-aware CV, grid/randomized
 search, multiple-metric refit, and training-row-budget halving are verified with
 sequential and bounded parallel folds under the documented OpenMP startup
-contract. Fitted-pipeline codecs are not yet
-available.
+contract. Trusted standalone fitted-model byte/file persistence retains
+parameters, schemas, labels, reports, and provenance without refitting. Codec
+factories support explicit terminal attachment; default estimator helpers
+still attach no pipeline codec automatically.
 
 Version 0.6.0-dev provides immutable dense {!Modelkit.Dataset} admission, explicit
 feature-finiteness policies, stable schema fingerprints, zero-copy row-index

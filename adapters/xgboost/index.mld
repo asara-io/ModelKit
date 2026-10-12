@@ -4,7 +4,9 @@ The optional [modelkit-xgboost] package provides weighted CPU histogram-tree
 regression and binary/multiclass classification, native missing-value routing, checked input
 conversion, immutable specifications, and scoped native interoperability.
 Installing [modelkit] does not install this package or its native dependencies.
-ModelKit artifact codecs are not yet available.
+Trusted standalone fitted-model persistence is available through
+{!Modelkit_xgboost.Artifact}; ordinary estimator helpers currently attach no
+pipeline codec automatically.
 
 {1 Installation and compatibility}
 
@@ -12,7 +14,8 @@ Install [modelkit-xgboost] separately. The package pins OCaml binding 0.2.1,
 requires OCaml 5.2+, and admits native libxgboost major version three. The binding
 uses a system libxgboost 3.0+ discovered through pkg-config or its vendored
 source-build fallback; CMake, a C++ toolchain, and OpenMP are native build/runtime
-dependencies. Windows is excluded by the binding. Local verification uses
+dependencies. [Yojson] is an adapter-only dependency for bounded native JSON
+inspection. Windows is excluded by the binding. Local verification uses
 OCaml 5.3.0, binding 0.2.1, and native libxgboost 3.0.4 and 3.4.2 on macOS arm64.
 Separate pinned Python references use XGBoost 3.0.4 and 3.4.1. These combinations
 are verified; other native releases require their own compatibility evidence.
@@ -136,9 +139,9 @@ let () = assert (Modelkit.Target.length predicted = 2)
 ]}
 
 This packaging currently reports [Pipeline.Unsupported] for portable artifact
-encoding. The internal cache-detachment buffer is not a public ModelKit
-pipeline codec; encoding a pipeline containing this estimator returns a typed
-artifact error.
+encoding. The internal cache-detachment buffer is separate from the supported
+model envelope. {!Modelkit_xgboost.Artifact.regression_codec} supplies explicit
+codec attachment through the public ModelKit contract.
 
 {1 Binary and multiclass classification}
 
@@ -204,10 +207,94 @@ size, and multiclass prediction scales with rows times classes.
 
 The estimator helper publishes sample-weight, class, and probability dispatch
 with package/version provenance. Raw decision margins are not exposed. Pipeline
-artifact encoding remains explicitly unsupported until its reviewed codec is
-available. Pinned classifier references cover binary and multiclass dense,
+artifact encoding through the ordinary helper remains unsupported;
+{!Modelkit_xgboost.Artifact.classification_codec} supplies explicit codec attachment.
+Pinned classifier references cover binary and multiclass dense,
 weighted, missing/all-missing, sampled, regularized, constant-feature,
 imbalanced, and zero-weight-class cases at absolute/relative [2e-6] tolerance.
+
+{1 Persist and restore fitted models}
+
+{!Modelkit_xgboost.Artifact} provides task-specific byte and file APIs. Regression
+readers restore {!Modelkit_xgboost.Regressor.fitted}; classification readers
+restore {!Modelkit_xgboost.Classifier.fitted} for binary or multiclass models.
+Loading uses no observations, training pipeline, refitting, Python, or R.
+
+{@ocaml[
+let regression_bytes = Modelkit_xgboost.Artifact.encode_regression fitted
+                       |> Result.get_ok
+let restored_regression = Modelkit_xgboost.Artifact.decode_regression
+    ~threads:1 regression_bytes |> Result.get_ok
+let restored_predictions = Modelkit_xgboost.Regressor.predict restored_regression
+    ~feature_schema:schema ~x |> Result.get_ok
+let () = assert (Modelkit.Target.length restored_predictions = 2)
+let class_bytes = Modelkit_xgboost.Artifact.encode_classification classifier
+                  |> Result.get_ok
+let restored_classifier = Modelkit_xgboost.Artifact.decode_classification
+    ~threads:1 class_bytes |> Result.get_ok
+let () = assert (Modelkit_xgboost.Classifier.classes restored_classifier = classes)
+let () = assert (Modelkit.Matrix.shape
+    (Modelkit_xgboost.Classifier.predict_proba restored_classifier
+       ~feature_schema:schema ~x |> Result.get_ok) = (2, 2))
+let path = Filename.temp_file "modelkit-xgboost-model-" ".bin"
+let () = Fun.protect ~finally:(fun () -> Sys.remove path) (fun () ->
+    Modelkit_xgboost.Artifact.save_regression ~path fitted |> Result.get_ok;
+    let restored = Modelkit_xgboost.Artifact.load_regression ~threads:1 ~path ()
+                   |> Result.get_ok in
+    assert (Modelkit.Target.length
+      (Modelkit_xgboost.Regressor.predict restored ~feature_schema:schema ~x
+       |> Result.get_ok) = 2))
+]}
+
+The version-one model envelope contains package-qualified codec identity,
+original fit and current writer/binding/native provenance, all immutable
+specification parameters, exact feature schema, original class mapping,
+conversion reports and seed, float32 input/float64 output policy, native-NaN
+missing semantics, CPU histogram scope, and the full prediction range.
+XGBoost-produced JSON stores the trees and objective. Native memory snapshots
+and training-configuration dumps are excluded; configuration is inspected only
+after loading and is never restored as training state.
+
+Inference [~threads] defaults to one and leaves original training parameters
+unchanged. The loaded booster owns no training cache or model-buffer reference.
+Serialization and prediction share a fitted-value lock, so saving cannot
+invalidate concurrent inference. Fit diagnostics retain the producing process's
+allocation counts and word size. Provenance accessors distinguish training,
+model-JSON, and runtime versions; resaving emits JSON with the current runtime
+version while preserving original fit provenance.
+
+Load only trusted artifacts from this supported writer. Upstream warns that
+arbitrary externally authored model JSON can cause undefined behavior or crashes.
+The envelope's MD5 checksum detects accidental corruption and does not
+authenticate a model. Bounds and consistency checks improve diagnostics; they
+do not extend the portable core's safe-reader guarantee to native JSON.
+See {{:https://xgboost.readthedocs.io/en/stable/tutorials/saving_model.html}XGBoost's
+model IO contract} for the native trust and backward-compatibility boundaries.
+
+Before native loading, the reader validates complete framing/checksum, lengths,
+versions, policies, immutable parameters, schema fingerprints, reports, class
+mapping, native model metadata, objective, feature/output dimensions, and tree
+range. After loading it checks native feature/round counts and current
+objective/output/CPU/thread configuration before returning fitted state.
+Acquired native resources are released on every failed validation or exception.
+The reader accepts binding provenance 0.2.1 and native major three. Its runtime
+must be at least as new as the JSON writer: older-model loading into a newer
+supported runtime follows the stable-model direction, while forward loading is
+rejected. Version combinations still need explicit compatibility evidence.
+
+Default limits are 64 MiB bytes, one million features/classes, one MiB strings,
+and a fixed maximum JSON nesting depth of 64. JSON inspection allocates temporary
+OCaml memory linear in model size; native allocation remains additional. Smaller
+byte limits also constrain temporary configuration inspection. Save functions
+encode fully before opening the destination, then write directly; callers own
+atomic replacement, authentication, and transport.
+
+The codec factories expose {!Modelkit.Artifact.Codec} attachments and explicit
+reader selections. Their decoder checks the outer pipeline component's producer
+identity, schema, and class mapping against the native envelope before loading.
+The ordinary regression/classification estimator helpers still use plain
+packaging. Complete fitted-pipeline recipes and deployment evidence are separate
+from standalone fitted-model IO.
 
 {1 Cross-validation and parameter search}
 

@@ -1,5 +1,9 @@
 # 0.6.0-dev (unreleased)
 
+- Add trusted XGBoost fitted-model byte/file persistence for regression and
+  binary/multiclass classification, retaining schemas, class mappings, parameters,
+  reports, and provenance. Validate bounded envelopes and native consistency,
+  apply explicit inference thread caps, and expose public codec factories.
 - Add the optional `modelkit-xgboost` package with immutable CPU histogram-tree
   specifications, checked float32 input conversion, allocation/rounding reports,
   and scoped native interoperability.
