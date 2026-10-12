@@ -1,5 +1,12 @@
 # 0.6.0-dev (unreleased)
 
+- Keep native test probes out of portable package builds and install a persistent
+  XGBoost shared library in Linux CI, avoiding binding 0.2.1's temporary-archive
+  linker defect. Document the corresponding native installation requirement.
+- Attach native model serialization to the XGBoost estimator helpers, preserving
+  supported fitted preprocessing in complete pipeline artifacts. Add native and
+  pipeline goldens, fresh-process/isolated-package deployment checks, backward
+  native-version evidence, and an executable search-refit/save/load recipe.
 - Add trusted XGBoost fitted-model byte/file persistence for regression and
   binary/multiclass classification, retaining schemas, class mappings, parameters,
   reports, and provenance. Validate bounded envelopes and native consistency,

@@ -228,9 +228,12 @@ module Regressor : sig
     result
   (** Packages the public regressor with package/version provenance. The
       estimator receives routed sample weights and can enter ordinary or
-      supervised pipelines. This helper attaches no artifact codec
-      automatically; encoding returns a typed unsupported error.
-      {!Artifact.regression_codec} supplies explicit attachment. *)
+      supervised pipelines. The native serialization format is attached
+      automatically. Complete persistence requires codec-supported
+      preprocessing; unsupported stages fail with typed errors naming the stage.
+      Artifact reporting identifies external support. Loading selects a decoder
+      from {!Artifact.regression_codec} explicitly, including inference thread
+      caps. *)
 end
 
 (** Binary and multiclass CPU histogram-tree classification. *)
@@ -313,9 +316,10 @@ module Classifier : sig
       Modelkit.Error.t )
     result
   (** Public estimator packaging with class/probability dispatch, sample-weight
-      routing, and package/version provenance. This helper attaches no artifact
-      codec automatically. {!Artifact.classification_codec} supplies explicit
-      attachment. *)
+      routing, package/version provenance, and automatic native serialization
+      attachment. Codec-supported preprocessing persists with the estimator.
+      Loading selects {!Artifact.classification_codec} explicitly; original
+      class order and probability alignment are preserved. *)
 end
 
 (** Trusted native-model persistence, independent of training data and
@@ -457,5 +461,9 @@ module Artifact : sig
       contract. [threads] configures restored inference; fitting still uses the
       specification. Decoding additionally validates outer component provenance,
       schema, and class mapping against this native envelope before loading.
-      Ordinary estimator helpers currently attach no codec automatically. *)
+      Ordinary estimator helpers attach the default serialization format.
+      Explicit attachment remains available when custom native writer limits are
+      needed; load-time threads and reader limits belong to the explicitly
+      selected decoder. Core pipeline byte/file APIs preserve fitted
+      preprocessing alongside this terminal payload. *)
 end

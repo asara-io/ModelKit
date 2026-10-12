@@ -638,19 +638,6 @@ module Regressor_implementation = struct
     predict_with_report fitted ~feature_schema ~x |> Result.map fst
 end
 
-module Regressor = struct
-  include Regressor_implementation
-
-  let estimator ?(name = "xgboost") specification =
-    let* provenance =
-      Pipeline.provenance ~package:"modelkit-xgboost"
-        ~version:Modelkit_xgboost_version.value ~implementation:"Regressor"
-    in
-    Pipeline.estimator ~provenance ~name
-      (module Regressor_implementation)
-      specification
-end
-
 module Classifier_implementation = struct
   type t = Specification.t
   type params = Specification.params
@@ -985,19 +972,6 @@ module Classifier_implementation = struct
     Ok (Target.classification labels)
 end
 
-module Classifier = struct
-  include Classifier_implementation
-
-  let estimator ?(name = "xgboost") specification =
-    let* provenance =
-      Pipeline.provenance ~package:"modelkit-xgboost"
-        ~version:Modelkit_xgboost_version.value ~implementation:"Classifier"
-    in
-    Pipeline.estimator ~provenance ~name
-      (module Classifier_implementation)
-      ~predict_proba ~classes specification
-end
-
 module Artifact = struct
   module Io = Modelkit_xgboost_io
   module W = Io.Writer
@@ -1045,14 +1019,17 @@ module Artifact = struct
     }
 
   let regression_provenance fitted =
-    provenance fitted.Regressor.origin
-      fitted.Regressor.fit_report.Regressor.native_version
-      fitted.Regressor.fit_report.Regressor.rounds
+    provenance fitted.Regressor_implementation.origin
+      fitted.Regressor_implementation.fit_report
+        .Regressor_implementation.native_version
+      fitted.Regressor_implementation.fit_report.Regressor_implementation.rounds
 
   let classification_provenance fitted =
-    provenance fitted.Classifier.origin
-      fitted.Classifier.fit_report.Classifier.native_version
-      fitted.Classifier.fit_report.Classifier.rounds
+    provenance fitted.Classifier_implementation.origin
+      fitted.Classifier_implementation.fit_report
+        .Classifier_implementation.native_version
+      fitted.Classifier_implementation.fit_report
+        .Classifier_implementation.rounds
 
   type stored = {
     task : int;
@@ -1529,14 +1506,14 @@ module Artifact = struct
   let restore_regression ~limits stored =
     restore ~limits stored (fun booster ->
         {
-          Regressor.specification = stored.specification;
+          Regressor_implementation.specification = stored.specification;
           schema = stored.schema;
           booster;
           prediction_mutex = Mutex.create ();
           origin = stored.origin;
           fit_report =
             {
-              Regressor.rounds =
+              Regressor_implementation.rounds =
                 (Specification.params stored.specification).Specification.rounds;
               native_version = stored.training_native_version;
               native_seed = stored.native_seed;
@@ -1549,7 +1526,7 @@ module Artifact = struct
   let restore_classification ~limits stored =
     restore ~limits stored (fun booster ->
         {
-          Classifier.specification = stored.specification;
+          Classifier_implementation.specification = stored.specification;
           schema = stored.schema;
           booster;
           class_labels = Array.copy stored.classes;
@@ -1557,7 +1534,7 @@ module Artifact = struct
           origin = stored.origin;
           fit_report =
             {
-              Classifier.rounds =
+              Classifier_implementation.rounds =
                 (Specification.params stored.specification).Specification.rounds;
               native_version = stored.training_native_version;
               native_seed = stored.native_seed;
@@ -1571,48 +1548,54 @@ module Artifact = struct
         })
 
   let encode_regression ?(limits = default_limits) fitted =
-    let report = fitted.Regressor.fit_report in
+    let report = fitted.Regressor_implementation.fit_report in
     let* model =
-      snapshot ~mutex:fitted.Regressor.prediction_mutex fitted.Regressor.booster
+      snapshot ~mutex:fitted.Regressor_implementation.prediction_mutex
+        fitted.Regressor_implementation.booster
     in
     encode_stored ~limits
       {
         task = 1;
-        specification = fitted.Regressor.specification;
-        schema = fitted.Regressor.schema;
+        specification = fitted.Regressor_implementation.specification;
+        schema = fitted.Regressor_implementation.schema;
         classes = [||];
-        origin = fitted.Regressor.origin;
-        training_native_version = report.Regressor.native_version;
-        native_seed = report.Regressor.native_seed;
-        training_rows = report.Regressor.feature_conversion.Input.shape.(0);
-        effective_rows = report.Regressor.feature_conversion.Input.shape.(0);
-        feature_conversion = report.Regressor.feature_conversion;
-        target_conversion = report.Regressor.target_conversion;
-        weight_conversion = report.Regressor.weight_conversion;
+        origin = fitted.Regressor_implementation.origin;
+        training_native_version = report.Regressor_implementation.native_version;
+        native_seed = report.Regressor_implementation.native_seed;
+        training_rows =
+          report.Regressor_implementation.feature_conversion.Input.shape.(0);
+        effective_rows =
+          report.Regressor_implementation.feature_conversion.Input.shape.(0);
+        feature_conversion = report.Regressor_implementation.feature_conversion;
+        target_conversion = report.Regressor_implementation.target_conversion;
+        weight_conversion = report.Regressor_implementation.weight_conversion;
         model;
       }
 
   let encode_classification ?(limits = default_limits) fitted =
-    let report = fitted.Classifier.fit_report in
+    let report = fitted.Classifier_implementation.fit_report in
     let* model =
-      snapshot ~mutex:fitted.Classifier.prediction_mutex
-        fitted.Classifier.booster
+      snapshot ~mutex:fitted.Classifier_implementation.prediction_mutex
+        fitted.Classifier_implementation.booster
     in
     encode_stored ~limits
       {
         task =
-          (if Array.length fitted.Classifier.class_labels = 2 then 2 else 3);
-        specification = fitted.Classifier.specification;
-        schema = fitted.Classifier.schema;
-        classes = fitted.Classifier.class_labels;
-        origin = fitted.Classifier.origin;
-        training_native_version = report.Classifier.native_version;
-        native_seed = report.Classifier.native_seed;
-        training_rows = report.Classifier.training_rows;
-        effective_rows = report.Classifier.effective_rows;
-        feature_conversion = report.Classifier.feature_conversion;
-        target_conversion = report.Classifier.target_conversion;
-        weight_conversion = report.Classifier.weight_conversion;
+          (if Array.length fitted.Classifier_implementation.class_labels = 2
+           then 2
+           else 3);
+        specification = fitted.Classifier_implementation.specification;
+        schema = fitted.Classifier_implementation.schema;
+        classes = fitted.Classifier_implementation.class_labels;
+        origin = fitted.Classifier_implementation.origin;
+        training_native_version =
+          report.Classifier_implementation.native_version;
+        native_seed = report.Classifier_implementation.native_seed;
+        training_rows = report.Classifier_implementation.training_rows;
+        effective_rows = report.Classifier_implementation.effective_rows;
+        feature_conversion = report.Classifier_implementation.feature_conversion;
+        target_conversion = report.Classifier_implementation.target_conversion;
+        weight_conversion = report.Classifier_implementation.weight_conversion;
         model;
       }
 
@@ -1679,11 +1662,36 @@ module Artifact = struct
     Modelkit.Artifact.Codec.classification ~package:"modelkit-xgboost"
       ~name:"Classifier" ~version:1
       (module Classifier_implementation)
-      ~classes:Classifier.classes ~predict_proba:Classifier.predict_proba
+      ~classes:Classifier_implementation.classes
+      ~predict_proba:Classifier_implementation.predict_proba
       ~encode:(encode_classification ~limits)
       ~decode:(fun ~provenance ~feature_schema ~classes bytes ->
         let* stored = decode_stored ~limits ~tasks:[ 2; 3 ] ~threads bytes in
         let* () = check_component ~provenance ~feature_schema ~classes stored in
         restore_classification ~limits stored)
       ()
+end
+
+module Regressor = struct
+  include Regressor_implementation
+
+  let estimator ?(name = "xgboost") specification =
+    let* provenance =
+      Pipeline.provenance ~package:"modelkit-xgboost"
+        ~version:Modelkit_xgboost_version.value ~implementation:"Regressor"
+    in
+    let* codec = Artifact.regression_codec () in
+    Modelkit.Artifact.Codec.estimator ~provenance ~name codec specification
+end
+
+module Classifier = struct
+  include Classifier_implementation
+
+  let estimator ?(name = "xgboost") specification =
+    let* provenance =
+      Pipeline.provenance ~package:"modelkit-xgboost"
+        ~version:Modelkit_xgboost_version.value ~implementation:"Classifier"
+    in
+    let* codec = Artifact.classification_codec () in
+    Modelkit.Artifact.Codec.estimator ~provenance ~name codec specification
 end

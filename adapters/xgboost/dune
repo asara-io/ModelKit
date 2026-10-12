@@ -10,16 +10,55 @@
  (action
   (write-file %{target} "let value = \"%{version:modelkit-xgboost}\"\n")))
 
+(test
+ (name deployment_worker)
+ (modules deployment_worker)
+ (package modelkit-xgboost)
+ (libraries modelkit modelkit-xgboost yojson)
+ (deps
+  (source_tree ../../test/fixtures/xgboost/artifacts))
+ (action
+  (setenv
+   OMP_NUM_THREADS
+   1
+   (setenv
+    OMP_THREAD_LIMIT
+    1
+    (run
+     %{test}
+     ../../test/fixtures/xgboost/artifacts/3.0.4
+     regression.metadata.json
+     --auto-compat)))))
+
+(test
+ (name pipeline_artifact_test)
+ (modules pipeline_artifact_test)
+ (package modelkit-xgboost)
+ (libraries modelkit modelkit-xgboost alcotest yojson unix)
+ (deps
+  deployment_worker.exe
+  (source_tree ../../test/fixtures/xgboost/artifacts))
+ (action
+  (setenv
+   MODELKIT_XGBOOST_DEPLOYMENT_WORKER
+   %{dep:deployment_worker.exe}
+   (setenv
+    MODELKIT_XGBOOST_ARTIFACT_FIXTURES
+    ../../test/fixtures/xgboost/artifacts
+    (setenv
+     OMP_NUM_THREADS
+     1
+     (setenv
+      OMP_THREAD_LIMIT
+      1
+      (run %{test})))))))
+
 (library
  (name xgboost_workflow_support)
  (wrapped false)
  (optional)
  (modules workflow_support)
- (libraries modelkit modelkit-xgboost alcotest)
- (foreign_stubs
-  (language c)
-  (names workflow_probe))
- (c_library_flags -ldl))
+ (libraries modelkit modelkit-xgboost alcotest))
 
 (test
  (name artifact_test)
@@ -35,25 +74,15 @@
     1
     (run %{test})))))
 
-(test
- (name workflow_test)
- (modules workflow_test)
+(tests
+ (names workflow_test parallel_workflow_test)
+ (modules workflow_test parallel_workflow_test)
  (package modelkit-xgboost)
- (libraries xgboost_workflow_support alcotest unix)
- (action
-  (setenv
-   OMP_NUM_THREADS
-   1
-   (setenv
-    OMP_THREAD_LIMIT
-    1
-    (run %{test})))))
-
-(test
- (name parallel_workflow_test)
- (modules parallel_workflow_test)
- (package modelkit-xgboost)
- (libraries xgboost_workflow_support modelkit-parallel alcotest)
+ (libraries xgboost_workflow_support modelkit-parallel alcotest unix)
+ (foreign_stubs
+  (language c)
+  (names workflow_probe))
+ (link_flags -cclib -ldl)
  (action
   (setenv
    OMP_NUM_THREADS

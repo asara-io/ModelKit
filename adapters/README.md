@@ -33,8 +33,10 @@ the tested `OMP_NUM_THREADS=1 OMP_THREAD_LIMIT=1` process-start contract and
 single-thread specifications; backend `inner_threads` remains diagnostic.
 Trusted standalone fitted-model byte/file persistence retains parameters,
 schemas, labels, reports, and provenance and applies explicit inference thread
-caps. Public codec factories support explicit attachment; ordinary estimator
-helpers still attach no pipeline codec. Yojson remains an adapter-only dependency.
+caps. Estimator helpers attach serialization automatically, including supported
+fitted preprocessing; readers select native deserialization explicitly. Native
+and fitted-pipeline goldens cover fresh-process deployment and 3.0.4-to-3.4.2
+loading. Yojson remains an adapter-only dependency.
 The odoc guide documents precision, allocation, error,
 lifetime, and OpenMP boundaries. Outward conversion has its own report type
 because native storage is additional to the immutable float64 ModelKit source.
@@ -45,6 +47,11 @@ Python reference fixtures from XGBoost 3.0.4 and 3.4.1. Sampling behavior differ
 between these native versions; reproducibility includes the native version.
 Native major version three is admitted, with broader compatibility evidence to
 be published as it is verified. The portable package has no XGBoost dependency.
+Install a persistent system libxgboost 3.0+ discoverable through pkg-config
+before installing the binding. Its 0.2.1 vendored fallback leaves downstream
+link flags pointing to temporary opam archives that are not installed. Linux CI
+uses the bundled 3.0.4 sources to install a shared library outside that temporary
+directory; the odoc guide describes custom-prefix discovery and runtime loading.
 
 ## Nx
 

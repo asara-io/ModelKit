@@ -14,7 +14,7 @@ The full documentation is available via: [https://ocaml.org/p/modelkit/latest/do
 - Typed extension contracts separate immutable estimator specifications from fitted models and return actionable errors; the public [estimator-authoring guide](https://ocaml.org/p/modelkit/latest/doc/authoring_estimators.html) covers conformance, metadata routing, composition, provenance, and artifact support.
 - Immutable, validated float64 data primitives catch shape, feature-order, and sample-alignment problems before model code runs.
 - The optional `modelkit-nx` and `modelkit-talon` packages admit explicitly typed Nx tensors and explicitly selected Talon dataframe columns with checked shapes, names, null masks, groups, weights, and observable copy/allocation behavior without making Raven a core dependency.
-- The optional `modelkit-xgboost` package adds weighted CPU histogram-tree regression and binary/multiclass classification with native missing-value routing, pipelines, cross-validation, parameter search, and trusted fitted-model serialization while keeping XGBoost dependencies outside the portable core.
+- The optional `modelkit-xgboost` package adds weighted CPU histogram-tree regression and binary/multiclass classification with native missing-value routing, pipelines, cross-validation, parameter search, and trusted fitted-model/pipeline serialization while keeping XGBoost dependencies outside the portable core.
 - Checked immutable CSR matrices provide canonical sparse storage, zero-copy indexed row views, explicit materialization and payload-memory accounting, and portable dense/CSR numerical-kernel dispatch.
 - Dense datasets admit aligned features, targets, weights, groups, and names under an explicit finiteness policy; stable schema fingerprints and copy/view reports make compatibility and allocation behavior observable.
 - Immutable preprocessing specifications fit mean, median, or constant imputation, population standardization, and variance-based feature filtering without changing or losing feature identities.
@@ -49,7 +49,7 @@ Anticipating performance benefits from existing work such as using Owl for a num
 
 This branch builds ModelKit `0.6.0-dev`. The supported API is the flat `Modelkit.*` namespace documented in the [manual](https://ocaml.org/p/modelkit/latest/doc/index.html); the physical `Modelkit_*` source units are private. Optional integrations ship as separate packages that depend inward on the core: `modelkit-parallel` for bounded Domainslib fold execution, `modelkit-nx` and `modelkit-talon` for checked admission of Raven tensors and dataframe columns, and `modelkit-xgboost` for XGBoost regression, classification, and native interoperability.
 
-Development since 0.5.0 adds optional XGBoost regression and binary/multiclass classification with checked float32 admission, native missing-value routing, sample weights, deterministic seeds, and schema-checked pipeline prediction. Classification preserves original integer labels and aligns probability columns with the fitted classes. Group-aware CV, grid/randomized search, multiple-metric refit, and row-budget halving are verified with sequential and bounded parallel folds; the adapter guide documents the required OpenMP startup settings. Built-in regression/binary artifacts retain their existing format and readers. External codec attachment and generalized classification persistence are available through public APIs; XGBoost fitted-model byte/file persistence is available; the default estimator helpers still report unsupported pipeline encoding, with explicit codec attachment available.
+Development since 0.5.0 adds optional XGBoost regression and binary/multiclass classification with checked float32 admission, native missing-value routing, sample weights, deterministic seeds, and schema-checked pipeline prediction. Classification preserves original integer labels and aligns probability columns with the fitted classes. Group-aware CV, grid/randomized search, multiple-metric refit, and row-budget halving are verified with sequential and bounded parallel folds; the adapter guide documents the required OpenMP startup settings. Built-in regression/binary artifacts retain their existing format and readers. External codec attachment and generalized classification persistence are available through public APIs; XGBoost fitted-model and complete pipeline byte/file persistence preserves supported preprocessing, schemas, labels, and predictions without refitting; native readers are selected explicitly.
 
 Version 0.5.0 introduced:
 
@@ -202,7 +202,7 @@ Planned for later versions: sparse feature input to estimators, additional artif
 
 ModelKit requires OCaml 5.2 or newer. The platform locks currently use OCaml 5.3.0. The following set of commands will assume that you have installed and configured `git` and `opam`. The generated documentation will be available at `_build/default/_doc/_html/index.html`.
 
-The repository holds four packages. `modelkit` and `modelkit-parallel` are portable. `modelkit-nx` and `modelkit-talon` depend on Raven's `nx` and `talon`, which need OpenBLAS headers, zlib, and pkg-config on Linux and are not buildable on Windows; opam installs those system packages through its depext prompt when the adapter dependencies are resolved. A workspace-wide `dune build @all` includes the adapter libraries and their tests, so it needs `nx` and `talon` in the switch. Use `--only-packages modelkit,modelkit-parallel` to build and test the portable packages on a switch without them.
+The repository holds five packages. `modelkit` and `modelkit-parallel` are portable. `modelkit-nx` and `modelkit-talon` depend on Raven's `nx` and `talon`, which need OpenBLAS headers, zlib, and pkg-config on Linux and are not buildable on Windows; opam installs those system packages through its depext prompt when the adapter dependencies are resolved. `modelkit-xgboost` requires a persistent libxgboost 3.0+ installation discoverable through pkg-config before installing its OCaml binding; see the [adapter installation notes](adapters/README.md#xgboost). A workspace-wide `dune build @all` includes all adapter libraries and tests, so it needs their dependencies in the switch. Use `--only-packages modelkit,modelkit-parallel` to build and test the portable packages on a switch without them.
 
 ### Initial Setup (Linux and macOS)
 
@@ -216,6 +216,7 @@ opam lint modelkit.opam
 opam lint modelkit-parallel.opam
 opam lint modelkit-nx.opam
 opam lint modelkit-talon.opam
+opam lint modelkit-xgboost.opam
 ```
 
 ### Windows

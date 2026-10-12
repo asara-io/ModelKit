@@ -383,15 +383,27 @@ let test_pipeline class_count () =
     (Pipeline.provenance_implementation provenance);
   Alcotest.check Alcotest.string "current package version" "0.6.0-dev"
     (Pipeline.provenance_version provenance);
-  Alcotest.check Alcotest.bool "codec remains unsupported" true
-    (component.Pipeline.serialization_support = Pipeline.Unsupported);
+  Alcotest.check Alcotest.bool "native codec attached" true
+    (component.Pipeline.serialization_support = Pipeline.External_artifact);
   let bare = Pipeline.set_estimator Pipeline.empty estimator |> get in
   let bare_fitted =
     Pipeline.fit bare ~sample_weight ~rng:(rng 17) ~feature_schema ~x ~y:target
       ()
     |> get
   in
-  expect Artifact (Modelkit.Artifact.encode_binary_classification bare_fitted)
+  let codec = Modelkit_xgboost.Artifact.classification_codec () |> get in
+  let restored =
+    Modelkit.Artifact.encode_classification bare_fitted
+    |> get
+    |> Modelkit.Artifact.decode_classification
+         ~decoders:[| Modelkit.Artifact.Codec.decoder codec |]
+    |> get |> Modelkit.Artifact.model
+  in
+  Alcotest.check
+    (Alcotest.array Alcotest.int)
+    "helper codec preserves classes" classes
+    (Pipeline.classes restored |> get);
+  expect Artifact (Modelkit.Artifact.encode_classification fitted)
 
 type fixture = {
   vectors : (string, string array) Hashtbl.t;

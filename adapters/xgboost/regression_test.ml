@@ -214,8 +214,8 @@ let test_pipeline () =
   let provenance = component.Pipeline.provenance |> Option.get in
   Alcotest.check Alcotest.string "package provenance" "modelkit-xgboost"
     (Pipeline.provenance_package provenance);
-  Alcotest.check Alcotest.bool "codec explicitly unsupported" true
-    (component.Pipeline.serialization_support = Pipeline.Unsupported);
+  Alcotest.check Alcotest.bool "native codec attached" true
+    (component.Pipeline.serialization_support = Pipeline.External_artifact);
   ignore (expect_failure (Modelkit.Artifact.encode_regression fitted))
 
 type fixture = {
