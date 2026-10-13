@@ -516,7 +516,7 @@ let test_native_consistency () =
 let test_codec_attachment () =
   let codec = A.regression_codec ~threads:3 () |> get in
   let provenance =
-    Pipeline.provenance ~package:"modelkit-xgboost" ~version:"0.6.0-dev"
+    Pipeline.provenance ~package:"modelkit-xgboost" ~version:"0.6.0"
       ~implementation:"Regressor"
     |> get
   in
@@ -576,7 +576,7 @@ let test_concurrent_save () =
 let test_classification_codec count =
   let codec = A.classification_codec () |> get in
   let provenance =
-    Pipeline.provenance ~package:"modelkit-xgboost" ~version:"0.6.0-dev"
+    Pipeline.provenance ~package:"modelkit-xgboost" ~version:"0.6.0"
       ~implementation:"Classifier"
     |> get
   in

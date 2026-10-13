@@ -381,7 +381,7 @@ let test_pipeline class_count () =
   let provenance = Option.get component.Pipeline.provenance in
   Alcotest.check Alcotest.string "classifier provenance" "Classifier"
     (Pipeline.provenance_implementation provenance);
-  Alcotest.check Alcotest.string "current package version" "0.6.0-dev"
+  Alcotest.check Alcotest.string "current package version" "0.6.0"
     (Pipeline.provenance_version provenance);
   Alcotest.check Alcotest.bool "native codec attached" true
     (component.Pipeline.serialization_support = Pipeline.External_artifact);

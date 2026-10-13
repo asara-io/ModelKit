@@ -34,17 +34,18 @@ Local medians on the recorded host:
 
 | Native | Task | Fit (ms) | Predict (ms) | Fit OCaml allocation (MiB) |
 | --- | --- | ---: | ---: | ---: |
-| 3.0.4 | regression | 7.317 | 0.047 | 11.66 |
-| 3.0.4 | binary | 7.773 | 0.047 | 11.87 |
-| 3.0.4 | multiclass | 13.642 | 0.069 | 18.67 |
-| 3.4.2 | regression | 9.070 | 0.058 | 11.59 |
-| 3.4.2 | binary | 8.107 | 0.049 | 11.83 |
-| 3.4.2 | multiclass | 14.405 | 0.076 | 18.43 |
+| 3.0.4 | regression | 7.977 | 0.065 | 11.66 |
+| 3.0.4 | binary | 7.528 | 0.045 | 11.87 |
+| 3.0.4 | multiclass | 13.812 | 0.070 | 18.67 |
+| 3.4.2 | regression | 9.070 | 0.056 | 11.59 |
+| 3.4.2 | binary | 8.083 | 0.047 | 11.83 |
+| 3.4.2 | multiclass | 14.339 | 0.063 | 18.43 |
 
 The raw reports for native 3.0.4 and 3.4.2 contain every measured run, response
 signature, parameter, environment/version, and methodology field. They use
-OCaml 5.3.0, binding 0.2.1, and macOS arm64. They establish a local smoke
-baseline, without a comparative speed claim or a machine-dependent threshold.
+ModelKit 0.6.0, OCaml 5.3.0, binding 0.2.1, and macOS arm64. They establish a
+local smoke baseline, without a comparative speed claim or a machine-dependent
+threshold.
 Native CI runs the same worker on Linux x86-64 and macOS arm64 and uploads the
 report as a workflow artifact; those reports remain scoped to their recorded
 native version and host.

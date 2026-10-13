@@ -7,15 +7,15 @@
     "features": {
       "measurements": [
         {
-          "elapsed_ns": 2313137,
+          "elapsed_ns": 1469850,
           "ocaml_allocated_bytes": 7864880.0
         },
         {
-          "elapsed_ns": 2287149,
+          "elapsed_ns": 1456975,
           "ocaml_allocated_bytes": 7864880.0
         },
         {
-          "elapsed_ns": 2289056,
+          "elapsed_ns": 1455068,
           "ocaml_allocated_bytes": 7864880.0
         }
       ],
@@ -28,15 +28,15 @@
     "regression_target": {
       "measurements": [
         {
-          "elapsed_ns": 128984,
+          "elapsed_ns": 74863,
           "ocaml_allocated_bytes": 459264.0
         },
         {
-          "elapsed_ns": 128984,
+          "elapsed_ns": 74863,
           "ocaml_allocated_bytes": 459264.0
         },
         {
-          "elapsed_ns": 113964,
+          "elapsed_ns": 72002,
           "ocaml_allocated_bytes": 459264.0
         }
       ],
@@ -49,15 +49,15 @@
     "sample_weight": {
       "measurements": [
         {
-          "elapsed_ns": 129938,
+          "elapsed_ns": 72956,
           "ocaml_allocated_bytes": 459264.0
         },
         {
-          "elapsed_ns": 128984,
+          "elapsed_ns": 71048,
           "ocaml_allocated_bytes": 459264.0
         },
         {
-          "elapsed_ns": 128984,
+          "elapsed_ns": 71048,
           "ocaml_allocated_bytes": 459264.0
         }
       ],
@@ -73,7 +73,7 @@
     "machine": "arm64",
     "operating_system": "macOS-15.5-arm64-arm-64bit-Mach-O",
     "python_harness": "3.14.3",
-    "recorded_at": "2026-10-12T23:59:43.109777+00:00"
+    "recorded_at": "2026-10-13T00:35:48.836605+00:00"
   },
   "generator": "bench/ocaml/xgboost_worker.ml",
   "learning_rate": 0.3,
@@ -90,8 +90,8 @@
   },
   "min_child_weight": 1.0,
   "min_split_loss": 0.0,
-  "modelkit": "0.6.0-dev",
-  "modelkit_xgboost": "0.6.0-dev",
+  "modelkit": "0.6.0",
+  "modelkit_xgboost": "0.6.0",
   "native": "3.4.2",
   "ocaml": "5.3.0",
   "omp_num_threads": "1",
@@ -110,7 +110,7 @@
       "measurements": [
         {
           "fit": {
-            "elapsed_ns": 8106946,
+            "elapsed_ns": 8157968,
             "ocaml_allocated_bytes": 12402216.0
           },
           "fit_conversion_payload": {
@@ -119,7 +119,7 @@
             "temporary_payload_bytes": 341080
           },
           "predict": {
-            "elapsed_ns": 48160,
+            "elapsed_ns": 47922,
             "ocaml_allocated_bytes": 130784.0
           },
           "predict_conversion_payload": {
@@ -130,7 +130,7 @@
         },
         {
           "fit": {
-            "elapsed_ns": 8305072,
+            "elapsed_ns": 8082866,
             "ocaml_allocated_bytes": 12402216.0
           },
           "fit_conversion_payload": {
@@ -139,7 +139,7 @@
             "temporary_payload_bytes": 341080
           },
           "predict": {
-            "elapsed_ns": 51021,
+            "elapsed_ns": 46968,
             "ocaml_allocated_bytes": 130784.0
           },
           "predict_conversion_payload": {
@@ -150,7 +150,7 @@
         },
         {
           "fit": {
-            "elapsed_ns": 8070945,
+            "elapsed_ns": 8072853,
             "ocaml_allocated_bytes": 12402216.0
           },
           "fit_conversion_payload": {
@@ -159,7 +159,7 @@
             "temporary_payload_bytes": 341080
           },
           "predict": {
-            "elapsed_ns": 48875,
+            "elapsed_ns": 46014,
             "ocaml_allocated_bytes": 130784.0
           },
           "predict_conversion_payload": {
@@ -304,7 +304,7 @@
       "measurements": [
         {
           "fit": {
-            "elapsed_ns": 14330148,
+            "elapsed_ns": 14901876,
             "ocaml_allocated_bytes": 19329256.0
           },
           "fit_conversion_payload": {
@@ -313,7 +313,7 @@
             "temporary_payload_bytes": 341080
           },
           "predict": {
-            "elapsed_ns": 76055,
+            "elapsed_ns": 77962,
             "ocaml_allocated_bytes": 135576.0
           },
           "predict_conversion_payload": {
@@ -324,7 +324,7 @@
         },
         {
           "fit": {
-            "elapsed_ns": 14405012,
+            "elapsed_ns": 14338970,
             "ocaml_allocated_bytes": 19329256.0
           },
           "fit_conversion_payload": {
@@ -333,7 +333,7 @@
             "temporary_payload_bytes": 341080
           },
           "predict": {
-            "elapsed_ns": 66995,
+            "elapsed_ns": 62942,
             "ocaml_allocated_bytes": 135576.0
           },
           "predict_conversion_payload": {
@@ -344,7 +344,7 @@
         },
         {
           "fit": {
-            "elapsed_ns": 14430999,
+            "elapsed_ns": 14137029,
             "ocaml_allocated_bytes": 19329256.0
           },
           "fit_conversion_payload": {
@@ -353,7 +353,7 @@
             "temporary_payload_bytes": 341080
           },
           "predict": {
-            "elapsed_ns": 78916,
+            "elapsed_ns": 60081,
             "ocaml_allocated_bytes": 135576.0
           },
           "predict_conversion_payload": {
@@ -562,7 +562,7 @@
       "measurements": [
         {
           "fit": {
-            "elapsed_ns": 9885072,
+            "elapsed_ns": 10201930,
             "ocaml_allocated_bytes": 12156784.0
           },
           "fit_conversion_payload": {
@@ -571,7 +571,7 @@
             "temporary_payload_bytes": 0
           },
           "predict": {
-            "elapsed_ns": 64134,
+            "elapsed_ns": 62942,
             "ocaml_allocated_bytes": 129696.0
           },
           "predict_conversion_payload": {
@@ -582,7 +582,7 @@
         },
         {
           "fit": {
-            "elapsed_ns": 9070158,
+            "elapsed_ns": 9069919,
             "ocaml_allocated_bytes": 12156784.0
           },
           "fit_conversion_payload": {
@@ -591,7 +591,7 @@
             "temporary_payload_bytes": 0
           },
           "predict": {
-            "elapsed_ns": 57935,
+            "elapsed_ns": 56028,
             "ocaml_allocated_bytes": 129696.0
           },
           "predict_conversion_payload": {
@@ -602,7 +602,7 @@
         },
         {
           "fit": {
-            "elapsed_ns": 8409023,
+            "elapsed_ns": 8442878,
             "ocaml_allocated_bytes": 12156784.0
           },
           "fit_conversion_payload": {

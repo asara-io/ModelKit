@@ -55,8 +55,8 @@ directory; the odoc guide describes custom-prefix discovery and runtime loading.
 
 | Platform | OCaml | Binding | Native library | Evidence |
 | --- | --- | --- | --- | --- |
-| Linux x86-64, Ubuntu 24.04 | 5.3.0 | 0.2.1 | 3.0.4, installed shared CPU build | CI production build, nonsampled parity, CV/search, model/pipeline deployment; complete rerun pending the sampling-reference and consumer-installer fixes |
-| macOS arm64 | 5.3.0 | 0.2.1 | 3.4.2, Homebrew | CI tests, odoc, and package builds; isolated installed consumer and smoke measurements verified locally |
+| Linux x86-64, Ubuntu 24.04 | 5.3.0 | 0.2.1 | 3.0.4, installed shared CPU build | CI production/package builds, parity with matched-build sampling checks, CV/search, model/pipeline deployment, isolated inference consumer, and smoke measurements |
+| macOS arm64 | 5.3.0 | 0.2.1 | 3.4.2, Homebrew | CI tests, odoc, package builds, isolated installed consumer, and smoke measurements |
 | macOS arm64 | 5.3.0 | 0.2.1 | 3.0.4 | Local tests, model/pipeline deployment, and smoke measurements |
 
 Evidence comes from the [native integration workflow](../.github/workflows/xgboost.yml)

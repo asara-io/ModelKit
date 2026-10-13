@@ -1,4 +1,4 @@
-# 0.6.0-dev (unreleased)
+# 0.6.0 (2026-10-12)
 
 - Publish the XGBoost compatibility evidence and executable provenance/artifact
   support inspection. Add optional conversion/fit/prediction smoke measurements
@@ -33,7 +33,7 @@
   grid/randomized search, multiple-metric refit, and training-row-budget halving
   across sequential and bounded parallel folds. Add executable search recipes
   and fresh-process verification of the single-thread OpenMP startup contract.
-- Record producer version 0.6.0-dev in newly written built-in artifacts while
+- Record producer version 0.6.0 in newly written built-in artifacts while
   retaining the existing schema, readers, and golden-artifact compatibility.
 - Add explicit, task-typed external terminal-estimator codecs with package-qualified
   identities, per-call decoder selection, provenance, and bounded envelope

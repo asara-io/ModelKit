@@ -33,13 +33,14 @@ The tested binding is 0.2.1 throughout. Compatibility evidence is scoped to thes
 native/compiler/platform combinations:
 {ul
  {- Linux x86-64, Ubuntu 24.04, OCaml 5.3.0, native 3.0.4 installed from the
- bundled CPU sources: CI passes production linking, nonsampled prediction
- parity, weighted/grouped CV and search, and native/pipeline artifact deployment.
- The complete job still requires a rerun with the matched-build sampling checks
- and corrected isolated-consumer installer.}
+ bundled CPU sources: CI passes production linking, prediction parity
+ (with matched-build sampling checks), weighted/grouped CV and search,
+ native/pipeline artifact deployment, isolated installed-package inference,
+ and conversion/fit/prediction smoke measurements.}
  {- macOS arm64, OCaml 5.3.0, native 3.4.2 from Homebrew: CI passes estimator
- tests, workflows, artifact goldens, odoc examples, and package builds. The
- isolated installed-package consumer passes locally with the corrected installer.}
+ tests, workflows, artifact goldens, odoc examples, package builds,
+ isolated installed-package inference, and conversion/fit/prediction smoke
+ measurements.}
  {- macOS arm64, OCaml 5.3.0, native 3.0.4: local regression/classification,
  persistence/deployment tests, and conversion/fit/prediction smoke checks pass.}
 }
