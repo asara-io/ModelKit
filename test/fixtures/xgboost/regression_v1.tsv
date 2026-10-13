@@ -1,0 +1,533 @@
+# ModelKit XGBoost regression reference v1
+dense	rounds	12
+dense	max_depth	3
+dense	max_bin	32
+dense	learning_rate	0.2
+dense	min_child_weight	1.0
+dense	min_split_loss	0.0
+dense	reg_alpha	0.0
+dense	reg_lambda	1.0
+dense	subsample	1.0
+dense	colsample_bytree	1.0
+dense	threads	1
+dense	seed	41
+dense	native_seed	691784009
+dense	x_train	0	-3.75,-2,-0.25
+dense	x_train	1	-3,0,3
+dense	x_train	2	-2.25,2,-1.5
+dense	x_train	3	-1.5,-3.75,1.75
+dense	x_train	4	-0.75,-1.75,-2.75
+dense	x_train	5	0,0.25,0.5
+dense	x_train	6	0.75,2.25,3.75
+dense	x_train	7	1.5,-3.5,-0.75
+dense	x_train	8	2.25,-1.5,2.5
+dense	x_train	9	3,0.5,-2
+dense	x_train	10	3.75,2.5,1.25
+dense	x_train	11	-3.25,-3.25,-3.25
+dense	x_train	12	-2.5,-1.25,0
+dense	x_train	13	-1.75,0.75,3.25
+dense	x_train	14	-1,2.75,-1.25
+dense	x_train	15	-0.25,-3,2
+dense	x_train	16	0.5,-1,-2.5
+dense	x_train	17	1.25,1,0.75
+dense	x_train	18	2,3,-3.75
+dense	x_train	19	2.75,-2.75,-0.5
+dense	x_train	20	3.5,-0.75,2.75
+dense	x_train	21	-3.5,1.25,-1.75
+dense	x_train	22	-2.75,3.25,1.5
+dense	x_train	23	-2,-2.5,-3
+dense	x_train	24	-1.25,-0.5,0.25
+dense	x_train	25	-0.5,1.5,3.5
+dense	x_train	26	0.25,3.5,-1
+dense	x_train	27	1,-2.25,2.25
+dense	x_train	28	1.75,-0.25,-2.25
+dense	x_train	29	2.5,1.75,1
+dense	x_train	30	3.25,3.75,-3.5
+dense	x_train	31	-3.75,-2,-0.25
+dense	x_predict	0	-4.666666666666667,-0.33333333333333331,4
+dense	x_predict	1	-1,4.333333333333333,0
+dense	x_predict	2	2.6666666666666665,-0.66666666666666663,-4
+dense	x_predict	3	-3.3333333333333335,4,1.6666666666666667
+dense	x_predict	4	0.33333333333333331,-1,-2.3333333333333335
+dense	x_predict	5	4,3.6666666666666665,3.3333333333333335
+dense	x_predict	6	-2,-1.3333333333333333,-0.66666666666666663
+dense	x_predict	7	1.6666666666666667,3.3333333333333335,-4.666666666666667
+dense	target	-5,-4.4000000000000004,-3.7999999999999998,0.375,0.97499999999999998,1.575,1.875,6.3499999999999996,6.9500000000000002,7.25,7.8499999999999996,-3.1749999999999998,-2.875,-2.2749999999999999,-1.675,2.5,3.1000000000000001,3.7000000000000002,4,8.4749999999999996,9.0749999999999993,-6.125,-5.5250000000000004,-1.05,-0.75,-0.14999999999999999,0.45000000000000001,4.625,5.2249999999999996,5.8250000000000002,6.125,-4.9000000000000004
+dense	expected	-4.1812639236450195,-1.1080048084259033,4.8134069442749023,-4.3959188461303711,1.9099783897399902,6.3866424560546875,-1.4199321269989014,3.7565584182739258
+weighted	rounds	12
+weighted	max_depth	3
+weighted	max_bin	32
+weighted	learning_rate	0.2
+weighted	min_child_weight	1.0
+weighted	min_split_loss	0.0
+weighted	reg_alpha	0.0
+weighted	reg_lambda	1.0
+weighted	subsample	1.0
+weighted	colsample_bytree	1.0
+weighted	threads	1
+weighted	seed	41
+weighted	native_seed	691784009
+weighted	x_train	0	-3.75,-2,-0.25
+weighted	x_train	1	-3,0,3
+weighted	x_train	2	-2.25,2,-1.5
+weighted	x_train	3	-1.5,-3.75,1.75
+weighted	x_train	4	-0.75,-1.75,-2.75
+weighted	x_train	5	0,0.25,0.5
+weighted	x_train	6	0.75,2.25,3.75
+weighted	x_train	7	1.5,-3.5,-0.75
+weighted	x_train	8	2.25,-1.5,2.5
+weighted	x_train	9	3,0.5,-2
+weighted	x_train	10	3.75,2.5,1.25
+weighted	x_train	11	-3.25,-3.25,-3.25
+weighted	x_train	12	-2.5,-1.25,0
+weighted	x_train	13	-1.75,0.75,3.25
+weighted	x_train	14	-1,2.75,-1.25
+weighted	x_train	15	-0.25,-3,2
+weighted	x_train	16	0.5,-1,-2.5
+weighted	x_train	17	1.25,1,0.75
+weighted	x_train	18	2,3,-3.75
+weighted	x_train	19	2.75,-2.75,-0.5
+weighted	x_train	20	3.5,-0.75,2.75
+weighted	x_train	21	-3.5,1.25,-1.75
+weighted	x_train	22	-2.75,3.25,1.5
+weighted	x_train	23	-2,-2.5,-3
+weighted	x_predict	0	-4.666666666666667,-0.33333333333333331,4
+weighted	x_predict	1	-1,4.333333333333333,0
+weighted	x_predict	2	2.6666666666666665,-0.66666666666666663,-4
+weighted	x_predict	3	-3.3333333333333335,4,1.6666666666666667
+weighted	x_predict	4	0.33333333333333331,-1,-2.3333333333333335
+weighted	x_predict	5	4,3.6666666666666665,3.3333333333333335
+weighted	x_predict	6	-2,-1.3333333333333333,-0.66666666666666663
+weighted	x_predict	7	1.6666666666666667,3.3333333333333335,-4.666666666666667
+weighted	target	-5,-4.4000000000000004,-3.7999999999999998,0.375,0.97499999999999998,1.575,1.875,6.3499999999999996,6.9500000000000002,7.25,7.8499999999999996,-3.1749999999999998,-2.875,-2.2749999999999999,-1.675,2.5,3.1000000000000001,3.7000000000000002,4,8.4749999999999996,9.0749999999999993,-6.125,-5.5250000000000004,-1.05
+weighted	expected	-3.8958463668823242,-1.4907083511352539,6.474153995513916,-4.6451644897460938,0.50486278533935547,4.7876005172729492,-1.5261101722717285,3.7901613712310791
+weighted	weight	0,1.5,2,1,1.5,0,1,1.5,2,1,0,2,1,1.5,2,0,1.5,2,1,1.5,0,1,1.5,2
+missing	rounds	12
+missing	max_depth	3
+missing	max_bin	32
+missing	learning_rate	0.2
+missing	min_child_weight	1.0
+missing	min_split_loss	0.0
+missing	reg_alpha	0.0
+missing	reg_lambda	1.0
+missing	subsample	1.0
+missing	colsample_bytree	1.0
+missing	threads	1
+missing	seed	41
+missing	native_seed	691784009
+missing	x_train	0	nan,-2,-0.25
+missing	x_train	1	-3,0,3
+missing	x_train	2	-2.25,2,-1.5
+missing	x_train	3	-1.5,-3.75,nan
+missing	x_train	4	-0.75,nan,-2.75
+missing	x_train	5	nan,0.25,0.5
+missing	x_train	6	0.75,2.25,3.75
+missing	x_train	7	1.5,-3.5,-0.75
+missing	x_train	8	2.25,-1.5,nan
+missing	x_train	9	3,nan,-2
+missing	x_train	10	nan,2.5,1.25
+missing	x_train	11	-3.25,-3.25,-3.25
+missing	x_train	12	-2.5,-1.25,0
+missing	x_train	13	-1.75,0.75,nan
+missing	x_train	14	-1,nan,-1.25
+missing	x_train	15	nan,-3,2
+missing	x_train	16	0.5,-1,-2.5
+missing	x_train	17	1.25,1,0.75
+missing	x_train	18	2,3,nan
+missing	x_train	19	2.75,nan,-0.5
+missing	x_train	20	nan,-0.75,2.75
+missing	x_train	21	-3.5,1.25,-1.75
+missing	x_train	22	-2.75,3.25,1.5
+missing	x_train	23	-2,-2.5,nan
+missing	x_predict	0	nan,-0.33333333333333331,4
+missing	x_predict	1	-1,4.333333333333333,0
+missing	x_predict	2	nan,-0.66666666666666663,-4
+missing	x_predict	3	-3.3333333333333335,4,1.6666666666666667
+missing	x_predict	4	nan,-1,-2.3333333333333335
+missing	x_predict	5	4,3.6666666666666665,3.3333333333333335
+missing	x_predict	6	nan,-1.3333333333333333,-0.66666666666666663
+missing	x_predict	7	1.6666666666666667,3.3333333333333335,-4.666666666666667
+missing	target	-5,-4.4000000000000004,-3.7999999999999998,0.375,0.97499999999999998,1.575,1.875,6.3499999999999996,6.9500000000000002,7.25,7.8499999999999996,-3.1749999999999998,-2.875,-2.2749999999999999,-1.675,2.5,3.1000000000000001,3.7000000000000002,4,8.4749999999999996,9.0749999999999993,-6.125,-5.5250000000000004,-1.05
+missing	expected	3.8761177062988281,-1.9774494171142578,4.7227001190185547,-4.5975174903869629,4.7227001190185547,4.5505805015563965,6.732722282409668,3.6263344287872314
+missing	weight	0,1.5,2,1,1.5,0,1,1.5,2,1,0,2,1,1.5,2,0,1.5,2,1,1.5,0,1,1.5,2
+sampled	rounds	12
+sampled	max_depth	3
+sampled	max_bin	32
+sampled	learning_rate	0.2
+sampled	min_child_weight	1.0
+sampled	min_split_loss	0.0
+sampled	reg_alpha	0.0
+sampled	reg_lambda	1.0
+sampled	subsample	0.75
+sampled	colsample_bytree	0.75
+sampled	threads	1
+sampled	seed	41
+sampled	native_seed	691784009
+sampled	x_train	0	-3.75,-2,-0.25,1.5
+sampled	x_train	1	-3,0,3,-1.75
+sampled	x_train	2	-2.25,2,-1.5,2.75
+sampled	x_train	3	-1.5,-3.75,1.75,-0.5
+sampled	x_train	4	-0.75,-1.75,-2.75,-3.75
+sampled	x_train	5	0,0.25,0.5,0.75
+sampled	x_train	6	0.75,2.25,3.75,-2.5
+sampled	x_train	7	1.5,-3.5,-0.75,2
+sampled	x_train	8	2.25,-1.5,2.5,-1.25
+sampled	x_train	9	3,0.5,-2,3.25
+sampled	x_train	10	3.75,2.5,1.25,0
+sampled	x_train	11	-3.25,-3.25,-3.25,-3.25
+sampled	x_train	12	-2.5,-1.25,0,1.25
+sampled	x_train	13	-1.75,0.75,3.25,-2
+sampled	x_train	14	-1,2.75,-1.25,2.5
+sampled	x_train	15	-0.25,-3,2,-0.75
+sampled	x_train	16	0.5,-1,-2.5,3.75
+sampled	x_train	17	1.25,1,0.75,0.5
+sampled	x_train	18	2,3,-3.75,-2.75
+sampled	x_train	19	2.75,-2.75,-0.5,1.75
+sampled	x_train	20	3.5,-0.75,2.75,-1.5
+sampled	x_train	21	-3.5,1.25,-1.75,3
+sampled	x_train	22	-2.75,3.25,1.5,-0.25
+sampled	x_train	23	-2,-2.5,-3,-3.5
+sampled	x_train	24	-1.25,-0.5,0.25,1
+sampled	x_train	25	-0.5,1.5,3.5,-2.25
+sampled	x_train	26	0.25,3.5,-1,2.25
+sampled	x_train	27	1,-2.25,2.25,-1
+sampled	x_train	28	1.75,-0.25,-2.25,3.5
+sampled	x_train	29	2.5,1.75,1,0.25
+sampled	x_train	30	3.25,3.75,-3.5,-3
+sampled	x_train	31	-3.75,-2,-0.25,1.5
+sampled	x_train	32	-3,0,3,-1.75
+sampled	x_train	33	-2.25,2,-1.5,2.75
+sampled	x_train	34	-1.5,-3.75,1.75,-0.5
+sampled	x_train	35	-0.75,-1.75,-2.75,-3.75
+sampled	x_train	36	0,0.25,0.5,0.75
+sampled	x_train	37	0.75,2.25,3.75,-2.5
+sampled	x_train	38	1.5,-3.5,-0.75,2
+sampled	x_train	39	2.25,-1.5,2.5,-1.25
+sampled	x_train	40	3,0.5,-2,3.25
+sampled	x_train	41	3.75,2.5,1.25,0
+sampled	x_train	42	-3.25,-3.25,-3.25,-3.25
+sampled	x_train	43	-2.5,-1.25,0,1.25
+sampled	x_train	44	-1.75,0.75,3.25,-2
+sampled	x_train	45	-1,2.75,-1.25,2.5
+sampled	x_train	46	-0.25,-3,2,-0.75
+sampled	x_train	47	0.5,-1,-2.5,3.75
+sampled	x_train	48	1.25,1,0.75,0.5
+sampled	x_train	49	2,3,-3.75,-2.75
+sampled	x_train	50	2.75,-2.75,-0.5,1.75
+sampled	x_train	51	3.5,-0.75,2.75,-1.5
+sampled	x_train	52	-3.5,1.25,-1.75,3
+sampled	x_train	53	-2.75,3.25,1.5,-0.25
+sampled	x_train	54	-2,-2.5,-3,-3.5
+sampled	x_train	55	-1.25,-0.5,0.25,1
+sampled	x_train	56	-0.5,1.5,3.5,-2.25
+sampled	x_train	57	0.25,3.5,-1,2.25
+sampled	x_train	58	1,-2.25,2.25,-1
+sampled	x_train	59	1.75,-0.25,-2.25,3.5
+sampled	x_train	60	2.5,1.75,1,0.25
+sampled	x_train	61	3.25,3.75,-3.5,-3
+sampled	x_train	62	-3.75,-2,-0.25,1.5
+sampled	x_train	63	-3,0,3,-1.75
+sampled	x_predict	0	-4.666666666666667,-0.33333333333333331,4,-1.3333333333333333
+sampled	x_predict	1	-1,4.333333333333333,0,-4.333333333333333
+sampled	x_predict	2	2.6666666666666665,-0.66666666666666663,-4,2.3333333333333335
+sampled	x_predict	3	-3.3333333333333335,4,1.6666666666666667,-0.66666666666666663
+sampled	x_predict	4	0.33333333333333331,-1,-2.3333333333333335,-3.6666666666666665
+sampled	x_predict	5	4,3.6666666666666665,3.3333333333333335,3
+sampled	x_predict	6	-2,-1.3333333333333333,-0.66666666666666663,0
+sampled	x_predict	7	1.6666666666666667,3.3333333333333335,-4.666666666666667,-3
+sampled	target	-5,-4.4000000000000004,-3.7999999999999998,0.375,0.97499999999999998,1.575,1.875,6.3499999999999996,6.9500000000000002,7.25,7.8499999999999996,-3.1749999999999998,-2.875,-2.2749999999999999,-1.675,2.5,3.1000000000000001,3.7000000000000002,4,8.4749999999999996,9.0749999999999993,-6.125,-5.5250000000000004,-1.05,-0.75,-0.14999999999999999,0.45000000000000001,4.625,5.2249999999999996,5.8250000000000002,6.125,-4.9000000000000004,-4.2999999999999998,-4,0.47499999999999998,1.075,1.375,1.9750000000000001,6.4500000000000002,6.75,7.3499999999999996,7.9500000000000002,-3.375,-2.7749999999999999,-2.1749999999999998,-1.875,2.6000000000000001,3.2000000000000002,3.5,4.0999999999999996,8.5749999999999993,8.875,-6.0250000000000004,-5.4249999999999998,-1.25,-0.65000000000000002,-0.049999999999999989,0.25,4.7249999999999996,5.3250000000000002,5.625,6.2249999999999996,-4.7999999999999998,-4.5
+sampled	expected	-4.2264752388000488,0.312691330909729,5.1238985061645508,-3.4477736949920654,1.5404505729675293,5.087944507598877,-0.5559125542640686,3.833615779876709
+regularized	rounds	12
+regularized	max_depth	3
+regularized	max_bin	32
+regularized	learning_rate	0.2
+regularized	min_child_weight	2.0
+regularized	min_split_loss	0.1
+regularized	reg_alpha	0.2
+regularized	reg_lambda	3.0
+regularized	subsample	1.0
+regularized	colsample_bytree	1.0
+regularized	threads	1
+regularized	seed	41
+regularized	native_seed	691784009
+regularized	x_train	0	-3.75,-2,-0.25
+regularized	x_train	1	-3,0,3
+regularized	x_train	2	-2.25,2,-1.5
+regularized	x_train	3	-1.5,-3.75,1.75
+regularized	x_train	4	-0.75,-1.75,-2.75
+regularized	x_train	5	0,0.25,0.5
+regularized	x_train	6	0.75,2.25,3.75
+regularized	x_train	7	1.5,-3.5,-0.75
+regularized	x_train	8	2.25,-1.5,2.5
+regularized	x_train	9	3,0.5,-2
+regularized	x_train	10	3.75,2.5,1.25
+regularized	x_train	11	-3.25,-3.25,-3.25
+regularized	x_train	12	-2.5,-1.25,0
+regularized	x_train	13	-1.75,0.75,3.25
+regularized	x_train	14	-1,2.75,-1.25
+regularized	x_train	15	-0.25,-3,2
+regularized	x_train	16	0.5,-1,-2.5
+regularized	x_train	17	1.25,1,0.75
+regularized	x_train	18	2,3,-3.75
+regularized	x_train	19	2.75,-2.75,-0.5
+regularized	x_train	20	3.5,-0.75,2.75
+regularized	x_train	21	-3.5,1.25,-1.75
+regularized	x_train	22	-2.75,3.25,1.5
+regularized	x_train	23	-2,-2.5,-3
+regularized	x_train	24	-1.25,-0.5,0.25
+regularized	x_train	25	-0.5,1.5,3.5
+regularized	x_train	26	0.25,3.5,-1
+regularized	x_train	27	1,-2.25,2.25
+regularized	x_train	28	1.75,-0.25,-2.25
+regularized	x_train	29	2.5,1.75,1
+regularized	x_train	30	3.25,3.75,-3.5
+regularized	x_train	31	-3.75,-2,-0.25
+regularized	x_predict	0	-4.666666666666667,-0.33333333333333331,4
+regularized	x_predict	1	-1,4.333333333333333,0
+regularized	x_predict	2	2.6666666666666665,-0.66666666666666663,-4
+regularized	x_predict	3	-3.3333333333333335,4,1.6666666666666667
+regularized	x_predict	4	0.33333333333333331,-1,-2.3333333333333335
+regularized	x_predict	5	4,3.6666666666666665,3.3333333333333335
+regularized	x_predict	6	-2,-1.3333333333333333,-0.66666666666666663
+regularized	x_predict	7	1.6666666666666667,3.3333333333333335,-4.666666666666667
+regularized	target	-5,-4.4000000000000004,-3.7999999999999998,0.375,0.97499999999999998,1.575,1.875,6.3499999999999996,6.9500000000000002,7.25,7.8499999999999996,-3.1749999999999998,-2.875,-2.2749999999999999,-1.675,2.5,3.1000000000000001,3.7000000000000002,4,8.4749999999999996,9.0749999999999993,-6.125,-5.5250000000000004,-1.05,-0.75,-0.14999999999999999,0.45000000000000001,4.625,5.2249999999999996,5.8250000000000002,6.125,-4.9000000000000004
+regularized	expected	-3.8589587211608887,-0.94362848997116089,5.055382251739502,-3.8589587211608887,0.60118550062179565,4.6645054817199707,-1.4979994297027588,3.7723157405853271
+regularized	weight	0,1.5,2,1,1.5,0,1,1.5,2,1,0,2,1,1.5,2,0,1.5,2,1,1.5,0,1,1.5,2,1,0,2,1,1.5,2,0,1.5
+large_scale	rounds	12
+large_scale	max_depth	3
+large_scale	max_bin	32
+large_scale	learning_rate	0.2
+large_scale	min_child_weight	1.0
+large_scale	min_split_loss	0.0
+large_scale	reg_alpha	0.0
+large_scale	reg_lambda	1.0
+large_scale	subsample	1.0
+large_scale	colsample_bytree	1.0
+large_scale	threads	1
+large_scale	seed	41
+large_scale	native_seed	691784009
+large_scale	x_train	0	-37500000000,-20000000000,-2500000000
+large_scale	x_train	1	-30000000000,0,30000000000
+large_scale	x_train	2	-22500000000,20000000000,-15000000000
+large_scale	x_train	3	-15000000000,-37500000000,17500000000
+large_scale	x_train	4	-7500000000,-17500000000,-27500000000
+large_scale	x_train	5	0,2500000000,5000000000
+large_scale	x_train	6	7500000000,22500000000,37500000000
+large_scale	x_train	7	15000000000,-35000000000,-7500000000
+large_scale	x_train	8	22500000000,-15000000000,25000000000
+large_scale	x_train	9	30000000000,5000000000,-20000000000
+large_scale	x_train	10	37500000000,25000000000,12500000000
+large_scale	x_train	11	-32500000000,-32500000000,-32500000000
+large_scale	x_train	12	-25000000000,-12500000000,0
+large_scale	x_train	13	-17500000000,7500000000,32500000000
+large_scale	x_train	14	-10000000000,27500000000,-12500000000
+large_scale	x_train	15	-2500000000,-30000000000,20000000000
+large_scale	x_train	16	5000000000,-10000000000,-25000000000
+large_scale	x_train	17	12500000000,10000000000,7500000000
+large_scale	x_train	18	20000000000,30000000000,-37500000000
+large_scale	x_train	19	27500000000,-27500000000,-5000000000
+large_scale	x_train	20	35000000000,-7500000000,27500000000
+large_scale	x_train	21	-35000000000,12500000000,-17500000000
+large_scale	x_train	22	-27500000000,32500000000,15000000000
+large_scale	x_train	23	-20000000000,-25000000000,-30000000000
+large_scale	x_predict	0	-46666666666.666672,-3333333333.333333,40000000000
+large_scale	x_predict	1	-10000000000,43333333333.333328,0
+large_scale	x_predict	2	26666666666.666664,-6666666666.666666,-40000000000
+large_scale	x_predict	3	-33333333333.333336,40000000000,16666666666.666668
+large_scale	x_predict	4	3333333333.333333,-10000000000,-23333333333.333336
+large_scale	x_predict	5	40000000000,36666666666.666664,33333333333.333336
+large_scale	x_predict	6	-20000000000,-13333333333.333332,-6666666666.666666
+large_scale	x_predict	7	16666666666.666668,33333333333.333336,-46666666666.666672
+large_scale	target	-500000000,-440000000.00000006,-380000000,37500000,97500000,157500000,187500000,635000000,695000000,725000000,785000000,-317500000,-287500000,-227500000,-167500000,250000000,310000000,370000000,400000000,847500000,907499999.99999988,-612500000,-552500000,-105000000
+large_scale	expected	-389584640,-149070816,647415360,-464516448,50486280,478760160,-152611008,379016160
+large_scale	weight	0,1.5,2,1,1.5,0,1,1.5,2,1,0,2,1,1.5,2,0,1.5,2,1,1.5,0,1,1.5,2
+constant_features	rounds	12
+constant_features	max_depth	3
+constant_features	max_bin	32
+constant_features	learning_rate	0.2
+constant_features	min_child_weight	1.0
+constant_features	min_split_loss	0.0
+constant_features	reg_alpha	0.0
+constant_features	reg_lambda	1.0
+constant_features	subsample	1.0
+constant_features	colsample_bytree	1.0
+constant_features	threads	1
+constant_features	seed	41
+constant_features	native_seed	691784009
+constant_features	x_train	0	2,2,2
+constant_features	x_train	1	2,2,2
+constant_features	x_train	2	2,2,2
+constant_features	x_train	3	2,2,2
+constant_features	x_train	4	2,2,2
+constant_features	x_train	5	2,2,2
+constant_features	x_train	6	2,2,2
+constant_features	x_train	7	2,2,2
+constant_features	x_train	8	2,2,2
+constant_features	x_train	9	2,2,2
+constant_features	x_train	10	2,2,2
+constant_features	x_train	11	2,2,2
+constant_features	x_train	12	2,2,2
+constant_features	x_predict	0	-4.666666666666667,-0.33333333333333331,4
+constant_features	x_predict	1	-1,4.333333333333333,0
+constant_features	x_predict	2	2.6666666666666665,-0.66666666666666663,-4
+constant_features	x_predict	3	-3.3333333333333335,4,1.6666666666666667
+constant_features	x_predict	4	0.33333333333333331,-1,-2.3333333333333335
+constant_features	x_predict	5	4,3.6666666666666665,3.3333333333333335
+constant_features	x_predict	6	-2,-1.3333333333333333,-0.66666666666666663
+constant_features	x_predict	7	1.6666666666666667,3.3333333333333335,-4.666666666666667
+constant_features	target	-5,-4.4000000000000004,-3.7999999999999998,0.375,0.97499999999999998,1.575,1.875,6.3499999999999996,6.9500000000000002,7.25,7.8499999999999996,-3.1749999999999998,-2.875
+constant_features	expected	0.75603443384170532,0.75603443384170532,0.75603443384170532,0.75603443384170532,0.75603443384170532,0.75603443384170532,0.75603443384170532,0.75603443384170532
+constant_features	weight	0,1.5,2,1,1.5,0,1,1.5,2,1,0,2,1
+constant_target	rounds	12
+constant_target	max_depth	3
+constant_target	max_bin	32
+constant_target	learning_rate	0.2
+constant_target	min_child_weight	1.0
+constant_target	min_split_loss	0.0
+constant_target	reg_alpha	0.0
+constant_target	reg_lambda	1.0
+constant_target	subsample	1.0
+constant_target	colsample_bytree	1.0
+constant_target	threads	1
+constant_target	seed	41
+constant_target	native_seed	691784009
+constant_target	x_train	0	-3.75,-2
+constant_target	x_train	1	-3,0
+constant_target	x_train	2	-2.25,2
+constant_target	x_train	3	-1.5,-3.75
+constant_target	x_train	4	-0.75,-1.75
+constant_target	x_train	5	0,0.25
+constant_target	x_train	6	0.75,2.25
+constant_target	x_train	7	1.5,-3.5
+constant_target	x_train	8	2.25,-1.5
+constant_target	x_train	9	3,0.5
+constant_target	x_train	10	3.75,2.5
+constant_target	x_train	11	-3.25,-3.25
+constant_target	x_train	12	-2.5,-1.25
+constant_target	x_train	13	-1.75,0.75
+constant_target	x_train	14	-1,2.75
+constant_target	x_train	15	-0.25,-3
+constant_target	x_train	16	0.5,-1
+constant_target	x_predict	0	-4.666666666666667,-0.33333333333333331
+constant_target	x_predict	1	-1,4.333333333333333
+constant_target	x_predict	2	2.6666666666666665,-0.66666666666666663
+constant_target	x_predict	3	-3.3333333333333335,4
+constant_target	x_predict	4	0.33333333333333331,-1
+constant_target	x_predict	5	4,3.6666666666666665
+constant_target	x_predict	6	-2,-1.3333333333333333
+constant_target	x_predict	7	1.6666666666666667,3.3333333333333335
+constant_target	target	-2.5,-2.5,-2.5,-2.5,-2.5,-2.5,-2.5,-2.5,-2.5,-2.5,-2.5,-2.5,-2.5,-2.5,-2.5,-2.5,-2.5
+constant_target	expected	-2.5,-2.5,-2.5,-2.5,-2.5,-2.5,-2.5,-2.5
+constant_target	weight	0,1.5,2,1,1.5,0,1,1.5,2,1,0,2,1,1.5,2,0,1.5
+single_row	rounds	12
+single_row	max_depth	3
+single_row	max_bin	32
+single_row	learning_rate	0.2
+single_row	min_child_weight	1.0
+single_row	min_split_loss	0.0
+single_row	reg_alpha	0.0
+single_row	reg_lambda	1.0
+single_row	subsample	1.0
+single_row	colsample_bytree	1.0
+single_row	threads	1
+single_row	seed	41
+single_row	native_seed	691784009
+single_row	x_train	0	-3.75,-2
+single_row	x_predict	0	-4.666666666666667,-0.33333333333333331
+single_row	x_predict	1	-1,4.333333333333333
+single_row	x_predict	2	2.6666666666666665,-0.66666666666666663
+single_row	x_predict	3	-3.3333333333333335,4
+single_row	x_predict	4	0.33333333333333331,-1
+single_row	x_predict	5	4,3.6666666666666665
+single_row	x_predict	6	-2,-1.3333333333333333
+single_row	x_predict	7	1.6666666666666667,3.3333333333333335
+single_row	target	-5
+single_row	expected	-5,-5,-5,-5,-5,-5,-5,-5
+single_row	weight	2
+all_missing	rounds	12
+all_missing	max_depth	3
+all_missing	max_bin	32
+all_missing	learning_rate	0.2
+all_missing	min_child_weight	1.0
+all_missing	min_split_loss	0.0
+all_missing	reg_alpha	0.0
+all_missing	reg_lambda	1.0
+all_missing	subsample	1.0
+all_missing	colsample_bytree	1.0
+all_missing	threads	1
+all_missing	seed	41
+all_missing	native_seed	691784009
+all_missing	x_train	0	nan,nan
+all_missing	x_train	1	nan,nan
+all_missing	x_train	2	nan,nan
+all_missing	x_train	3	nan,nan
+all_missing	x_train	4	nan,nan
+all_missing	x_train	5	nan,nan
+all_missing	x_train	6	nan,nan
+all_missing	x_train	7	nan,nan
+all_missing	x_train	8	nan,nan
+all_missing	x_train	9	nan,nan
+all_missing	x_train	10	nan,nan
+all_missing	x_train	11	nan,nan
+all_missing	x_train	12	nan,nan
+all_missing	x_train	13	nan,nan
+all_missing	x_train	14	nan,nan
+all_missing	x_train	15	nan,nan
+all_missing	x_predict	0	nan,-0.33333333333333331
+all_missing	x_predict	1	-1,4.333333333333333
+all_missing	x_predict	2	nan,-0.66666666666666663
+all_missing	x_predict	3	-3.3333333333333335,4
+all_missing	x_predict	4	nan,-1
+all_missing	x_predict	5	4,3.6666666666666665
+all_missing	x_predict	6	nan,-1.3333333333333333
+all_missing	x_predict	7	1.6666666666666667,3.3333333333333335
+all_missing	target	-5,-4.4000000000000004,-3.7999999999999998,0.375,0.97499999999999998,1.575,1.875,6.3499999999999996,6.9500000000000002,7.25,7.8499999999999996,-3.1749999999999998,-2.875,-2.2749999999999999,-1.675,2.5
+all_missing	expected	0.78125,0.78125,0.78125,0.78125,0.78125,0.78125,0.78125,0.78125
+zero_learning_rate	rounds	12
+zero_learning_rate	max_depth	3
+zero_learning_rate	max_bin	32
+zero_learning_rate	learning_rate	0.0
+zero_learning_rate	min_child_weight	1.0
+zero_learning_rate	min_split_loss	0.0
+zero_learning_rate	reg_alpha	0.0
+zero_learning_rate	reg_lambda	1.0
+zero_learning_rate	subsample	1.0
+zero_learning_rate	colsample_bytree	1.0
+zero_learning_rate	threads	1
+zero_learning_rate	seed	41
+zero_learning_rate	native_seed	691784009
+zero_learning_rate	x_train	0	-3.75,-2,-0.25
+zero_learning_rate	x_train	1	-3,0,3
+zero_learning_rate	x_train	2	-2.25,2,-1.5
+zero_learning_rate	x_train	3	-1.5,-3.75,1.75
+zero_learning_rate	x_train	4	-0.75,-1.75,-2.75
+zero_learning_rate	x_train	5	0,0.25,0.5
+zero_learning_rate	x_train	6	0.75,2.25,3.75
+zero_learning_rate	x_train	7	1.5,-3.5,-0.75
+zero_learning_rate	x_train	8	2.25,-1.5,2.5
+zero_learning_rate	x_train	9	3,0.5,-2
+zero_learning_rate	x_train	10	3.75,2.5,1.25
+zero_learning_rate	x_train	11	-3.25,-3.25,-3.25
+zero_learning_rate	x_train	12	-2.5,-1.25,0
+zero_learning_rate	x_train	13	-1.75,0.75,3.25
+zero_learning_rate	x_train	14	-1,2.75,-1.25
+zero_learning_rate	x_train	15	-0.25,-3,2
+zero_learning_rate	x_train	16	0.5,-1,-2.5
+zero_learning_rate	x_train	17	1.25,1,0.75
+zero_learning_rate	x_train	18	2,3,-3.75
+zero_learning_rate	x_train	19	2.75,-2.75,-0.5
+zero_learning_rate	x_train	20	3.5,-0.75,2.75
+zero_learning_rate	x_train	21	-3.5,1.25,-1.75
+zero_learning_rate	x_train	22	-2.75,3.25,1.5
+zero_learning_rate	x_train	23	-2,-2.5,-3
+zero_learning_rate	x_predict	0	-4.666666666666667,-0.33333333333333331,4
+zero_learning_rate	x_predict	1	-1,4.333333333333333,0
+zero_learning_rate	x_predict	2	2.6666666666666665,-0.66666666666666663,-4
+zero_learning_rate	x_predict	3	-3.3333333333333335,4,1.6666666666666667
+zero_learning_rate	x_predict	4	0.33333333333333331,-1,-2.3333333333333335
+zero_learning_rate	x_predict	5	4,3.6666666666666665,3.3333333333333335
+zero_learning_rate	x_predict	6	-2,-1.3333333333333333,-0.66666666666666663
+zero_learning_rate	x_predict	7	1.6666666666666667,3.3333333333333335,-4.666666666666667
+zero_learning_rate	target	-5,-4.4000000000000004,-3.7999999999999998,0.375,0.97499999999999998,1.575,1.875,6.3499999999999996,6.9500000000000002,7.25,7.8499999999999996,-3.1749999999999998,-2.875,-2.2749999999999999,-1.675,2.5,3.1000000000000001,3.7000000000000002,4,8.4749999999999996,9.0749999999999993,-6.125,-5.5250000000000004,-1.05
+zero_learning_rate	expected	0.57719296216964722,0.57719296216964722,0.57719296216964722,0.57719296216964722,0.57719296216964722,0.57719296216964722,0.57719296216964722,0.57719296216964722
+zero_learning_rate	weight	0,1.5,2,1,1.5,0,1,1.5,2,1,0,2,1,1.5,2,0,1.5,2,1,1.5,0,1,1.5,2

@@ -1,3 +1,45 @@
+# 0.6.0 (2026-10-12)
+
+- Publish the XGBoost compatibility evidence and executable provenance/artifact
+  support inspection. Add optional conversion/fit/prediction smoke measurements
+  for all three tasks, committed native-version reports, and per-platform CI
+  evidence. Keep developer measurement tools outside package installations.
+- Check sampled XGBoost fits against direct upstream calls on the linked native
+  build, retaining frozen macOS Python references and strict tolerances while
+  respecting C++ standard-library sampling differences. Use Dune's installer
+  for isolated deployment checks without an extra opam-installer dependency.
+- Keep native test probes out of portable package builds and install a persistent
+  XGBoost shared library in Linux CI, avoiding binding 0.2.1's temporary-archive
+  linker defect. Document the corresponding native installation requirement.
+- Attach native model serialization to the XGBoost estimator helpers, preserving
+  supported fitted preprocessing in complete pipeline artifacts. Add native and
+  pipeline goldens, fresh-process/isolated-package deployment checks, backward
+  native-version evidence, and an executable search-refit/save/load recipe.
+- Add trusted XGBoost fitted-model byte/file persistence for regression and
+  binary/multiclass classification, retaining schemas, class mappings, parameters,
+  reports, and provenance. Validate bounded envelopes and native consistency,
+  apply explicit inference thread caps, and expose public codec factories.
+- Add the optional `modelkit-xgboost` package with immutable CPU histogram-tree
+  specifications, checked float32 input conversion, allocation/rounding reports,
+  and scoped native interoperability.
+- Add weighted squared-error XGBoost regression with native missing-value
+  routing, deterministic seeds, schema-checked prediction, pipeline packaging,
+  provenance, and pinned parity coverage for tested native versions.
+- Add binary/multiclass XGBoost classification with reversible integer-label
+  encoding, sorted effective classes, sample weights, normalized probabilities,
+  deterministic ties, zero-weight row exclusion, typed degenerate-target
+  failures, pipeline dispatch, and pinned native-version parity coverage.
+- Verify weighted/group-aware XGBoost CV, fold-local preprocessing,
+  grid/randomized search, multiple-metric refit, and training-row-budget halving
+  across sequential and bounded parallel folds. Add executable search recipes
+  and fresh-process verification of the single-thread OpenMP startup contract.
+- Record producer version 0.6.0 in newly written built-in artifacts while
+  retaining the existing schema, readers, and golden-artifact compatibility.
+- Add explicit, task-typed external terminal-estimator codecs with package-qualified
+  identities, per-call decoder selection, provenance, and bounded envelope
+  validation. Add generalized classification persistence and class-count limits
+  in container version two while retaining built-in version-one writers/readers.
+
 # 0.5.0 (2026-09-09)
 
 - Publish the third-party estimator authoring guide, metadata-aware conformance

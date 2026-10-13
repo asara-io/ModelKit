@@ -76,3 +76,9 @@
 (executable
  (name solver_shapes_worker)
  (libraries modelkit unix))
+
+(executable
+ (name xgboost_worker)
+ (enabled_if
+  (= %{env:MODELKIT_XGBOOST_BENCH=0} 1))
+ (libraries modelkit modelkit-xgboost unix yojson))

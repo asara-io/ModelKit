@@ -1,7 +1,7 @@
 (lang dune 3.23)
 (using mdx 0.4)
 (name modelkit)
-(version 0.5.0)
+(version 0.6.0)
 (generate_opam_files true)
 (implicit_transitive_deps false)
 
@@ -50,6 +50,22 @@
   (ocaml (>= 5.2))
   (modelkit (= :version))
   (nx (= 1.0.0~alpha3))
+  (alcotest (and :with-test (>= 1.9.0)))))
+
+(package
+ (name modelkit-xgboost)
+ (synopsis "CPU histogram-tree estimators with XGBoost for ModelKit")
+ (description
+  "ModelKit XGBoost provides weighted CPU histogram-tree regression and binary/multiclass classification, immutable specifications, checked float32 input conversion, native missing-value routing, allocation reports, schema-checked prediction, and trusted fitted-model persistence without adding XGBoost dependencies to ModelKit's portable core.")
+ (tags
+  (data-science machine-learning adapters xgboost))
+ (depends
+  (ocaml (>= 5.2))
+  (modelkit (= :version))
+  (xgboost (= 0.2.1))
+  (yojson (and (>= 2.2.2) (< 4.0.0)))
+  (modelkit-parallel (and :with-test (= :version)))
+  (mdx (and :with-test (>= 2.4.0)))
   (alcotest (and :with-test (>= 1.9.0)))))
 
 (package

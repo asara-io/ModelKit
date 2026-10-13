@@ -1,0 +1,174 @@
+(library
+ (name modelkit_xgboost)
+ (public_name modelkit-xgboost)
+ (modules modelkit_xgboost modelkit_xgboost_version modelkit_xgboost_io)
+ (private_modules modelkit_xgboost_version modelkit_xgboost_io)
+ (libraries modelkit xgboost yojson))
+
+(rule
+ (target modelkit_xgboost_version.ml)
+ (action
+  (write-file %{target} "let value = \"%{version:modelkit-xgboost}\"\n")))
+
+(test
+ (name deployment_worker)
+ (modules deployment_worker)
+ (package modelkit-xgboost)
+ (libraries modelkit modelkit-xgboost yojson)
+ (deps
+  (source_tree ../../test/fixtures/xgboost/artifacts))
+ (action
+  (setenv
+   OMP_NUM_THREADS
+   1
+   (setenv
+    OMP_THREAD_LIMIT
+    1
+    (run
+     %{test}
+     ../../test/fixtures/xgboost/artifacts/3.0.4
+     regression.metadata.json
+     --auto-compat)))))
+
+(test
+ (name pipeline_artifact_test)
+ (modules pipeline_artifact_test)
+ (package modelkit-xgboost)
+ (libraries modelkit modelkit-xgboost alcotest yojson unix)
+ (deps
+  deployment_worker.exe
+  (source_tree ../../test/fixtures/xgboost/artifacts))
+ (action
+  (setenv
+   MODELKIT_XGBOOST_DEPLOYMENT_WORKER
+   %{dep:deployment_worker.exe}
+   (setenv
+    MODELKIT_XGBOOST_ARTIFACT_FIXTURES
+    ../../test/fixtures/xgboost/artifacts
+    (setenv
+     OMP_NUM_THREADS
+     1
+     (setenv
+      OMP_THREAD_LIMIT
+      1
+      (run %{test})))))))
+
+(library
+ (name xgboost_workflow_support)
+ (wrapped false)
+ (optional)
+ (modules workflow_support)
+ (libraries modelkit modelkit-xgboost alcotest))
+
+(library
+ (name xgboost_parity_support)
+ (wrapped false)
+ (optional)
+ (modules native_reference native_reference_platform)
+ (libraries modelkit-xgboost xgboost))
+
+(rule
+ (target native_reference_platform.ml)
+ (action
+  (write-file %{target} "let system = \"%{system}\"\n")))
+
+(test
+ (name artifact_test)
+ (modules artifact_test)
+ (package modelkit-xgboost)
+ (libraries modelkit modelkit-xgboost xgboost alcotest yojson)
+ (action
+  (setenv
+   OMP_NUM_THREADS
+   1
+   (setenv
+    OMP_THREAD_LIMIT
+    1
+    (run %{test})))))
+
+(tests
+ (names workflow_test parallel_workflow_test)
+ (modules workflow_test parallel_workflow_test)
+ (package modelkit-xgboost)
+ (libraries xgboost_workflow_support modelkit-parallel alcotest unix)
+ (foreign_stubs
+  (language c)
+  (names workflow_probe))
+ (link_flags -cclib -ldl)
+ (action
+  (setenv
+   OMP_NUM_THREADS
+   1
+   (setenv
+    OMP_THREAD_LIMIT
+    1
+    (run %{test})))))
+
+(test
+ (name classification_test)
+ (modules classification_test)
+ (package modelkit-xgboost)
+ (libraries modelkit modelkit-xgboost xgboost_parity_support alcotest)
+ (deps
+  ../../test/fixtures/xgboost/classification_v1.tsv
+  ../../test/fixtures/xgboost/classification_v1_3_0_4.tsv)
+ (action
+  (setenv
+   MODELKIT_XGBOOST_CLASSIFICATION_FIXTURE
+   %{dep:../../test/fixtures/xgboost/classification_v1.tsv}
+   (setenv
+    MODELKIT_XGBOOST_CLASSIFICATION_FIXTURE_3_0
+    %{dep:../../test/fixtures/xgboost/classification_v1_3_0_4.tsv}
+    (setenv
+     OMP_NUM_THREADS
+     1
+     (setenv
+      OMP_THREAD_LIMIT
+      1
+      (run %{test})))))))
+
+(test
+ (name regression_test)
+ (modules regression_test)
+ (package modelkit-xgboost)
+ (libraries modelkit modelkit-xgboost xgboost_parity_support alcotest)
+ (deps
+  ../../test/fixtures/xgboost/regression_v1.tsv
+  ../../test/fixtures/xgboost/regression_v1_3_0_4.tsv)
+ (action
+  (setenv
+   MODELKIT_XGBOOST_REGRESSION_FIXTURE
+   %{dep:../../test/fixtures/xgboost/regression_v1.tsv}
+   (setenv
+    MODELKIT_XGBOOST_REGRESSION_FIXTURE_3_0
+    %{dep:../../test/fixtures/xgboost/regression_v1_3_0_4.tsv}
+    (setenv
+     OMP_NUM_THREADS
+     1
+     (setenv
+      OMP_THREAD_LIMIT
+      1
+      (run %{test})))))))
+
+(test
+ (name modelkit_xgboost_test)
+ (modules modelkit_xgboost_test)
+ (package modelkit-xgboost)
+ (libraries modelkit modelkit-xgboost xgboost alcotest)
+ (action
+  (setenv
+   OMP_NUM_THREADS
+   1
+   (setenv
+    OMP_THREAD_LIMIT
+    1
+    (run %{test})))))
+
+(documentation
+ (package modelkit-xgboost)
+ (mld_files index))
+
+(mdx
+ (files index.mld)
+ (libraries modelkit modelkit-xgboost)
+ (package modelkit-xgboost))

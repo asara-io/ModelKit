@@ -13,7 +13,10 @@ module Pipeline = struct
     implementation : string;
   }
 
-  type serialization_support = Portable_artifact | Unsupported
+  type serialization_support =
+    | Portable_artifact
+    | External_artifact
+    | Unsupported
 
   type component_report = {
     component_name : string;
@@ -26,10 +29,13 @@ module Pipeline = struct
     artifact_estimator_report : component_report;
   }
 
+  type codec_identity = { codec_package : string; codec_name : string }
+
   type encoded_component = {
     component_tag : int;
     component_version : int;
     component_payload : bytes;
+    component_identity : codec_identity option;
   }
 
   type fitted_transformer = {
@@ -99,6 +105,7 @@ module Pipeline = struct
       option;
     terminal_classes : (unit -> int array) option;
     estimator_provenance : provenance option;
+    estimator_codec_identity : codec_identity option;
     encode_estimator : (unit -> (encoded_component, Error.t) result) option;
   }
 
@@ -419,9 +426,9 @@ module Pipeline = struct
         fit_transform;
       }
 
-  let package_fitted_estimator ?encode ?provenance ~name ~expected_schema
-      ~fitted_schema ~predict ?decision_function ?predict_proba ?classes fitted
-      =
+  let package_fitted_estimator ?codec_identity ?encode ?provenance ~name
+      ~expected_schema ~fitted_schema ~predict ?decision_function ?predict_proba
+      ?classes fitted =
     let* () =
       validate_fitted_schema ~stage:name ~expected:expected_schema fitted_schema
     in
@@ -436,11 +443,12 @@ module Pipeline = struct
         terminal_classes =
           Option.map (fun dispatch () -> dispatch fitted) classes;
         estimator_provenance = provenance;
+        estimator_codec_identity = codec_identity;
         encode_estimator = Option.map (fun encode () -> encode fitted) encode;
       }
 
-  let estimator_internal (type specification target prediction fitted) ?encode
-      ?resolve_weights ?provenance ~name
+  let estimator_internal (type specification target prediction fitted)
+      ?codec_identity ?encode ?resolve_weights ?provenance ~name
       (module Estimator : ESTIMATOR
         with type t = specification
          and type target = target
@@ -465,7 +473,7 @@ module Pipeline = struct
       let* fitted =
         Estimator.fit specification ?sample_weight ~rng ~feature_schema ~x ~y ()
       in
-      package_fitted_estimator ?encode ?provenance ~name
+      package_fitted_estimator ?codec_identity ?encode ?provenance ~name
         ~expected_schema:feature_schema
         ~fitted_schema:(Estimator.feature_schema fitted)
         ~predict:Estimator.predict ?decision_function ?predict_proba ?classes
@@ -700,12 +708,15 @@ module Pipeline = struct
   let capabilities specification =
     specification.estimator.estimator_capabilities
 
-  let component_report ~name ~provenance ~encode =
+  let component_report ?(external_codec = false) ~name ~provenance ~encode () =
     {
       component_name = name;
       provenance;
       serialization_support =
-        (match encode with Some _ -> Portable_artifact | None -> Unsupported);
+        (match encode with
+        | Some _ ->
+            if external_codec then External_artifact else Portable_artifact
+        | None -> Unsupported);
     }
 
   let artifact_report fitted =
@@ -715,12 +726,15 @@ module Pipeline = struct
           (fun transformer ->
             component_report ~name:transformer.stage_name
               ~provenance:transformer.transformer_provenance
-              ~encode:transformer.encode_transformer)
+              ~encode:transformer.encode_transformer ())
           fitted.fitted_transformers;
       artifact_estimator_report =
         component_report ~name:fitted.fitted_estimator.terminal_name
           ~provenance:fitted.fitted_estimator.estimator_provenance
-          ~encode:fitted.fitted_estimator.encode_estimator;
+          ~encode:fitted.fitted_estimator.encode_estimator
+          ~external_codec:
+            (Option.is_some fitted.fitted_estimator.estimator_codec_identity)
+          ();
     }
 
   let artifact_transformers report =
@@ -732,6 +746,12 @@ module Pipeline = struct
     report.artifact_estimator_report.serialization_support = Portable_artifact
     && Array.for_all
          (fun component -> component.serialization_support = Portable_artifact)
+         report.artifact_transformer_reports
+
+  let artifact_supported report =
+    report.artifact_estimator_report.serialization_support <> Unsupported
+    && Array.for_all
+         (fun component -> component.serialization_support <> Unsupported)
          report.artifact_transformer_reports
 
   let child_rng root ~kind ~name ~index =

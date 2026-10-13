@@ -1,0 +1,89 @@
+name: XGBoost integration
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xgboost-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: ${{ matrix.runner }} / OCaml 5.3
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15]
+    env:
+      OMP_NUM_THREADS: "1"
+      OMP_THREAD_LIMIT: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.3"
+          dune-cache: true
+
+      # Binding 0.2.1's fallback records archives in a temporary opam build
+      # directory. Install a shared library first so downstream links survive.
+      - name: Install persistent native library on Linux
+        if: runner.os == 'Linux'
+        run: |
+          opam source xgboost.0.2.1 --dir="$RUNNER_TEMP/xgboost-binding-source"
+          cmake -S "$RUNNER_TEMP/xgboost-binding-source/vendor/xgboost" \
+            -B "$RUNNER_TEMP/xgboost-native-build" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/xgboost-native" \
+            -DCMAKE_INSTALL_LIBDIR=lib \
+            -DBUILD_STATIC_LIB=OFF -DUSE_OPENMP=ON -DUSE_CUDA=OFF
+          cmake --build "$RUNNER_TEMP/xgboost-native-build" --parallel 2
+          cmake --install "$RUNNER_TEMP/xgboost-native-build"
+          {
+            echo "PKG_CONFIG_PATH=$RUNNER_TEMP/xgboost-native/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+            echo "LD_LIBRARY_PATH=$RUNNER_TEMP/xgboost-native/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          } >> "$GITHUB_ENV"
+
+      - name: Install runtime dependencies
+        run: opam install ./modelkit.opam ./modelkit-xgboost.opam --deps-only
+
+      - name: Reconfigure cached Linux binding against persistent library
+        if: runner.os == 'Linux'
+        run: |
+          test "$(pkg-config --modversion xgboost)" = 3.0.4
+          DUNE_CACHE=disabled opam reinstall xgboost.0.2.1
+
+      - name: Verify production package build
+        run: opam exec -- dune build -p modelkit,modelkit-xgboost @install
+
+      - name: Install test and documentation dependencies
+        run: opam install ./modelkit.opam ./modelkit-parallel.opam ./modelkit-xgboost.opam --deps-only --with-test --with-doc
+
+      - name: Verify native integration and documentation
+        run: opam exec -- dune build --only-packages modelkit,modelkit-parallel,modelkit-xgboost @all @runtest @doc @install
+
+      - name: Verify package build
+        run: opam exec -- dune build -p modelkit,modelkit-parallel,modelkit-xgboost @install @runtest @doc
+
+      - name: Verify isolated inference consumer
+        run: bash dev/check_xgboost_deployment.sh
+
+      - name: Measure and verify conversion, fit, and prediction smoke
+        run: |
+          MODELKIT_XGBOOST_BENCH=1 opam exec -- dune build --only-packages modelkit,modelkit-xgboost bench/ocaml/xgboost_worker.exe
+          python3 dev/benchmarks/xgboost_smoke.py --output _build/xgboost-smoke.json
+
+      - name: Retain native smoke evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: xgboost-smoke-${{ matrix.runner }}
+          path: _build/xgboost-smoke.json
+          if-no-files-found: error

@@ -9,6 +9,7 @@ module Artifact = struct
     max_bytes : int;
     max_components : int;
     max_features : int;
+    max_classes : int;
     max_string_bytes : int;
     max_metadata_entries : int;
   }
@@ -35,6 +36,8 @@ module Artifact = struct
       Target.classification Target.t )
     Pipeline.fitted
 
+  type classification_model = binary_classification_model
+
   let ( let* ) = Result.bind
 
   let artifact_error ~operation ~reason ~remediation =
@@ -51,11 +54,12 @@ module Artifact = struct
       max_bytes = 64 * 1024 * 1024;
       max_components = 1_024;
       max_features = 1_000_000;
+      max_classes = 1_000_000;
       max_string_bytes = 1_048_576;
       max_metadata_entries = 128;
     }
 
-  let current_producer_version = "0.5.0"
+  let current_producer_version = "0.6.0"
 
   let modelkit_provenance ?(version = current_producer_version) implementation =
     Pipeline.provenance ~package:"modelkit" ~version ~implementation
@@ -77,6 +81,7 @@ module Artifact = struct
   let limits ?(max_bytes = default_limits.max_bytes)
       ?(max_components = default_limits.max_components)
       ?(max_features = default_limits.max_features)
+      ?(max_classes = default_limits.max_classes)
       ?(max_string_bytes = default_limits.max_string_bytes)
       ?(max_metadata_entries = default_limits.max_metadata_entries) () =
     let values =
@@ -84,6 +89,7 @@ module Artifact = struct
         ("max_bytes", max_bytes);
         ("max_components", max_components);
         ("max_features", max_features);
+        ("max_classes", max_classes);
         ("max_string_bytes", max_string_bytes);
         ("max_metadata_entries", max_metadata_entries);
       ]
@@ -100,6 +106,7 @@ module Artifact = struct
             max_bytes;
             max_components;
             max_features;
+            max_classes;
             max_string_bytes;
             max_metadata_entries;
           }
@@ -338,10 +345,10 @@ module Artifact = struct
       in
       loop 0
 
-    let int_array reader =
+    let int_array ?maximum reader =
       let* length =
         bounded_length reader ~name:"index vector length"
-          ~maximum:reader.limits.max_features
+          ~maximum:(Option.value maximum ~default:reader.limits.max_features)
       in
       let* () =
         if length > remaining reader / 8 then
@@ -498,7 +505,153 @@ module Artifact = struct
       Pipeline.component_tag = tag;
       component_version = 1;
       component_payload = payload;
+      component_identity = None;
     }
+
+  module Codec = struct
+    type 'kind decoder = {
+      identity : Pipeline.codec_identity;
+      version : int;
+      restore :
+        provenance:Pipeline.provenance ->
+        name:string ->
+        schema:Feature_schema.t ->
+        classes:int array ->
+        bytes ->
+        ('kind Target.t Pipeline.fitted_estimator, Error.t) result;
+    }
+
+    type ('specification, 'kind) t = {
+      decoder : 'kind decoder;
+      package :
+        provenance:Pipeline.provenance ->
+        name:string ->
+        'specification ->
+        (('kind Target.t, 'kind Target.t) Pipeline.estimator, Error.t) result;
+    }
+
+    let identity ~package ~name ~version =
+      let ascii value =
+        String.length value > 0
+        && String.for_all
+             (function
+               | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '-' | '_' | '.' -> true
+               | _ -> false)
+             value
+      in
+      if (not (ascii package && ascii name)) || package = "modelkit" then
+        failure ~operation:"codec"
+          "external codec needs a nonreserved package and an ASCII component \
+           name"
+      else if version < 1 || version > 65535 then
+        failure ~operation:"codec" "codec version must be between 1 and 65535"
+      else Ok { Pipeline.codec_package = package; codec_name = name }
+
+    let validate_provenance identity provenance =
+      if
+        Pipeline.provenance_package provenance = identity.Pipeline.codec_package
+      then Ok ()
+      else
+        failure ~operation:"codec"
+          "codec package does not match component provenance"
+
+    let encoded identity version payload =
+      {
+        Pipeline.component_tag = 255;
+        component_version = version;
+        component_payload = payload;
+        component_identity = Some identity;
+      }
+
+    let regression (type specification fitted) ~package ~name ~version
+        (module Estimator : REGRESSOR
+          with type t = specification
+           and type fitted = fitted
+           and type rng = Rng.t) ~encode ~decode =
+      let* identity = identity ~package ~name ~version in
+      let encode fitted =
+        Result.map (encoded identity version) (encode fitted)
+      in
+      let package ~provenance ~name specification =
+        let* () = validate_provenance identity provenance in
+        Pipeline.estimator_internal ~codec_identity:identity ~encode ~provenance
+          ~name
+          (module Estimator)
+          specification
+      in
+      let restore ~provenance ~name ~schema ~classes:_ payload =
+        let* fitted = decode ~provenance ~feature_schema:schema payload in
+        if not (Feature_schema.equal schema (Estimator.feature_schema fitted))
+        then
+          failure ~operation:"decode"
+            "external decoder returned an inconsistent fitted schema"
+        else
+          Ok
+            {
+              Pipeline.terminal_name = name;
+              terminal_predict = Estimator.predict fitted;
+              terminal_decision_function = None;
+              terminal_predict_proba = None;
+              terminal_classes = None;
+              estimator_provenance = Some provenance;
+              estimator_codec_identity = Some identity;
+              encode_estimator = Some (fun () -> encode fitted);
+            }
+      in
+      Ok { decoder = { identity; version; restore }; package }
+
+    let classification (type specification fitted) ~package ~name ~version
+        (module Estimator : CLASSIFIER
+          with type t = specification
+           and type fitted = fitted
+           and type rng = Rng.t) ~classes ?decision_function ?predict_proba
+        ~encode ~decode () =
+      let* identity = identity ~package ~name ~version in
+      let encode fitted =
+        Result.map (encoded identity version) (encode fitted)
+      in
+      let package ~provenance ~name specification =
+        let* () = validate_provenance identity provenance in
+        Pipeline.estimator_internal ~codec_identity:identity ~encode ~provenance
+          ~name
+          (module Estimator)
+          ~classes ?decision_function ?predict_proba specification
+      in
+      let restore ~provenance ~name ~schema ~classes:expected_classes payload =
+        let* fitted =
+          decode ~provenance ~feature_schema:schema
+            ~classes:(Array.copy expected_classes)
+            payload
+        in
+        if not (Feature_schema.equal schema (Estimator.feature_schema fitted))
+        then
+          failure ~operation:"decode"
+            "external decoder returned an inconsistent fitted schema"
+        else if classes fitted <> expected_classes then
+          failure ~operation:"decode"
+            "external decoder returned an inconsistent class mapping"
+        else
+          Ok
+            {
+              Pipeline.terminal_name = name;
+              terminal_predict = Estimator.predict fitted;
+              terminal_decision_function =
+                Option.map (fun dispatch -> dispatch fitted) decision_function;
+              terminal_predict_proba =
+                Option.map (fun dispatch -> dispatch fitted) predict_proba;
+              terminal_classes = Some (fun () -> classes fitted);
+              estimator_provenance = Some provenance;
+              estimator_codec_identity = Some identity;
+              encode_estimator = Some (fun () -> encode fitted);
+            }
+      in
+      Ok { decoder = { identity; version; restore }; package }
+
+    let estimator ?(name = "estimator") ~provenance codec specification =
+      codec.package ~provenance ~name specification
+
+    let decoder codec = codec.decoder
+  end
 
   let encode_simple_imputer fitted =
     let writer = Writer.create () in
@@ -707,20 +860,134 @@ module Artifact = struct
 
   let write_component writer encoded =
     Writer.u8 writer encoded.Pipeline.component_tag;
+    (match encoded.Pipeline.component_identity with
+    | None -> ()
+    | Some identity ->
+        Writer.string writer identity.Pipeline.codec_package;
+        Writer.string writer identity.Pipeline.codec_name);
     Writer.length writer encoded.Pipeline.component_version;
     Writer.bytes writer encoded.Pipeline.component_payload
 
-  let read_component reader =
+  let validate_encoded_component ~limits encoded =
+    if Bytes.length encoded.Pipeline.component_payload > limits.max_bytes then
+      failure ~operation:"encode"
+        "component payload exceeds the configured byte limit"
+    else
+      match encoded.Pipeline.component_identity with
+      | None -> Ok ()
+      | Some identity ->
+          let* () =
+            validate_encode_text limits ~name:"codec package"
+              identity.Pipeline.codec_package
+          in
+          validate_encode_text limits ~name:"codec name"
+            identity.Pipeline.codec_name
+
+  let read_component ~container_version reader =
     let* component_tag = Reader.u8 reader in
+    let* component_identity =
+      if component_tag = 255 && container_version = 2 then
+        let* package = Reader.string reader in
+        let* name = Reader.string reader in
+        let* identity = Codec.identity ~package ~name ~version:1 in
+        Ok (Some identity)
+      else Ok None
+    in
     let* component_version =
       Reader.bounded_length reader ~name:"component version" ~maximum:65535
     in
     let* component_payload = Reader.bytes reader in
-    if component_version <> 1 then
-      failure ~operation:"decode" "unsupported component codec version"
-    else Ok { Pipeline.component_tag; component_version; component_payload }
+    if
+      component_version = 0
+      || (component_identity = None && component_version <> 1)
+    then failure ~operation:"decode" "unsupported component codec version"
+    else
+      Ok
+        {
+          Pipeline.component_tag;
+          component_version;
+          component_payload;
+          component_identity;
+        }
+
+  let write_provenance ~limits writer provenance =
+    match provenance with
+    | None ->
+        Writer.bool writer false;
+        Ok ()
+    | Some provenance ->
+        let values =
+          [|
+            Pipeline.provenance_package provenance;
+            Pipeline.provenance_version provenance;
+            Pipeline.provenance_implementation provenance;
+          |]
+        in
+        let rec validate index =
+          if index = Array.length values then Ok ()
+          else
+            let* () =
+              validate_encode_text limits ~name:"component provenance"
+                values.(index)
+            in
+            validate (index + 1)
+        in
+        let* () = validate 0 in
+        Writer.bool writer true;
+        Array.iter (Writer.string writer) values;
+        Ok ()
+
+  let read_provenance reader =
+    let* present = Reader.bool reader in
+    if not present then Ok None
+    else
+      let* package = Reader.string reader in
+      let* version = Reader.string reader in
+      let* implementation = Reader.string reader in
+      Result.map Option.some
+        (Pipeline.provenance ~package ~version ~implementation)
+
+  let validate_classes ~limits ~task classes =
+    let count = Array.length classes in
+    if count = 0 then
+      failure ~operation:"classes" "classification class mapping is empty"
+    else if count > limits.max_classes then
+      failure ~operation:"classes"
+        "class count exceeds the configured reader limit"
+    else if task = 2 && count <> 2 then
+      failure ~operation:"classes"
+        "binary-classification artifacts require exactly two classes"
+    else
+      let distinct = Hashtbl.create count in
+      let rec check index =
+        if index = count then Ok ()
+        else if Hashtbl.mem distinct classes.(index) then
+          failure ~operation:"classes" "class mapping contains duplicate labels"
+        else (
+          Hashtbl.add distinct classes.(index) ();
+          check (index + 1))
+      in
+      check 0
 
   let encode_payload ~limits ~task ?(metadata = empty_metadata) fitted =
+    let terminal = fitted.Pipeline.fitted_estimator in
+    let container_version =
+      if task = 3 || Option.is_some terminal.Pipeline.estimator_codec_identity
+      then 2
+      else 1
+    in
+    let* classes =
+      if task = 1 then Ok [||]
+      else
+        match terminal.Pipeline.terminal_classes with
+        | None ->
+            failure ~operation:"encode"
+              "classification estimator has no class mapping"
+        | Some classes ->
+            let values = Array.copy (classes ()) in
+            let* () = validate_classes ~limits ~task values in
+            Ok values
+    in
     let* () = validate_metadata limits metadata in
     let* () =
       validate_schema_for_encode limits fitted.Pipeline.pipeline_input_schema
@@ -765,14 +1032,20 @@ module Artifact = struct
                   (Format.sprintf "pipeline stage %S has no artifact codec"
                      transformer.Pipeline.stage_name)
           in
+          let* () = validate_encoded_component ~limits encoded in
           Writer.string writer transformer.Pipeline.stage_name;
           write_schema writer transformer.Pipeline.transform_input_schema;
           write_schema writer transformer.Pipeline.transform_output_schema;
+          let* () =
+            if container_version = 2 then
+              write_provenance ~limits writer
+                transformer.Pipeline.transformer_provenance
+            else Ok ()
+          in
           write_component writer encoded;
           write_transformer (index + 1)
       in
       let* () = write_transformer 0 in
-      let terminal = fitted.Pipeline.fitted_estimator in
       let* () =
         validate_encode_text limits ~name:"terminal estimator name"
           terminal.Pipeline.terminal_name
@@ -785,7 +1058,14 @@ module Artifact = struct
               (Format.sprintf "terminal estimator %S has no artifact codec"
                  terminal.Pipeline.terminal_name)
       in
+      let* () = validate_encoded_component ~limits encoded in
       Writer.string writer terminal.Pipeline.terminal_name;
+      let* () =
+        if container_version = 2 then
+          write_provenance ~limits writer terminal.Pipeline.estimator_provenance
+        else Ok ()
+      in
+      if container_version = 2 && task <> 1 then Writer.int_array writer classes;
       write_component writer encoded;
       let payload = Writer.contents writer in
       let envelope_size = 36 in
@@ -794,7 +1074,7 @@ module Artifact = struct
       else
         let envelope = Writer.create () in
         Buffer.add_string envelope "MDLKIT01";
-        Writer.u8 envelope 1;
+        Writer.u8 envelope container_version;
         Writer.u8 envelope 0;
         Writer.u8 envelope task;
         Writer.length envelope (Bytes.length payload);
@@ -808,6 +1088,9 @@ module Artifact = struct
 
   let encode_binary_classification ?metadata ?(limits = default_limits) fitted =
     encode_payload ~limits ~task:2 ?metadata fitted
+
+  let encode_classification ?metadata ?(limits = default_limits) fitted =
+    encode_payload ~limits ~task:3 ?metadata fitted
 
   let finite_array values = Array.for_all Float.is_finite values
 
@@ -1008,6 +1291,7 @@ module Artifact = struct
           terminal_predict_proba = None;
           terminal_classes = None;
           estimator_provenance = None;
+          estimator_codec_identity = None;
           encode_estimator = Some (fun () -> encode_ridge_regression fitted);
         }
     else
@@ -1028,6 +1312,7 @@ module Artifact = struct
           terminal_predict_proba = None;
           terminal_classes = None;
           estimator_provenance = None;
+          estimator_codec_identity = None;
           encode_estimator = Some (fun () -> encode_linear_regression fitted);
         }
 
@@ -1096,11 +1381,12 @@ module Artifact = struct
             terminal_classes =
               Some (fun () -> Logistic_regression.classes fitted);
             estimator_provenance = None;
+            estimator_codec_identity = None;
             encode_estimator =
               Some (fun () -> encode_logistic_regression fitted);
           }
 
-  let parse_envelope ~limits ~expected_task bytes =
+  let parse_envelope ~limits ~expected_tasks bytes =
     if Bytes.length bytes > limits.max_bytes then
       failure ~operation:"decode" "artifact exceeds the configured byte limit"
     else if Bytes.length bytes < 36 then
@@ -1113,9 +1399,10 @@ module Artifact = struct
       let* major = Reader.u8 reader in
       let* minor = Reader.u8 reader in
       let* task = Reader.u8 reader in
-      if major <> 1 || minor <> 0 then
+      if (major <> 1 && major <> 2) || minor <> 0 then
         failure ~operation:"decode" "unsupported artifact container version"
-      else if task <> expected_task then
+      else if (not (List.mem task expected_tasks)) || (major = 1 && task = 3)
+      then
         failure ~operation:"decode"
           "artifact task does not match the requested loader"
       else
@@ -1141,11 +1428,89 @@ module Artifact = struct
               not
                 (String.equal digest (Digest.string (Bytes.to_string payload)))
             then failure ~operation:"decode" "artifact checksum does not match"
-            else Ok payload
+            else Ok (major, task, payload)
 
-  let decode_payload ~limits ~decode_estimator payload =
+  let builtin_provenance ~producer_version ~implementation = function
+    | None -> modelkit_provenance ~version:producer_version implementation
+    | Some provenance ->
+        if
+          Pipeline.provenance_package provenance = "modelkit"
+          && Pipeline.provenance_implementation provenance = implementation
+        then Ok provenance
+        else
+          failure ~operation:"decode"
+            "built-in component provenance is inconsistent"
+
+  let validate_decoders decoders =
+    let seen = Hashtbl.create (Array.length decoders) in
+    let rec check index =
+      if index = Array.length decoders then Ok ()
+      else
+        let decoder = decoders.(index) in
+        let key = (decoder.Codec.identity, decoder.Codec.version) in
+        if Hashtbl.mem seen key then
+          failure ~operation:"decode"
+            "decoder selection contains duplicate codec identities and versions"
+        else (
+          Hashtbl.add seen key ();
+          check (index + 1))
+    in
+    check 0
+
+  let decode_terminal ~limits ~decoders ~decode_estimator ~producer_version
+      ~name ~schema ~provenance ~classes encoded =
+    let* fitted =
+      match encoded.Pipeline.component_identity with
+      | None ->
+          let* implementation = estimator_implementation encoded in
+          let* provenance =
+            builtin_provenance ~producer_version ~implementation provenance
+          in
+          let* fitted = decode_estimator ~limits ~name ~schema encoded in
+          Ok { fitted with Pipeline.estimator_provenance = Some provenance }
+      | Some identity -> (
+          let* provenance =
+            match provenance with
+            | None ->
+                failure ~operation:"decode"
+                  "external component provenance is missing"
+            | Some provenance ->
+                let* () = Codec.validate_provenance identity provenance in
+                Ok provenance
+          in
+          match
+            Array.find_opt
+              (fun decoder ->
+                decoder.Codec.identity = identity
+                && decoder.Codec.version = encoded.Pipeline.component_version)
+              decoders
+          with
+          | None ->
+              failure ~operation:"decode"
+                (Format.sprintf "no decoder selected for %s:%s version %d"
+                   identity.Pipeline.codec_package identity.Pipeline.codec_name
+                   encoded.Pipeline.component_version)
+          | Some decoder ->
+              decoder.Codec.restore ~provenance ~name ~schema ~classes
+                encoded.Pipeline.component_payload)
+    in
+    if Array.length classes = 0 then Ok fitted
+    else
+      match fitted.Pipeline.terminal_classes with
+      | Some observed when observed () = classes -> Ok fitted
+      | Some _ | None ->
+          failure ~operation:"decode"
+            "terminal class mapping differs from the artifact envelope"
+
+  let decode_payload ~limits ~container_version ~task ~decoders
+      ~decode_estimator payload =
     let reader = Reader.create ~limits payload in
     let* producer_version = Reader.string reader in
+    let* () =
+      if String.length (String.trim producer_version) = 0 then
+        failure ~operation:"decode" "artifact producer version is blank"
+      else Ok ()
+    in
     let* producer_ocaml_version = Reader.string reader in
     let producer_ocaml_version =
       if String.length producer_ocaml_version = 0 then None
@@ -1166,7 +1531,10 @@ module Artifact = struct
         let* name = Reader.string reader in
         let* input_schema = read_schema reader in
         let* output_schema = read_schema reader in
-        let* encoded = read_component reader in
+        let* recorded_provenance =
+          if container_version = 2 then read_provenance reader else Ok None
+        in
+        let* encoded = read_component ~container_version reader in
         if String.length (String.trim name) = 0 then
           failure ~operation:"decode" "pipeline stage name is blank"
         else if Hashtbl.mem stage_names name then
@@ -1182,7 +1550,8 @@ module Artifact = struct
           in
           let* implementation = transformer_implementation encoded in
           let* provenance =
-            modelkit_provenance ~version:producer_version implementation
+            builtin_provenance ~producer_version ~implementation
+              recorded_provenance
           in
           let transformer =
             {
@@ -1198,27 +1567,38 @@ module Artifact = struct
       failure ~operation:"decode" "pipeline output schema is inconsistent"
     else
       let* terminal_name = Reader.string reader in
-      let* encoded = read_component reader in
+      let* provenance =
+        if container_version = 2 then read_provenance reader else Ok None
+      in
+      let* classes =
+        if container_version = 2 && task <> 1 then
+          let* classes = Reader.int_array ~maximum:limits.max_classes reader in
+          let* () = validate_classes ~limits ~task classes in
+          Ok classes
+        else Ok [||]
+      in
+      let* encoded = read_component ~container_version reader in
+      let* () = Reader.finish reader in
       let* fitted_estimator =
         if String.length (String.trim terminal_name) = 0 then
           failure ~operation:"decode" "terminal estimator name is blank"
         else if Hashtbl.mem stage_names terminal_name then
           failure ~operation:"decode" "terminal estimator name is duplicated"
         else
-          decode_estimator ~limits ~name:terminal_name
-            ~schema:pipeline_output_schema encoded
+          decode_terminal ~limits ~decoders ~decode_estimator ~producer_version
+            ~name:terminal_name ~schema:pipeline_output_schema ~provenance
+            ~classes encoded
+          |> Result.map_error (Error.with_context (Error.Stage terminal_name))
       in
-      let* implementation = estimator_implementation encoded in
-      let* provenance =
-        modelkit_provenance ~version:producer_version implementation
+      let* () =
+        if task = 1 then Ok ()
+        else
+          match fitted_estimator.Pipeline.terminal_classes with
+          | None ->
+              failure ~operation:"decode"
+                "classification estimator has no class mapping"
+          | Some classes -> validate_classes ~limits ~task (classes ())
       in
-      let fitted_estimator =
-        {
-          fitted_estimator with
-          Pipeline.estimator_provenance = Some provenance;
-        }
-      in
-      let* () = Reader.finish reader in
       let fitted_transformers =
         Array.map
           (function Some transformer -> transformer | None -> assert false)
@@ -1234,14 +1614,31 @@ module Artifact = struct
       in
       Ok { model; metadata; producer_version; producer_ocaml_version }
 
-  let decode_regression ?(limits = default_limits) bytes =
-    let* payload = parse_envelope ~limits ~expected_task:1 bytes in
-    decode_payload ~limits ~decode_estimator:decode_regression_estimator payload
+  let decode_regression ?(decoders = [||]) ?(limits = default_limits) bytes =
+    let* () = validate_decoders decoders in
+    let* container_version, task, payload =
+      parse_envelope ~limits ~expected_tasks:[ 1 ] bytes
+    in
+    decode_payload ~limits ~container_version ~task ~decoders
+      ~decode_estimator:decode_regression_estimator payload
 
-  let decode_binary_classification ?(limits = default_limits) bytes =
-    let* payload = parse_envelope ~limits ~expected_task:2 bytes in
-    decode_payload ~limits ~decode_estimator:decode_classification_estimator
-      payload
+  let decode_binary_classification ?(decoders = [||]) ?(limits = default_limits)
+      bytes =
+    let* () = validate_decoders decoders in
+    let* container_version, task, payload =
+      parse_envelope ~limits ~expected_tasks:[ 2 ] bytes
+    in
+    decode_payload ~limits ~container_version ~task ~decoders
+      ~decode_estimator:decode_classification_estimator payload
+
+  let decode_classification ?(decoders = [||]) ?(limits = default_limits) bytes
+      =
+    let* () = validate_decoders decoders in
+    let* container_version, task, payload =
+      parse_envelope ~limits ~expected_tasks:[ 2; 3 ] bytes
+    in
+    decode_payload ~limits ~container_version ~task ~decoders
+      ~decode_estimator:decode_classification_estimator payload
 
   let save_bytes ~path bytes =
     try
@@ -1285,15 +1682,23 @@ module Artifact = struct
     let* bytes = encode_regression ?metadata ?limits fitted in
     save_bytes ~path bytes
 
+  let save_classification ?metadata ?limits ~path fitted =
+    let* bytes = encode_classification ?metadata ?limits fitted in
+    save_bytes ~path bytes
+
   let save_binary_classification ?metadata ?limits ~path fitted =
     let* bytes = encode_binary_classification ?metadata ?limits fitted in
     save_bytes ~path bytes
 
-  let load_regression ?(limits = default_limits) ~path () =
+  let load_regression ?decoders ?(limits = default_limits) ~path () =
     let* bytes = load_bytes ~limits ~path in
-    decode_regression ~limits bytes
+    decode_regression ?decoders ~limits bytes
 
-  let load_binary_classification ?(limits = default_limits) ~path () =
+  let load_binary_classification ?decoders ?(limits = default_limits) ~path () =
     let* bytes = load_bytes ~limits ~path in
-    decode_binary_classification ~limits bytes
+    decode_binary_classification ?decoders ~limits bytes
+
+  let load_classification ?decoders ?(limits = default_limits) ~path () =
+    let* bytes = load_bytes ~limits ~path in
+    decode_classification ?decoders ~limits bytes
 end

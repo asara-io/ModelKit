@@ -1,0 +1,569 @@
+{0 ModelKit XGBoost}
+
+The optional [modelkit-xgboost] package provides weighted CPU histogram-tree
+regression and binary/multiclass classification, native missing-value routing, checked input
+conversion, immutable specifications, and scoped native interoperability.
+Installing [modelkit] does not install this package or its native dependencies.
+Trusted fitted-model persistence is available through {!Modelkit_xgboost.Artifact}.
+Ordinary estimator helpers attach serialization support for complete fitted
+pipelines containing supported preprocessing.
+
+{1 Installation and compatibility}
+
+Install [modelkit-xgboost] separately. The package pins OCaml binding 0.2.1,
+requires OCaml 5.2+, and admits native libxgboost major version three. The binding
+uses a system libxgboost 3.0+ discovered through pkg-config; CMake, a C++ toolchain,
+and OpenMP are native build/runtime dependencies. Install that native library
+before installing the OCaml binding, and expose a custom installation's
+[lib/pkgconfig] directory through [PKG_CONFIG_PATH] and its shared-library
+directory through the platform's runtime loader configuration. Binding 0.2.1's
+vendored fallback records static archives in its temporary opam build directory
+without installing them, so downstream applications cannot link after opam
+removes that directory. A persistent shared-library installation avoids this
+packaging defect; rebuilding an already installed binding is necessary when
+switching from the fallback. Linux CI builds and installs native 3.0.4 from the
+binding's bundled sources before resolving dependencies. [Yojson] is an
+adapter-only dependency for bounded native JSON
+inspection. Windows is excluded by the binding. Local verification uses
+OCaml 5.3.0, binding 0.2.1, and native libxgboost 3.0.4 and 3.4.2 on macOS arm64.
+Separate pinned Python references use XGBoost 3.0.4 and 3.4.1. These combinations
+are verified; other native releases require their own compatibility evidence.
+
+The tested binding is 0.2.1 throughout. Compatibility evidence is scoped to these
+native/compiler/platform combinations:
+{ul
+ {- Linux x86-64, Ubuntu 24.04, OCaml 5.3.0, native 3.0.4 installed from the
+ bundled CPU sources: CI passes production linking, prediction parity
+ (with matched-build sampling checks), weighted/grouped CV and search,
+ native/pipeline artifact deployment, isolated installed-package inference,
+ and conversion/fit/prediction smoke measurements.}
+ {- macOS arm64, OCaml 5.3.0, native 3.4.2 from Homebrew: CI passes estimator
+ tests, workflows, artifact goldens, odoc examples, package builds,
+ isolated installed-package inference, and conversion/fit/prediction smoke
+ measurements.}
+ {- macOS arm64, OCaml 5.3.0, native 3.0.4: local regression/classification,
+ persistence/deployment tests, and conversion/fit/prediction smoke checks pass.}
+}
+Native major three is an admission boundary, not evidence for every 3.x release.
+The portable packages have separate Linux/macOS/Windows CI across OCaml 5.2,
+5.3, and 5.5 and require no XGBoost installation. Windows remains outside this
+adapter's supported platforms.
+
+On macOS, Homebrew's [xgboost] and [libomp] provide the shared native dependencies.
+On Linux, a distribution package older than 3.0 does not satisfy the binding.
+The following CPU-only build uses the checksummed binding release's complete
+bundled XGBoost 3.0.4 sources, with no Python runtime dependency:
+
+{v
+opam source xgboost.0.2.1 --dir=xgboost-binding-source
+cmake -S xgboost-binding-source/vendor/xgboost -B xgboost-native-build \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PWD/xgboost-native" \
+  -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_STATIC_LIB=OFF \
+  -DUSE_OPENMP=ON -DUSE_CUDA=OFF
+cmake --build xgboost-native-build --parallel 2
+cmake --install xgboost-native-build
+export PKG_CONFIG_PATH="$PWD/xgboost-native/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+export LD_LIBRARY_PATH="$PWD/xgboost-native/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+opam install modelkit-xgboost
+v}
+
+Keep this native installation available to the deployed application's linker
+and runtime loader. If [xgboost.0.2.1] was already installed using the fallback,
+run [opam reinstall xgboost.0.2.1] after setting the discovery paths.
+
+{1 Immutable specifications}
+
+{!Modelkit_xgboost.Specification.create} validates histogram-tree parameters.
+[clone] preserves the unfitted specification and [params] returns immutable
+values; parameter search builders create a fresh specification for each
+candidate. Booster creation sets CPU execution, histogram trees, an RNG-derived
+seed, and the configured [nthread]. It does not set a training objective or
+train a model.
+
+{@ocaml[
+let specification =
+  Modelkit_xgboost.Specification.create ~rounds:20 ~max_depth:3 ()
+  |> Result.get_ok
+let () = assert ((Modelkit_xgboost.Specification.params specification).Modelkit_xgboost.Specification.threads = 1)
+]}
+
+{1 Numeric admission}
+
+{!val:Modelkit_xgboost.Input.features} copies a nonempty ModelKit matrix to
+row-major float32 storage and retains its ordered feature schema. Native NaN
+means missing; infinity is rejected. Regression targets and weights remain
+finite after conversion. Already encoded classification labels must lie in
+the range from zero inclusive to [class_count] exclusive and be exactly
+representable as float32; learning the mapping from original labels is the
+estimator's responsibility.
+
+Float32 conversion is lossy. Each input reports its allocated float32 payload,
+full-size temporary staging payload, source shape, and count of changed finite
+values. These reports exclude native DMatrix/booster allocations and OCaml
+headers. Finite feature/target underflow to zero is permitted and reported;
+positive weights rounding to zero fail because that would change which rows
+participate. Infinities and finite values rounding to infinity fail with typed
+row/column context. Converted buffers are opaque and immutable to callers.
+
+{@ocaml[
+let x = Modelkit.Matrix.of_arrays [| [| 0.1; Float.nan |]; [| 2.; 3. |] |]
+        |> Result.get_ok
+let schema = Modelkit.Feature_schema.of_matrix x |> Result.get_ok
+let converted = Modelkit_xgboost.Input.features ~feature_schema:schema x
+                |> Result.get_ok
+let report = Modelkit_xgboost.Input.feature_report converted
+let () = assert (Modelkit_xgboost.Input.payload_bytes report = 16L)
+let () = assert (Modelkit_xgboost.Input.rounded_values report = 1)
+]}
+
+{1 Fit and predict regression}
+
+{!Modelkit_xgboost.Regressor} implements the public {!module-type:Modelkit.REGRESSOR}
+protocol. Every fit builds independent native state, runs exactly the configured
+number of rounds with squared-error loss, and returns a separate fitted value.
+Optional sample weights are routed to the native DMatrix; zero weights remain
+zero. Feature NaNs route through native missing-value handling. Training shape,
+schema, target/weight alignment, and float32 admission fail with typed errors.
+
+{@ocaml[
+let y = Modelkit.Vector.of_array [| 1.; 2. |] |> Modelkit.Target.regression
+        |> Result.get_ok
+let weights = Modelkit.Sample_weight.of_array ~expected_length:2 [| 1.; 2. |]
+              |> Result.get_ok
+let fitted =
+  Modelkit_xgboost.Regressor.fit specification ~sample_weight:weights
+    ~rng:(Modelkit.Rng.create (Modelkit.Seed.of_int 41))
+    ~feature_schema:schema ~x ~y ()
+  |> Result.get_ok
+let predictions, conversion =
+  Modelkit_xgboost.Regressor.predict_with_report fitted ~feature_schema:schema ~x
+  |> Result.get_ok
+let () = assert (Modelkit.Target.length predictions = 2)
+let () = assert (Modelkit_xgboost.Input.payload_bytes conversion = 16L)
+]}
+
+Prediction validates the fitted schema's exact names/order and feature count,
+returns finite float64 values in source row order, and supports empty batches
+with the fitted column count. {!val:Modelkit_xgboost.Regressor.report} exposes native
+version, effective seed, rounds, and input conversion reports. Prediction's
+conversion report describes only its float32 feature buffer; native output
+storage and the returned float64 vector are additional allocations.
+
+Fit detaches the learned model from training caches using an internal
+XGBoost-produced model buffer, then releases the training booster and DMatrix.
+The fitted value retains no training observations. It owns a GC-managed private
+inference booster; native allocations are additional to OCaml heap accounting.
+Admission costs linear time and float32 payload in the number of input values.
+Cache detachment adds one model-buffer write/read during fit, with temporary
+space proportional to model size. Prediction converts its feature batch once
+and calls native in-place prediction. Calls sharing a fitted value serialize
+native output copying; separate fitted values can predict independently.
+
+Repeated fits/predictions are deterministic for fixed data, parameters, RNG,
+native build/platform, and thread configuration. Native sampling changes between
+3.0.4 and 3.4.2, so the same seed alone does not reproduce a sampled model across
+these versions. Column sampling also uses the C++ runtime's [std::shuffle], whose
+sequence can differ between toolchains. Pin the native build and platform when
+reproducing sampled fits. Frozen Python sampling references cover macOS arm64;
+sampled fits additionally compare to direct upstream calls on the linked native
+build, preserving strict prediction/probability tolerances on Linux. The
+committed parity fixtures cover dense, weighted, missing/all-missing, sampled,
+regularized, large-scale, constant-feature/target, single-row, and zero-learning
+rate cases at absolute and relative prediction tolerances of [2e-6].
+
+{1 Pipeline integration}
+
+{!Modelkit_xgboost.Regressor.estimator} packages the immutable specification
+using public ModelKit modules and reports package/version provenance. It accepts
+routed sample weights and works as the terminal estimator of ordinary and
+supervised pipelines. Add preprocessing through the usual pipeline APIs.
+
+{@ocaml[
+let estimator = Modelkit_xgboost.Regressor.estimator ~name:"trees" specification
+                |> Result.get_ok
+let pipeline = Modelkit.Pipeline.set_estimator Modelkit.Pipeline.empty estimator
+               |> Result.get_ok
+let fitted_pipeline =
+  Modelkit.Pipeline.fit pipeline ~sample_weight:weights
+    ~rng:(Modelkit.Rng.create (Modelkit.Seed.of_int 41))
+    ~feature_schema:schema ~x ~y ()
+  |> Result.get_ok
+let predicted = Modelkit.Pipeline.predict fitted_pipeline ~feature_schema:schema ~x
+                |> Result.get_ok
+let () = assert (Modelkit.Target.length predicted = 2)
+]}
+
+This packaging reports [Pipeline.External_artifact]. The portable core remains
+independent of native payloads, and the decoder is selected explicitly when
+loading. The internal cache-detachment buffer is separate from the supported
+model envelope. Pipelines with unsupported preprocessing fail with typed errors
+that identify the component; saving never silently drops preprocessing.
+
+Inspect the fitted pipeline before choosing a deployment path. An attached
+external serialization implementation permits saving without making the native
+payload portable or safe to load from an untrusted source:
+
+{@ocaml[
+let support = Modelkit.Pipeline.artifact_report fitted_pipeline
+let terminal = Modelkit.Pipeline.artifact_estimator support
+let producer = Option.get terminal.Modelkit.Pipeline.provenance
+let () = assert (Modelkit.Pipeline.provenance_package producer = "modelkit-xgboost")
+let () = assert (Modelkit.Pipeline.provenance_implementation producer = "Regressor")
+let () = assert (terminal.Modelkit.Pipeline.serialization_support = Modelkit.Pipeline.External_artifact)
+let () = assert (Modelkit.Pipeline.artifact_supported support)
+let () = assert (not (Modelkit.Pipeline.portable_artifact_supported support))
+]}
+
+Each transformer has its own component report, so unsupported preprocessing can
+be identified before saving. Provenance describes the producing implementation;
+it does not itself attach serialization. The standalone model provenance
+accessors report adapter/binding versions, original training and model-writer
+native versions, current runtime, and inference thread caps.
+
+{@ocaml[
+let pipeline_bytes = Modelkit.Artifact.encode_regression fitted_pipeline
+                     |> Result.get_ok
+let () = assert (Result.is_error (Modelkit.Artifact.decode_regression pipeline_bytes))
+let regression_reader = Modelkit_xgboost.Artifact.regression_codec ~threads:1 ()
+    |> Result.get_ok |> Modelkit.Artifact.Codec.decoder
+let restored_pipeline = Modelkit.Artifact.decode_regression
+    ~decoders:[| regression_reader |] pipeline_bytes
+    |> Result.get_ok |> Modelkit.Artifact.model
+let () = assert (Modelkit.Target.length
+    (Modelkit.Pipeline.predict restored_pipeline ~feature_schema:schema ~x
+     |> Result.get_ok) = 2)
+]}
+
+{1 Binary and multiclass classification}
+
+{!Modelkit_xgboost.Classifier} implements the public {!module-type:Modelkit.CLASSIFIER}
+protocol using the same immutable specifications as regression. Two effective
+classes select binary logistic loss; three or more select softmax cross-entropy.
+Fitting maps sorted original integer labels to exact contiguous float32 indices.
+The mapping preserves negative labels and labels outside float32's exact integer
+range. {!Modelkit_xgboost.Classifier.classes} returns a fresh copy of that sorted
+vocabulary. Predictions return original labels; probability columns follow
+exactly the same order. Exact ties select the lowest label, including binary
+probability 0.5.
+
+At least two classes with positive sample weight are required. Empty,
+single-class, and single-effective-class targets return typed validation errors.
+Zero-weight rows are excluded before native training and do not introduce new
+classes or affect histogram cuts. Original feature values still pass the normal
+float32/NaN admission policy. Classifier fit reports retain original input shapes
+and expose original/effective row counts. If rows are filtered, feature and
+weight conversion reports include full-input float32 staging, and the target
+report includes label-export and row-selection array payloads. Label-mapping
+tables, fitted class storage, native allocations, and model-detachment buffers
+are excluded from conversion accounting.
+
+{@ocaml[
+let labels = Modelkit.Target.classification [| -7; 16777219 |]
+let classifier =
+  Modelkit_xgboost.Classifier.fit specification ~sample_weight:weights
+    ~rng:(Modelkit.Rng.create (Modelkit.Seed.of_int 41))
+    ~feature_schema:schema ~x ~y:labels ()
+  |> Result.get_ok
+let classes = Modelkit_xgboost.Classifier.classes classifier
+let probabilities =
+  Modelkit_xgboost.Classifier.predict_proba classifier ~feature_schema:schema ~x
+  |> Result.get_ok
+let () = assert (classes = [| -7; 16777219 |])
+let () = assert (Modelkit.Matrix.shape probabilities = (2, 2))
+let classifier_estimator = Modelkit_xgboost.Classifier.estimator specification
+                           |> Result.get_ok
+let classification_pipeline =
+  Modelkit.Pipeline.set_estimator Modelkit.Pipeline.empty classifier_estimator
+  |> Result.get_ok
+let classification_model =
+  Modelkit.Pipeline.fit classification_pipeline ~sample_weight:weights
+    ~rng:(Modelkit.Rng.create (Modelkit.Seed.of_int 41))
+    ~feature_schema:schema ~x ~y:labels ()
+  |> Result.get_ok
+let aligned = Modelkit.Pipeline.predict_proba classification_model
+              ~feature_schema:schema ~x |> Result.get_ok
+let () = assert (Modelkit.Matrix.shape aligned = (2, 2))
+]}
+
+Binary probability columns are one-minus-positive-probability and positive
+probability for the lower/higher labels. Multiclass native probabilities must be
+finite, lie between zero and one, and sum to one within [1e-6]; accepted rows
+are normalized in float64 to remove float32 rounding. Invalid native output
+returns a typed numerical error. Empty prediction batches retain their class
+column count. Label-only prediction avoids allocating a full float64 probability
+matrix. Classifier prediction shares the regressor's schema, native lifetime,
+concurrency, and version-dependent reproducibility contracts. Mapping takes
+linear time in rows plus class sorting; filtering adds linear staging in input
+size, and multiclass prediction scales with rows times classes.
+
+The estimator helper publishes sample-weight, class, and probability dispatch
+with package/version provenance. Raw decision margins are not exposed. Pipeline
+serialization is attached automatically. Select
+{!Modelkit_xgboost.Artifact.classification_codec} explicitly when loading.
+Pinned classifier references cover binary and multiclass dense,
+weighted, missing/all-missing, sampled, regularized, constant-feature,
+imbalanced, and zero-weight-class cases at absolute/relative [2e-6] tolerance.
+
+{1 Persist and restore fitted models}
+
+{!Modelkit_xgboost.Artifact} provides task-specific byte and file APIs. Regression
+readers restore {!Modelkit_xgboost.Regressor.fitted}; classification readers
+restore {!Modelkit_xgboost.Classifier.fitted} for binary or multiclass models.
+Loading uses no observations, training pipeline, refitting, Python, or R.
+
+{@ocaml[
+let regression_bytes = Modelkit_xgboost.Artifact.encode_regression fitted
+                       |> Result.get_ok
+let restored_regression = Modelkit_xgboost.Artifact.decode_regression
+    ~threads:1 regression_bytes |> Result.get_ok
+let restored_predictions = Modelkit_xgboost.Regressor.predict restored_regression
+    ~feature_schema:schema ~x |> Result.get_ok
+let () = assert (Modelkit.Target.length restored_predictions = 2)
+let class_bytes = Modelkit_xgboost.Artifact.encode_classification classifier
+                  |> Result.get_ok
+let restored_classifier = Modelkit_xgboost.Artifact.decode_classification
+    ~threads:1 class_bytes |> Result.get_ok
+let () = assert (Modelkit_xgboost.Classifier.classes restored_classifier = classes)
+let () = assert (Modelkit.Matrix.shape
+    (Modelkit_xgboost.Classifier.predict_proba restored_classifier
+       ~feature_schema:schema ~x |> Result.get_ok) = (2, 2))
+let path = Filename.temp_file "modelkit-xgboost-model-" ".bin"
+let () = Fun.protect ~finally:(fun () -> Sys.remove path) (fun () ->
+    Modelkit_xgboost.Artifact.save_regression ~path fitted |> Result.get_ok;
+    let restored = Modelkit_xgboost.Artifact.load_regression ~threads:1 ~path ()
+                   |> Result.get_ok in
+    assert (Modelkit.Target.length
+      (Modelkit_xgboost.Regressor.predict restored ~feature_schema:schema ~x
+       |> Result.get_ok) = 2))
+]}
+
+The version-one model envelope contains package-qualified codec identity,
+original fit and current writer/binding/native provenance, all immutable
+specification parameters, exact feature schema, original class mapping,
+conversion reports and seed, float32 input/float64 output policy, native-NaN
+missing semantics, CPU histogram scope, and the full prediction range.
+XGBoost-produced JSON stores the trees and objective. Native memory snapshots
+and training-configuration dumps are excluded; configuration is inspected only
+after loading and is never restored as training state.
+
+Inference [~threads] defaults to one and leaves original training parameters
+unchanged. The loaded booster owns no training cache or model-buffer reference.
+Serialization and prediction share a fitted-value lock, so saving cannot
+invalidate concurrent inference. Fit diagnostics retain the producing process's
+allocation counts and word size. Provenance accessors distinguish training,
+model-JSON, and runtime versions; resaving emits JSON with the current runtime
+version while preserving original fit provenance.
+
+Load only trusted artifacts from this supported writer. Upstream warns that
+arbitrary externally authored model JSON can cause undefined behavior or crashes.
+The envelope's MD5 checksum detects accidental corruption and does not
+authenticate a model. Bounds and consistency checks improve diagnostics; they
+do not extend the portable core's safe-reader guarantee to native JSON.
+See {{:https://xgboost.readthedocs.io/en/stable/tutorials/saving_model.html}XGBoost's
+model IO contract} for the native trust and backward-compatibility boundaries.
+
+Before native loading, the reader validates complete framing/checksum, lengths,
+versions, policies, immutable parameters, schema fingerprints, reports, class
+mapping, native model metadata, objective, feature/output dimensions, and tree
+range. After loading it checks native feature/round counts and current
+objective/output/CPU/thread configuration before returning fitted state.
+Acquired native resources are released on every failed validation or exception.
+The reader accepts binding provenance 0.2.1 and native major three. Its runtime
+must be at least as new as the JSON writer: older-model loading into a newer
+supported runtime follows the stable-model direction, while forward loading is
+rejected. Version combinations still need explicit compatibility evidence.
+
+Default limits are 64 MiB bytes, one million features/classes, one MiB strings,
+and a fixed maximum JSON nesting depth of 64. JSON inspection allocates temporary
+OCaml memory linear in model size; native allocation remains additional. Smaller
+byte limits also constrain temporary configuration inspection. Save functions
+encode fully before opening the destination, then write directly; callers own
+atomic replacement, authentication, and transport.
+
+The codec factories expose {!Modelkit.Artifact.Codec} attachments and explicit
+reader selections. Their decoder checks the outer pipeline component's producer
+identity, schema, and class mapping against the native envelope before loading.
+The ordinary regression/classification estimator helpers attach serialization
+automatically. Use the core's task-specific pipeline byte/file APIs to retain
+supported preprocessing. A complete pipeline's input schema describes the raw
+features; its output feature schema describes the native estimator's transformed
+input. Both are preserved and checked during loading.
+
+Committed native-model and fitted-pipeline goldens cover regression, binary,
+and multiclass tasks with imputation, weighted scaling, and variance filtering.
+Fresh-process inference receives artifacts and new probe rows only, with no
+training data or refitting. Native 3.0.4 artifacts are verified on 3.0.4 and
+3.4.2; 3.4.2 artifacts are verified on 3.4.2 and rejected on 3.0.4 as forward
+loads. Prediction/probability agreement uses absolute plus relative [2e-6].
+An isolated consumer built from installed runtime packages uses only ModelKit,
+this adapter, and declared runtime dependencies, without test libraries or
+private source modules.
+
+{1 Cross-validation and parameter search}
+
+The estimator helpers work with the public regression, binary-classification,
+and multiclass-classification CV/search APIs. Keep preprocessing inside the
+pipeline builder: each candidate and fold learns its own preprocessing and
+native model from its training rows. Dataset weights are routed to estimator
+fitting and weighted scoring; preprocessing follows each stage's metadata
+requests. Group-aware splitters keep groups out of opposing partitions.
+Every training fold must contain at least two positively weighted classes for
+classification. [Cross_validation.Record] retains a typed fitting failure and
+successful peer folds when that condition is absent.
+
+This regression recipe uses mean imputation, group exclusion, two weighted
+metrics, and a full-data refit selected by negative mean squared error.
+
+{@ocaml[
+open Modelkit
+let search_x = Matrix.init ~rows:12 ~columns:2 (fun row column ->
+    if column = 0 then float_of_int row
+    else if row mod 3 = 0 then Float.nan else float_of_int (row mod 5))
+    |> Result.get_ok
+let search_y = Vector.of_array (Array.init 12 (fun row -> float_of_int (row * row)))
+    |> Target.regression |> Result.get_ok
+let search_weights = Sample_weight.of_array ~expected_length:12
+    (Array.init 12 (fun row -> 1. +. float_of_int (row mod 2))) |> Result.get_ok
+let search_groups = Groups.create ~expected_length:12
+    (Array.init 12 (fun row -> row / 3)) |> Result.get_ok
+let search_data = Dataset.create ~finiteness:Dataset.Allow_nan
+    ~sample_weight:search_weights ~groups:search_groups
+    ~x:search_x ~y:search_y () |> Result.get_ok
+let build_trees depth =
+  let specification = Modelkit_xgboost.Specification.create
+      ~rounds:3 ~max_depth:depth ~threads:1 () |> Result.get_ok in
+  let imputer = Modelkit.Artifact.simple_imputer_stage ~name:"impute"
+      (Simple_imputer.mean ()) |> Result.get_ok in
+  let builder = Pipeline.add_transformer Pipeline.empty imputer |> Result.get_ok in
+  let estimator = Modelkit_xgboost.Regressor.estimator specification |> Result.get_ok in
+  Pipeline.set_estimator builder estimator
+let search_splitter = Group_k_fold.create ~folds:2 () |> Result.get_ok
+    |> Cross_validation.target_independent_splitter (module Group_k_fold)
+let search_scorers = [| Regression_scorer.neg_mean_squared_error;
+                       Regression_scorer.neg_mean_absolute_error |]
+let search_seed = Seed.of_int 43
+let cv = Cross_validation.Regression.cross_validate
+    ~splitter:search_splitter ~scorers:search_scorers ~seed:search_seed
+    (build_trees 2 |> Result.get_ok) search_data |> Result.get_ok
+let () = assert (Cross_validation.successful_fold_count cv = 2)
+let depth_axis = Grid_search.axis ~name:"max_depth" ~values:[| 1; 2 |]
+    ~encode:(fun value -> Grid_search.Int value) ~set:(fun _ value -> Ok value)
+    |> Result.get_ok
+let tree_grid = Grid_search.create ~base:1 ~build:build_trees [| depth_axis |]
+    |> Result.get_ok
+let search = Grid_search.Regression.search ~grid:tree_grid
+    ~splitter:search_splitter ~scorers:search_scorers ~refit:"neg_mean_squared_error"
+    ~seed:search_seed search_data |> Result.get_ok
+let selected = Grid_search.selection search |> Result.get_ok
+let predictions = Pipeline.predict selected.Grid_search.selected_model
+    ~feature_schema:(Dataset.feature_schema search_data) ~x:search_x |> Result.get_ok
+let () = assert (Target.length predictions = 12)
+]}
+
+The selected model is the full-data refit, including its learned preprocessing.
+Save the complete fitted pipeline and explicitly select native deserialization
+when deploying it; no training dataset is needed for loading or prediction.
+
+{@ocaml[
+let deployment_path = Filename.temp_file "modelkit-xgboost-pipeline-" ".bin"
+let () = Fun.protect ~finally:(fun () -> Sys.remove deployment_path) (fun () ->
+    Modelkit.Artifact.save_regression ~path:deployment_path
+      selected.Grid_search.selected_model |> Result.get_ok;
+    let decoder = Modelkit_xgboost.Artifact.regression_codec ~threads:1 ()
+      |> Result.get_ok |> Modelkit.Artifact.Codec.decoder in
+    let deployed = Modelkit.Artifact.load_regression ~decoders:[| decoder |]
+      ~path:deployment_path () |> Result.get_ok |> Modelkit.Artifact.model in
+    let served = Modelkit.Pipeline.predict deployed
+      ~feature_schema:(Dataset.feature_schema search_data) ~x:search_x
+      |> Result.get_ok in
+    assert (Target.length served = 12);
+    assert (Feature_schema.equal (Pipeline.input_schema deployed)
+      (Dataset.feature_schema search_data)))
+]}
+
+Randomized search takes the same builder and splitter. A finite choice space
+visits distinct combinations without replacement.
+
+{@ocaml[
+let sampled_axis = Randomized_search.axis ~name:"max_depth"
+    ~distribution:(Parameter_distribution.choice [| 1; 2 |] |> Result.get_ok)
+    ~encode:(fun value -> Grid_search.Int value) ~set:(fun _ value -> Ok value)
+    |> Result.get_ok
+let tree_space = Randomized_search.create ~iterations:2 ~base:1
+    ~build:build_trees [| sampled_axis |] |> Result.get_ok
+let randomized = Randomized_search.Regression.search ~space:tree_space
+    ~splitter:search_splitter ~scorers:search_scorers ~refit:"neg_mean_squared_error"
+    ~seed:search_seed search_data |> Result.get_ok
+let () = assert (Array.length (Grid_search.candidates randomized) = 2)
+]}
+
+Successive halving budgets training rows, keeps validation rows fixed, and
+performs fresh fits on nested training subsets. [rounds] remains an immutable
+estimator parameter; halving does not continue a fitted booster or budget tree
+rounds. Its selected pipeline is refitted on the complete dataset.
+
+{@ocaml[
+let row_budget = Successive_halving.budget ~min_samples:3 ~max_samples:6
+    ~factor:2 ~max_fits:7 () |> Result.get_ok
+let halved = Successive_halving.Regression.search
+    ~candidates:(Successive_halving.of_grid tree_grid) ~budget:row_budget
+    ~splitter:search_splitter ~scorers:search_scorers ~refit:"neg_mean_squared_error"
+    ~seed:search_seed search_data |> Result.get_ok
+let () = assert (Array.length (Successive_halving.rounds halved) = 2)
+let _selected = Successive_halving.selection halved |> Result.get_ok
+]}
+
+Pass [~execution:(Modelkit_parallel.execution backend)] to these APIs to use
+the optional [modelkit-parallel] package. Configure each specification with
+[~threads:1], create the backend with [~inner_threads:1], and start the process
+with both [OMP_NUM_THREADS=1] and [OMP_THREAD_LIMIT=1]. Search visits candidates
+in stable order and parallelizes their folds. Integration tests verify identical
+scores, selection, class order, predictions, and probabilities across sequential
+and 1-, 2-, and 4-domain execution for all three tasks on the tested runtimes.
+
+{1 Conversion and resource evidence}
+
+Development smoke measurements cover feature/target/weight conversion and
+weighted regression, binary, and multiclass fit/prediction. The fixed workload
+has 4,096 rows, 16 features, missing values, zero weights, 12 rounds, and 64
+prediction rows. Each operation has one warmup and three measured repetitions;
+checks require identical repeated-fit responses, finite outputs, exact reported
+conversion payload, original class labels, and normalized probabilities.
+
+Timings exclude process startup, source generation, GC preparation, and response
+checks. Fit includes admission, native training, and training-cache detachment.
+Prediction includes float32 feature conversion and copying outputs, returning
+regression values or classification probabilities. OCaml allocation counters and
+numeric buffer payload are reported separately; native allocations and peak
+resident memory are unmeasured. These are noncomparative smoke measurements,
+with no speed claim or machine-dependent pass/fail threshold.
+
+Versioned raw local reports and reproduction commands live in
+[dev/benchmarks/README.md]. Native CI runs the same worker and retains its JSON
+report for each platform. This development tooling is not installed with the
+library and needs no Python runtime in deployed inference applications.
+
+{1 Native interoperability and lifetime}
+
+{!Modelkit_xgboost.Native.with_dmatrix} validates target/weight alignment before
+allocating native state, creates a fresh DMatrix, and releases it when the
+callback exits. {!Modelkit_xgboost.Native.with_booster} similarly scopes a new
+configured booster. Nest the booster scope inside its training DMatrix scope.
+Callbacks borrow upstream handles: do not free them, retain them, or use them
+after the scope ends. Binding failures become {!Modelkit.Error.t}; unrelated
+callback exceptions propagate after cleanup. Returning a typed callback error
+also releases both resources.
+
+Booster thread limits do not constrain DMatrix construction. Binding 0.2.1 has
+no constructor thread-limit argument. For bounded native concurrency, configure
+OpenMP before starting the process with both [OMP_NUM_THREADS=1] and
+[OMP_THREAD_LIMIT=1] when parallel folds each use one native thread. This package
+does not mutate process-global settings. [modelkit-parallel]'s [inner_threads]
+value is diagnostic and does not configure OpenMP or XGBoost.
+
+The single-thread startup contract bounds DMatrix construction as well as
+booster training and prediction. Tests inspect the loaded OpenMP runtime's
+maximum thread count and thread limit on the caller and worker domains before
+and after native operations; fresh-process tests accept the one-thread profile
+and reject uncapped/two-thread profiles. These probes are test-only. The adapter
+does not enforce or change the process's OpenMP configuration at runtime.
