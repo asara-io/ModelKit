@@ -198,8 +198,9 @@ module Regressor : sig
       rows. Calls sharing one fitted value serialize native output copying;
       distinct fitted values do not share a lock. Training and prediction do not
       mutate the specification or expose native handles. Numerical results are
-      deterministic for fixed data, parameters, RNG, native version, and thread
-      configuration; cross-version equivalence is limited to verified fixtures.
+      deterministic for fixed data, parameters, RNG, native build/platform, and
+      thread configuration. Sampling can differ between native versions and C++
+      standard libraries; equivalence is limited to verified combinations.
       Native allocations are not included in OCaml heap accounting. *)
   include
     Modelkit.REGRESSOR

@@ -29,6 +29,25 @@ OCaml 5.3.0, binding 0.2.1, and native libxgboost 3.0.4 and 3.4.2 on macOS arm64
 Separate pinned Python references use XGBoost 3.0.4 and 3.4.1. These combinations
 are verified; other native releases require their own compatibility evidence.
 
+The tested binding is 0.2.1 throughout. Compatibility evidence is scoped to these
+native/compiler/platform combinations:
+{ul
+ {- Linux x86-64, Ubuntu 24.04, OCaml 5.3.0, native 3.0.4 installed from the
+ bundled CPU sources: CI passes production linking, nonsampled prediction
+ parity, weighted/grouped CV and search, and native/pipeline artifact deployment.
+ The complete job still requires a rerun with the matched-build sampling checks
+ and corrected isolated-consumer installer.}
+ {- macOS arm64, OCaml 5.3.0, native 3.4.2 from Homebrew: CI passes estimator
+ tests, workflows, artifact goldens, odoc examples, and package builds. The
+ isolated installed-package consumer passes locally with the corrected installer.}
+ {- macOS arm64, OCaml 5.3.0, native 3.0.4: local regression/classification,
+ persistence/deployment tests, and conversion/fit/prediction smoke checks pass.}
+}
+Native major three is an admission boundary, not evidence for every 3.x release.
+The portable packages have separate Linux/macOS/Windows CI across OCaml 5.2,
+5.3, and 5.5 and require no XGBoost installation. Windows remains outside this
+adapter's supported platforms.
+
 On macOS, Homebrew's [xgboost] and [libomp] provide the shared native dependencies.
 On Linux, a distribution package older than 3.0 does not satisfy the binding.
 The following CPU-only build uses the checksummed binding release's complete
@@ -140,9 +159,13 @@ and calls native in-place prediction. Calls sharing a fitted value serialize
 native output copying; separate fitted values can predict independently.
 
 Repeated fits/predictions are deterministic for fixed data, parameters, RNG,
-native version, and thread configuration. Native sampling changes between
+native build/platform, and thread configuration. Native sampling changes between
 3.0.4 and 3.4.2, so the same seed alone does not reproduce a sampled model across
-these versions. Pin the native runtime when reproducing training results. The
+these versions. Column sampling also uses the C++ runtime's [std::shuffle], whose
+sequence can differ between toolchains. Pin the native build and platform when
+reproducing sampled fits. Frozen Python sampling references cover macOS arm64;
+sampled fits additionally compare to direct upstream calls on the linked native
+build, preserving strict prediction/probability tolerances on Linux. The
 committed parity fixtures cover dense, weighted, missing/all-missing, sampled,
 regularized, large-scale, constant-feature/target, single-row, and zero-learning
 rate cases at absolute and relative prediction tolerances of [2e-6].
@@ -174,6 +197,27 @@ independent of native payloads, and the decoder is selected explicitly when
 loading. The internal cache-detachment buffer is separate from the supported
 model envelope. Pipelines with unsupported preprocessing fail with typed errors
 that identify the component; saving never silently drops preprocessing.
+
+Inspect the fitted pipeline before choosing a deployment path. An attached
+external serialization implementation permits saving without making the native
+payload portable or safe to load from an untrusted source:
+
+{@ocaml[
+let support = Modelkit.Pipeline.artifact_report fitted_pipeline
+let terminal = Modelkit.Pipeline.artifact_estimator support
+let producer = Option.get terminal.Modelkit.Pipeline.provenance
+let () = assert (Modelkit.Pipeline.provenance_package producer = "modelkit-xgboost")
+let () = assert (Modelkit.Pipeline.provenance_implementation producer = "Regressor")
+let () = assert (terminal.Modelkit.Pipeline.serialization_support = Modelkit.Pipeline.External_artifact)
+let () = assert (Modelkit.Pipeline.artifact_supported support)
+let () = assert (not (Modelkit.Pipeline.portable_artifact_supported support))
+]}
+
+Each transformer has its own component report, so unsupported preprocessing can
+be identified before saving. Provenance describes the producing implementation;
+it does not itself attach serialization. The standalone model provenance
+accessors report adapter/binding versions, original training and model-writer
+native versions, current runtime, and inference thread caps.
 
 {@ocaml[
 let pipeline_bytes = Modelkit.Artifact.encode_regression fitted_pipeline
@@ -475,6 +519,28 @@ with both [OMP_NUM_THREADS=1] and [OMP_THREAD_LIMIT=1]. Search visits candidates
 in stable order and parallelizes their folds. Integration tests verify identical
 scores, selection, class order, predictions, and probabilities across sequential
 and 1-, 2-, and 4-domain execution for all three tasks on the tested runtimes.
+
+{1 Conversion and resource evidence}
+
+Development smoke measurements cover feature/target/weight conversion and
+weighted regression, binary, and multiclass fit/prediction. The fixed workload
+has 4,096 rows, 16 features, missing values, zero weights, 12 rounds, and 64
+prediction rows. Each operation has one warmup and three measured repetitions;
+checks require identical repeated-fit responses, finite outputs, exact reported
+conversion payload, original class labels, and normalized probabilities.
+
+Timings exclude process startup, source generation, GC preparation, and response
+checks. Fit includes admission, native training, and training-cache detachment.
+Prediction includes float32 feature conversion and copying outputs, returning
+regression values or classification probabilities. OCaml allocation counters and
+numeric buffer payload are reported separately; native allocations and peak
+resident memory are unmeasured. These are noncomparative smoke measurements,
+with no speed claim or machine-dependent pass/fail threshold.
+
+Versioned raw local reports and reproduction commands live in
+[dev/benchmarks/README.md]. Native CI runs the same worker and retains its JSON
+report for each platform. This development tooling is not installed with the
+library and needs no Python runtime in deployed inference applications.
 
 {1 Native interoperability and lifetime}
 

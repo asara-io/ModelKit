@@ -45,13 +45,34 @@ The package pins OCaml binding 0.2.1 and excludes Windows. Local native tests
 cover libxgboost 3.0.4 and 3.4.2 with OCaml 5.3.0 on macOS arm64, using separate
 Python reference fixtures from XGBoost 3.0.4 and 3.4.1. Sampling behavior differs
 between these native versions; reproducibility includes the native version.
-Native major version three is admitted, with broader compatibility evidence to
-be published as it is verified. The portable package has no XGBoost dependency.
+Native major version three is admitted; this is distinct from verifying every
+3.x release. The portable package has no XGBoost dependency.
 Install a persistent system libxgboost 3.0+ discoverable through pkg-config
 before installing the binding. Its 0.2.1 vendored fallback leaves downstream
 link flags pointing to temporary opam archives that are not installed. Linux CI
 uses the bundled 3.0.4 sources to install a shared library outside that temporary
 directory; the odoc guide describes custom-prefix discovery and runtime loading.
+
+| Platform | OCaml | Binding | Native library | Evidence |
+| --- | --- | --- | --- | --- |
+| Linux x86-64, Ubuntu 24.04 | 5.3.0 | 0.2.1 | 3.0.4, installed shared CPU build | CI production build, nonsampled parity, CV/search, model/pipeline deployment; complete rerun pending the sampling-reference and consumer-installer fixes |
+| macOS arm64 | 5.3.0 | 0.2.1 | 3.4.2, Homebrew | CI tests, odoc, and package builds; isolated installed consumer and smoke measurements verified locally |
+| macOS arm64 | 5.3.0 | 0.2.1 | 3.0.4 | Local tests, model/pipeline deployment, and smoke measurements |
+
+Evidence comes from the [native integration workflow](../.github/workflows/xgboost.yml)
+and the [development smoke reports](../dev/benchmarks/README.md#xgboost-smoke).
+Native-version/platform pinning matters for training reproducibility: column
+sampling uses `std::shuffle`, so different C++ standard libraries can produce
+different sampled models from the same seed. The frozen macOS Python references
+remain checked on macOS; sampled cases also compare against independently
+configured upstream binding calls using the linked runtime on every platform.
+Those checks preserve the absolute/relative 2e-6 tolerance.
+
+`Pipeline.artifact_supported` accepts supported built-in and external components;
+`portable_artifact_supported` accepts only built-in portable components. Native
+payloads retain the explicit trusted-writer and runtime requirements even when
+the fitted pipeline supports saving. The odoc guide includes executable
+provenance/support inspection and training/search/deployment recipes.
 
 ## Nx
 

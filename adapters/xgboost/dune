@@ -60,6 +60,18 @@
  (modules workflow_support)
  (libraries modelkit modelkit-xgboost alcotest))
 
+(library
+ (name xgboost_parity_support)
+ (wrapped false)
+ (optional)
+ (modules native_reference native_reference_platform)
+ (libraries modelkit-xgboost xgboost))
+
+(rule
+ (target native_reference_platform.ml)
+ (action
+  (write-file %{target} "let system = \"%{system}\"\n")))
+
 (test
  (name artifact_test)
  (modules artifact_test)
@@ -96,7 +108,7 @@
  (name classification_test)
  (modules classification_test)
  (package modelkit-xgboost)
- (libraries modelkit modelkit-xgboost alcotest)
+ (libraries modelkit modelkit-xgboost xgboost_parity_support alcotest)
  (deps
   ../../test/fixtures/xgboost/classification_v1.tsv
   ../../test/fixtures/xgboost/classification_v1_3_0_4.tsv)
@@ -119,7 +131,7 @@
  (name regression_test)
  (modules regression_test)
  (package modelkit-xgboost)
- (libraries modelkit modelkit-xgboost alcotest)
+ (libraries modelkit modelkit-xgboost xgboost_parity_support alcotest)
  (deps
   ../../test/fixtures/xgboost/regression_v1.tsv
   ../../test/fixtures/xgboost/regression_v1_3_0_4.tsv)

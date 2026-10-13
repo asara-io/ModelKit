@@ -1,5 +1,13 @@
 # 0.6.0-dev (unreleased)
 
+- Publish the XGBoost compatibility evidence and executable provenance/artifact
+  support inspection. Add optional conversion/fit/prediction smoke measurements
+  for all three tasks, committed native-version reports, and per-platform CI
+  evidence. Keep developer measurement tools outside package installations.
+- Check sampled XGBoost fits against direct upstream calls on the linked native
+  build, retaining frozen macOS Python references and strict tolerances while
+  respecting C++ standard-library sampling differences. Use Dune's installer
+  for isolated deployment checks without an extra opam-installer dependency.
 - Keep native test probes out of portable package builds and install a persistent
   XGBoost shared library in Linux CI, avoiding binding 0.2.1's temporary-archive
   linker defect. Document the corresponding native installation requirement.

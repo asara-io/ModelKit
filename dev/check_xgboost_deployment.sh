@@ -8,9 +8,7 @@ trap 'rm -rf "$deployment_tmp" "$deployment_repo/$deployment_build"' EXIT
 
 cd "$deployment_repo"
 opam exec -- dune build --build-dir "$deployment_build" -p modelkit,modelkit-xgboost @install
-for deployment_package in modelkit modelkit-xgboost; do
-  opam-installer --prefix "$deployment_tmp/install" "$deployment_build/default/$deployment_package.install"
-done
+opam exec -- dune install --build-dir "$deployment_build" --prefix "$deployment_tmp/install" modelkit modelkit-xgboost
 
 mkdir "$deployment_tmp/consumer"
 cp adapters/xgboost/deployment_worker.ml "$deployment_tmp/consumer/deployment_worker.ml"

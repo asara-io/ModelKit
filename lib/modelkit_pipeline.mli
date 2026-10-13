@@ -427,14 +427,22 @@ module Pipeline : sig
   val capabilities : ('target, 'prediction) t -> capabilities
 
   val artifact_report : ('target, 'prediction) fitted -> artifact_report
-  (** Reports component provenance and whether every fitted component has a
-      reviewed portable artifact codec. An unsupported component may still be
-      fitted and used normally; artifact encoding returns a typed error. *)
+  (** Reports component provenance and attached built-in or external artifact
+      serialization. An unsupported component may still be fitted and used
+      normally; artifact encoding returns a typed error. External payload trust
+      and runtime requirements belong to the component package. *)
 
   val artifact_transformers : artifact_report -> component_report array
   val artifact_estimator : artifact_report -> component_report
+
   val portable_artifact_supported : artifact_report -> bool
+  (** True when every component uses a built-in portable codec. External native
+      components do not meet this condition even when they support saving. *)
+
   val artifact_supported : artifact_report -> bool
+  (** True when every component has an attached serialization implementation.
+      This includes external components; it does not change their trust policy
+      or guarantee that a particular encoding operation will succeed. *)
 
   val fit_with_metadata :
     ('target, 'prediction) t ->

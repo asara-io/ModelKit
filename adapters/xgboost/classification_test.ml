@@ -502,22 +502,74 @@ let test_parity fixture () =
     report.Classifier.native_seed;
   let test = fixture_matrix fixture "x_predict" in
   let actual = Classifier.predict_proba fitted ~feature_schema ~x:test |> get in
-  let expected = fixture_matrix fixture "probabilities" in
   check_probabilities (Classifier.classes fitted) (Matrix.rows test) actual;
-  for row = 0 to Matrix.rows actual - 1 do
-    for column = 0 to Matrix.columns actual - 1 do
-      let value = Matrix.get expected row column in
-      Alcotest.check
-        (Alcotest.float (2e-6 +. (2e-6 *. Float.abs value)))
-        "probability parity" value
-        (Matrix.get actual row column)
-    done
-  done;
-  Alcotest.check
-    (Alcotest.array Alcotest.int)
-    "original-label prediction parity"
-    (integers fixture "prediction")
-    (Classifier.predict fitted ~feature_schema ~x:test |> get |> labels)
+  let check_predictions source expected prediction =
+    for row = 0 to Matrix.rows actual - 1 do
+      for column = 0 to Matrix.columns actual - 1 do
+        let value = Matrix.get expected row column in
+        Alcotest.check
+          (Alcotest.float (2e-6 +. (2e-6 *. Float.abs value)))
+          (source ^ " probability parity")
+          value
+          (Matrix.get actual row column)
+      done
+    done;
+    Alcotest.check
+      (Alcotest.array Alcotest.int)
+      (source ^ " original-label prediction parity")
+      prediction
+      (Classifier.predict fitted ~feature_schema ~x:test |> get |> labels)
+  in
+  let sampled = scalar fixture "colsample_bytree" < 1. in
+  if (not sampled) || Native_reference.frozen_sampling_reference () then
+    check_predictions "Python"
+      (fixture_matrix fixture "probabilities")
+      (integers fixture "prediction");
+  if sampled then
+    let classes = integers fixture "classes" in
+    let count = Array.length classes in
+    let parameters =
+      Native_reference.parameters
+        ~value:(fun key -> (vector fixture key).(0))
+        ~objective:(if count = 2 then "binary:logistic" else "multi:softprob")
+        ~classes:count
+    in
+    let encoded =
+      Array.map
+        (fun label ->
+          Array.find_index (( = ) label) classes |> Option.get |> float_of_int)
+        y
+    in
+    let raw =
+      Native_reference.predict ~parameters ~rounds:(integer fixture "rounds")
+        ~x:(Matrix.to_arrays x) ~y:encoded
+        ~sample_weight:
+          (Option.map
+             (Array.map float_of_string)
+             (Hashtbl.find_opt fixture.vectors "weight"))
+        ~test:(Matrix.to_arrays test)
+    in
+    let expected =
+      Matrix.init ~rows:(Matrix.rows test) ~columns:count (fun row column ->
+          if count = 2 then if column = 0 then 1. -. raw.(row) else raw.(row)
+          else
+            let sum = ref 0. in
+            for index = 0 to count - 1 do
+              sum := !sum +. raw.((row * count) + index)
+            done;
+            raw.((row * count) + column) /. !sum)
+      |> data
+    in
+    let prediction =
+      Array.init (Matrix.rows test) (fun row ->
+          let best = ref 0 in
+          for column = 1 to count - 1 do
+            if Matrix.get expected row column > Matrix.get expected row !best
+            then best := column
+          done;
+          classes.(!best))
+    in
+    check_predictions "matched native" expected prediction
 
 let () =
   let major, minor, patch = Native.version () |> get in

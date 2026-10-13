@@ -4,6 +4,67 @@ These benchmarks collect reproducible development evidence. They do not run as
 part of a normal build or test, and every scenario states whether it may support
 a public performance claim.
 
+## XGBoost smoke
+
+The optional XGBoost worker records noncomparative operation measurements for
+weighted regression, binary classification, and three-class classification.
+It uses 4,096 by 16 deterministic features with NaNs, weights including zeros,
+12 histogram-tree rounds, depth 3, 32 bins, and 64 new prediction rows. Both
+OpenMP startup bounds and booster threads are one. Data generation and response
+checks run outside the measurement; each operation has one warmup and three
+measured repetitions within the worker process.
+
+Feature, target, and weight conversions are measured separately. Fit includes
+conversion, native training, and detachment from training caches. Prediction
+includes feature conversion and output copying; classification measurements
+return probabilities. Checks require exact repeated-fit responses, finite
+outputs, exact conversion payload accounting, sorted original labels including
+labels outside float32's integer range, normalized probabilities, and matching
+label/probability responses.
+
+OCaml GC allocation counters exclude external numeric buffers and native
+allocations. Reports record float32 payload and temporary conversion staging
+separately; these are allocation quantities, not peak live memory or RSS. The
+feature buffer retains 262,144 bytes with zero full-size staging, while checked
+conversion allocates approximately 7.9 million bytes on the OCaml heap. That
+boxing/validation overhead is a measured optimization opportunity; neither the
+payload report nor the GC counter describes total native-model memory.
+
+Local medians on the recorded host:
+
+| Native | Task | Fit (ms) | Predict (ms) | Fit OCaml allocation (MiB) |
+| --- | --- | ---: | ---: | ---: |
+| 3.0.4 | regression | 7.317 | 0.047 | 11.66 |
+| 3.0.4 | binary | 7.773 | 0.047 | 11.87 |
+| 3.0.4 | multiclass | 13.642 | 0.069 | 18.67 |
+| 3.4.2 | regression | 9.070 | 0.058 | 11.59 |
+| 3.4.2 | binary | 8.107 | 0.049 | 11.83 |
+| 3.4.2 | multiclass | 14.405 | 0.076 | 18.43 |
+
+The raw reports for native 3.0.4 and 3.4.2 contain every measured run, response
+signature, parameter, environment/version, and methodology field. They use
+OCaml 5.3.0, binding 0.2.1, and macOS arm64. They establish a local smoke
+baseline, without a comparative speed claim or a machine-dependent threshold.
+Native CI runs the same worker on Linux x86-64 and macOS arm64 and uploads the
+report as a workflow artifact; those reports remain scoped to their recorded
+native version and host.
+
+Build and run explicitly; the worker remains disabled in ordinary builds and
+is not installed in any ModelKit package. The Python harness uses only the
+standard library and is development tooling:
+
+```sh
+MODELKIT_XGBOOST_BENCH=1 opam exec -- dune build bench/ocaml/xgboost_worker.exe
+env/bin/python dev/benchmarks/xgboost_smoke.py \
+  --output dev/benchmarks/results/xgboost_smoke_v1.darwin-arm64.native3.4.2.json
+```
+
+Changing the linked native runtime changes the native version recorded in the
+report. Choose the output filename accordingly to retain separate baselines:
+
+- [Native 3.0.4 report](results/xgboost_smoke_v1.darwin-arm64.native3.0.4.json)
+- [Native 3.4.2 report](results/xgboost_smoke_v1.darwin-arm64.native3.4.2.json)
+
 ## 0.5.0 checkpoint
 
 The committed macOS arm64 reports were refreshed together on 8 September 2026

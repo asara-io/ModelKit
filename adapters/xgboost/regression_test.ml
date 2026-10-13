@@ -310,16 +310,35 @@ let test_parity fixture () =
   let observed =
     Regressor.predict fitted ~feature_schema ~x:x_predict |> get |> array
   in
-  let expected = fixture_vector fixture "expected" in
-  Alcotest.check Alcotest.int "prediction shape" (Array.length expected)
-    (Array.length observed);
-  Array.iteri
-    (fun row expected ->
-      let tolerance = 2e-6 +. (2e-6 *. Float.abs expected) in
-      Alcotest.check (Alcotest.float tolerance)
-        (Format.sprintf "prediction[%d]" row)
-        expected observed.(row))
-    expected
+  let check_predictions source expected =
+    Alcotest.check Alcotest.int "prediction shape" (Array.length expected)
+      (Array.length observed);
+    Array.iteri
+      (fun row value ->
+        Alcotest.check
+          (Alcotest.float (2e-6 +. (2e-6 *. Float.abs value)))
+          (Format.sprintf "%s prediction[%d]" source row)
+          value observed.(row))
+      expected
+  in
+  let sampled = scalar fixture "colsample_bytree" < 1. in
+  if (not sampled) || Native_reference.frozen_sampling_reference () then
+    check_predictions "Python" (fixture_vector fixture "expected");
+  if sampled then
+    let parameters =
+      Native_reference.parameters
+        ~value:(fun key ->
+          if List.mem key [ "native_seed"; "max_depth"; "max_bin" ] then
+            string_of_int (integer fixture key)
+          else Float.to_string (scalar fixture key))
+        ~objective:"reg:squarederror" ~classes:0
+    in
+    Native_reference.predict ~parameters ~rounds:(integer fixture "rounds")
+      ~x:(Matrix.to_arrays x)
+      ~y:(fixture_vector fixture "target")
+      ~sample_weight:(Hashtbl.find_opt fixture.vectors "weight")
+      ~test:(Matrix.to_arrays x_predict)
+    |> check_predictions "matched native"
 
 let () =
   let major, minor, patch = Native.version () |> get in

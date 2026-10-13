@@ -75,3 +75,15 @@ jobs:
 
       - name: Verify isolated inference consumer
         run: bash dev/check_xgboost_deployment.sh
+
+      - name: Measure and verify conversion, fit, and prediction smoke
+        run: |
+          MODELKIT_XGBOOST_BENCH=1 opam exec -- dune build --only-packages modelkit,modelkit-xgboost bench/ocaml/xgboost_worker.exe
+          python3 dev/benchmarks/xgboost_smoke.py --output _build/xgboost-smoke.json
+
+      - name: Retain native smoke evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: xgboost-smoke-${{ matrix.runner }}
+          path: _build/xgboost-smoke.json
+          if-no-files-found: error
