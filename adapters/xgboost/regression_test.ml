@@ -163,15 +163,16 @@ let test_concurrent_prediction () =
   in
   let expected = Regressor.predict fitted ~feature_schema ~x |> get in
   let work () =
-    for _ = 1 to 40 do
-      Alcotest.check Alcotest.bool "shared fitted predictions" true
-        (equal_prediction expected
-           (Regressor.predict fitted ~feature_schema ~x |> get))
-    done
+    Array.init 40 (fun _ -> Regressor.predict fitted ~feature_schema ~x)
   in
   let workers = Array.init 3 (fun _ -> Domain.spawn work) in
-  work ();
-  Array.iter Domain.join workers
+  let caller = work () in
+  let results = Array.map Domain.join workers in
+  Array.iter
+    (Array.iter (fun prediction ->
+         Alcotest.check Alcotest.bool "shared fitted predictions" true
+           (equal_prediction expected (get prediction))))
+    (Array.append [| caller |] results)
 
 let test_pipeline () =
   let x, y, feature_schema = source () in

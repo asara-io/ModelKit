@@ -1,3 +1,11 @@
+# 0.6.1 (2026-10-12)
+
+- Collect concurrent XGBoost test results before running Alcotest assertions,
+  avoiding races in its shared formatters during serialization and inference
+  checks while preserving concurrent native operations and exact comparisons.
+- Record producer version 0.6.1 in newly written artifacts while preserving
+  existing formats, readers, and historical golden compatibility.
+
 # 0.6.0 (2026-10-12)
 
 - Publish the XGBoost compatibility evidence and executable provenance/artifact

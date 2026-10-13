@@ -516,7 +516,7 @@ let test_native_consistency () =
 let test_codec_attachment () =
   let codec = A.regression_codec ~threads:3 () |> get in
   let provenance =
-    Pipeline.provenance ~package:"modelkit-xgboost" ~version:"0.6.0"
+    Pipeline.provenance ~package:"modelkit-xgboost" ~version:"0.6.1"
       ~implementation:"Regressor"
     |> get
   in
@@ -557,26 +557,29 @@ let test_concurrent_save () =
   in
   let writer =
     Domain.spawn (fun () ->
-        for _ = 1 to 12 do
-          let bytes = A.encode_regression fitted |> get in
-          check_regression fitted (A.decode_regression bytes |> get)
-        done)
+        Array.init 12 (fun _ ->
+            Result.bind (A.encode_regression fitted) (fun bytes ->
+                A.decode_regression bytes)))
   in
-  for _ = 1 to 24 do
-    let observed =
-      Xgb.Regressor.predict fitted ~feature_schema:schema ~x
-      |> get |> Target.regression_values |> Vector.to_array
-    in
-    Alcotest.check
-      (Alcotest.array (Alcotest.float 0.))
-      "save/predict independence" expected observed
-  done;
-  Domain.join writer
+  let predictions =
+    Array.init 24 (fun _ ->
+        Xgb.Regressor.predict fitted ~feature_schema:schema ~x)
+  in
+  let restored = Domain.join writer in
+  (* Alcotest's shared formatters must only be used after the domains join. *)
+  Array.iter
+    (fun prediction ->
+      Alcotest.check
+        (Alcotest.array (Alcotest.float 0.))
+        "save/predict independence" expected
+        (prediction |> get |> Target.regression_values |> Vector.to_array))
+    predictions;
+  Array.iter (fun model -> check_regression fitted (get model)) restored
 
 let test_classification_codec count =
   let codec = A.classification_codec () |> get in
   let provenance =
-    Pipeline.provenance ~package:"modelkit-xgboost" ~version:"0.6.0"
+    Pipeline.provenance ~package:"modelkit-xgboost" ~version:"0.6.1"
       ~implementation:"Classifier"
     |> get
   in

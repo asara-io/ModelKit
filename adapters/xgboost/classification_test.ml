@@ -315,19 +315,24 @@ let test_fresh_fits_and_concurrency () =
   Alcotest.check Alcotest.bool "fitted parameters preserved" true
     (Classifier.fitted_params fitted = Specification.params spec);
   let work () =
-    for index = 0 to 29 do
-      if index mod 7 = 0 then Gc.full_major ();
-      Alcotest.check Alcotest.bool "shared probability output" true
-        (expected
-        = (Classifier.predict_proba fitted ~feature_schema ~x
-          |> get |> Matrix.to_arrays));
-      Alcotest.check Alcotest.int "concurrent label rows" 18
-        (Classifier.predict fitted ~feature_schema ~x |> get |> Target.length)
-    done
+    Array.init 30 (fun index ->
+        if index mod 7 = 0 then Gc.full_major ();
+        let probabilities =
+          Classifier.predict_proba fitted ~feature_schema ~x
+        in
+        let labels = Classifier.predict fitted ~feature_schema ~x in
+        (probabilities, labels))
   in
   let workers = Array.init 3 (fun _ -> Domain.spawn work) in
-  work ();
-  Array.iter Domain.join workers
+  let caller = work () in
+  let results = Array.map Domain.join workers in
+  Array.iter
+    (Array.iter (fun (probabilities, labels) ->
+         Alcotest.check Alcotest.bool "shared probability output" true
+           (expected = (probabilities |> get |> Matrix.to_arrays));
+         Alcotest.check Alcotest.int "concurrent label rows" 18
+           (labels |> get |> Target.length)))
+    (Array.append [| caller |] results)
 
 let test_pipeline class_count () =
   let x, y, feature_schema = source class_count in
@@ -381,7 +386,7 @@ let test_pipeline class_count () =
   let provenance = Option.get component.Pipeline.provenance in
   Alcotest.check Alcotest.string "classifier provenance" "Classifier"
     (Pipeline.provenance_implementation provenance);
-  Alcotest.check Alcotest.string "current package version" "0.6.0"
+  Alcotest.check Alcotest.string "current package version" "0.6.1"
     (Pipeline.provenance_version provenance);
   Alcotest.check Alcotest.bool "native codec attached" true
     (component.Pipeline.serialization_support = Pipeline.External_artifact);
