@@ -508,12 +508,432 @@ module Native = struct
         Ok values)
 end
 
+module Batches = struct
+  type batch = {
+    feature_schema : Feature_schema.t;
+    x : Matrix.t;
+    y : Target.regression Target.t;
+    sample_weight : Vector.t option;
+  }
+
+  type report = {
+    batches : int;
+    rows : int;
+    max_batch_rows : int;
+    resets : int;
+    passes : int;
+    peak_feature_buffer_bytes : int64;
+    peak_staging_buffer_bytes : int64;
+    replay_fingerprint_bytes : int64;
+  }
+
+  let callback operation f =
+    try f () |> Result.map_error (Error.with_context (Error.Stage operation))
+    with exn ->
+      Error
+        (Error.make ~context:[ Error.Stage operation ]
+           ~remediation:
+             "Return typed callback errors and replay the same batches on \
+              reset."
+           (Error.Callback_failure { reason = Printexc.to_string exn }))
+
+  let io f =
+    try f () with
+    | End_of_file ->
+        validation ~name:"streaming disk cache"
+          "the replay fingerprint manifest ended unexpectedly"
+    | Sys_error reason ->
+        Error
+          (Error.make
+             ~remediation:
+               "Provide a writable cache directory with sufficient disk space."
+             (Error.Validation { name = "streaming disk cache"; reason }))
+    | Unix.Unix_error (error, operation, _) ->
+        Error
+          (Error.make ~context:[ Error.Stage operation ]
+             ~remediation:
+               "Provide a writable cache directory with sufficient disk space."
+             (Error.Validation
+                {
+                  name = "streaming disk cache";
+                  reason = Unix.error_message error;
+                }))
+
+  let with_cache directory callback =
+    io (fun () ->
+        let random = Random.State.make_self_init () in
+        let rec create attempts =
+          if attempts = 0 then
+            raise
+              (Unix.Unix_error
+                 (Unix.EEXIST, "streaming cache reservation", directory))
+          else
+            let path =
+              Filename.concat directory
+                (Printf.sprintf "modelkit-xgboost-%d-%08x" (Unix.getpid ())
+                   (Random.State.bits random))
+            in
+            try
+              Unix.mkdir path 0o700;
+              path
+            with Unix.Unix_error (Unix.EEXIST, _, _) -> create (attempts - 1)
+        in
+        let path = create 32 in
+        let cleanup = ref (Ok ()) in
+        let outcome =
+          Fun.protect
+            ~finally:(fun () ->
+              cleanup :=
+                io (fun () ->
+                    Array.iter
+                      (fun name -> Unix.unlink (Filename.concat path name))
+                      (Sys.readdir path);
+                    Unix.rmdir path;
+                    Ok ()))
+            (fun () -> io (fun () -> callback path))
+        in
+        match (outcome, !cleanup) with
+        | Error error, Error cleanup_error ->
+            Error
+              (Error.with_context
+                 (Error.Stage
+                    ("streaming cache cleanup: " ^ Error.to_string cleanup_error))
+                 error)
+        | Error error, Ok () -> Error error
+        | Ok _, Error error -> Error error
+        | Ok value, Ok () -> Ok value)
+
+  let fingerprint batch =
+    let rows, columns = Matrix.shape batch.x in
+    let weighted = Option.is_some batch.sample_weight in
+    let width = columns + 1 + if weighted then 1 else 0 in
+    let length = (rows * width * 8) + 17 in
+    let bytes = Bytes.create length in
+    Bytes.set_int64_le bytes 0 (Int64.of_int rows);
+    Bytes.set_int64_le bytes 8 (Int64.of_int columns);
+    Bytes.set bytes 16 (if weighted then '\001' else '\000');
+    let target = Target.regression_values batch.y in
+    let index = ref 17 in
+    let write value =
+      let bits =
+        if Float.is_nan value then Int64.bits_of_float Float.nan
+        else Int64.bits_of_float value
+      in
+      Bytes.set_int64_le bytes !index bits;
+      index := !index + 8
+    in
+    for row = 0 to rows - 1 do
+      for column = 0 to columns - 1 do
+        write (Matrix.get batch.x row column)
+      done;
+      write (Vector.get target row);
+      Option.iter
+        (fun weights -> write (Vector.get weights row))
+        batch.sample_weight
+    done;
+    (Digest.BLAKE256.bytes bytes, Int64.of_int length)
+
+  let prepare schema batch =
+    if not (Feature_schema.equal schema batch.feature_schema) then
+      Error
+        (Error.make
+           ~remediation:"Keep the same ordered named schema in every batch."
+           (Error.Feature_schema_mismatch
+              { expected = schema; observed = batch.feature_schema }))
+    else
+      let rows, columns = Matrix.shape batch.x in
+      let* () =
+        Native.aligned ~name:"batch target" ~rows (Target.length batch.y)
+      in
+      let* () =
+        match batch.sample_weight with
+        | None -> Ok ()
+        | Some weights ->
+            Native.aligned ~name:"batch sample_weight" ~rows
+              (Vector.length weights)
+      in
+      if
+        columns > ((max_int - 17) / 8) - 2
+        || rows > (max_int - 17) / ((columns + 2) * 8)
+      then
+        validation ~name:"batch size"
+          "conversion and fingerprint payload exceed the addressable size"
+      else
+        let* features = Input.features ~feature_schema:schema batch.x in
+        let* target = Input.regression_target batch.y in
+        let* weights =
+          match batch.sample_weight with
+          | None -> Ok None
+          | Some source ->
+              let rec nonnegative index =
+                if index = rows then Ok ()
+                else if Vector.get source index < 0. then
+                  validation ~name:"batch sample_weight"
+                    "weights must be nonnegative"
+                else nonnegative (index + 1)
+              in
+              let* () = nonnegative 0 in
+              let* values, report =
+                Input.vector ~name:"sample_weight" ~positive:true
+                  ~temporary_bytes:0L rows (Vector.get source)
+              in
+              Ok
+                (Some
+                   { Input.weight_values = values; weight_conversion = report })
+        in
+        let digest, fingerprint_bytes = fingerprint batch in
+        Ok
+          ( {
+              Modelkit_xgboost_streaming_native.features =
+                features.Input.feature_matrix;
+              labels = target.Input.target_values;
+              weights =
+                Option.map (fun weight -> weight.Input.weight_values) weights;
+            },
+            digest,
+            fingerprint_bytes,
+            features.Input.feature_conversion,
+            target.Input.target_conversion,
+            Option.map Input.weight_report weights )
+
+  let train specification ~rng ~feature_schema ~expected_rows ~cache_directory
+      ~next ~reset =
+    let columns = Feature_schema.feature_count feature_schema in
+    let* () =
+      if expected_rows < 1 || columns < 1 then
+        validation ~name:"expected_rows"
+          "training requires positive row and feature counts"
+      else if Option.is_none (Feature_schema.names feature_schema) then
+        validation ~name:"feature_schema"
+          "batch training requires named features"
+      else if
+        columns > ((max_int - 17) / 8) - 2
+        || expected_rows > max_int / columns
+        || Int64.of_int expected_rows > Int64.div Int64.max_int 32L
+        || Int64.of_int expected_rows
+           > Int64.div Int64.max_int (Int64.mul 8L (Int64.of_int (columns + 2)))
+      then
+        validation ~name:"expected_rows" "conversion accounting would overflow"
+      else if cache_directory = "" || String.contains cache_directory '\000'
+      then
+        validation ~name:"cache_directory"
+          "provide an existing cache directory without NUL characters"
+      else Ok ()
+    in
+    let batches = ref 0
+    and max_batch_rows = ref 0
+    and resets = ref 0
+    and passes = ref 0 in
+    let peak_features = ref 0L and peak_staging = ref 0L in
+    let feature_rounded = ref 0
+    and target_rounded = ref 0
+    and weight_rounded = ref 0 in
+    let weighted = ref None and has_positive_weight = ref false in
+    let invoke_reset () =
+      incr resets;
+      callback "batch reset" reset
+    in
+    let accept batch consumed =
+      let rows = Matrix.rows batch.x in
+      if rows > expected_rows - consumed then
+        validation ~name:"batch row count"
+          "batches exceed the expected total row count"
+      else
+        let present = Option.is_some batch.sample_weight in
+        let* () =
+          match !weighted with
+          | None ->
+              weighted := Some present;
+              Ok ()
+          | Some expected when expected = present -> Ok ()
+          | Some _ ->
+              validation ~name:"batch sample_weight"
+                "weight presence must be consistent across batches and resets"
+        in
+        prepare feature_schema batch
+        |> Result.map_error
+             (Error.with_context
+                (Error.Stage
+                   (Printf.sprintf "batch beginning at row %d" consumed)))
+    in
+    let* bytes =
+      with_cache cache_directory (fun directory ->
+          let manifest = Filename.concat directory "replay.fingerprints" in
+          let output = open_out_bin manifest in
+          let* () =
+            Fun.protect
+              ~finally:(fun () -> close_out_noerr output)
+              (fun () ->
+                let* () = invoke_reset () in
+                let rec collect consumed =
+                  let* batch = callback "batch next" next in
+                  match batch with
+                  | None ->
+                      if consumed <> expected_rows then
+                        validation ~name:"batch row count"
+                          "end of input precedes the expected total row count"
+                      else if !weighted = Some true && not !has_positive_weight
+                      then
+                        validation ~name:"batch sample_weight"
+                          "the dataset must contain a positive weight"
+                      else (
+                        incr passes;
+                        flush output;
+                        close_out output;
+                        Ok ())
+                  | Some batch ->
+                      let* ( _,
+                             digest,
+                             fingerprint_bytes,
+                             feature,
+                             target,
+                             weights ) =
+                        accept batch consumed
+                      in
+                      let rows = Matrix.rows batch.x in
+                      incr batches;
+                      max_batch_rows := max !max_batch_rows rows;
+                      feature_rounded :=
+                        !feature_rounded + feature.Input.rounded;
+                      target_rounded := !target_rounded + target.Input.rounded;
+                      let weight_bytes =
+                        match weights with
+                        | None -> 0L
+                        | Some report ->
+                            weight_rounded :=
+                              !weight_rounded + report.Input.rounded;
+                            Option.iter
+                              (fun weights ->
+                                for row = 0 to rows - 1 do
+                                  if Vector.get weights row > 0. then
+                                    has_positive_weight := true
+                                done)
+                              batch.sample_weight;
+                            report.Input.bytes
+                      in
+                      peak_features :=
+                        Int64.max !peak_features feature.Input.bytes;
+                      peak_staging :=
+                        Int64.max !peak_staging
+                          (Int64.add fingerprint_bytes
+                             (Int64.add feature.Input.bytes
+                                (Int64.add target.Input.bytes weight_bytes)));
+                      output_string output digest;
+                      collect (consumed + rows)
+                in
+                collect 0)
+          in
+          let input = open_in_bin manifest in
+          Fun.protect
+            ~finally:(fun () -> close_in_noerr input)
+            (fun () ->
+              let consumed = ref 0 and ended = ref true and delivered = ref 0 in
+              let replay_reset () =
+                io (fun () ->
+                    if !consumed <> 0 && not !ended then
+                      validation ~name:"batch reset"
+                        "reset interrupted an incomplete dataset pass"
+                    else
+                      let* () = invoke_reset () in
+                      consumed := 0;
+                      delivered := 0;
+                      ended := false;
+                      seek_in input 0;
+                      Ok ())
+              in
+              let replay_next () =
+                io (fun () ->
+                    let* batch = callback "batch next" next in
+                    match batch with
+                    | None ->
+                        if !consumed <> expected_rows || !delivered <> !batches
+                        then
+                          validation ~name:"batch replay"
+                            "reset did not reproduce the complete ordered \
+                             dataset"
+                        else (
+                          if not !ended then incr passes;
+                          ended := true;
+                          Ok None)
+                    | Some batch ->
+                        let* native, digest, _, _, _, _ =
+                          accept batch !consumed
+                        in
+                        if !ended || !delivered >= !batches then
+                          validation ~name:"batch replay"
+                            "replay supplied unexpected batches"
+                        else
+                          let expected = really_input_string input 32 in
+                          if digest <> expected then
+                            validation ~name:"batch replay"
+                              "reset changed batch boundaries, values, \
+                               targets, weights, or row order"
+                          else (
+                            consumed := !consumed + Matrix.rows batch.x;
+                            incr delivered;
+                            Ok (Some native)))
+              in
+              let p = Specification.params specification in
+              Modelkit_xgboost_streaming_native.train
+                ~parameters:
+                  (("objective", "reg:squarederror")
+                  :: Specification.native_parameters specification ~rng)
+                ~rounds:p.Specification.rounds ~threads:p.Specification.threads
+                ~rows:expected_rows ~columns
+                ~cache_prefix:(Filename.concat directory "pages")
+                ~next:replay_next ~reset:replay_reset ()))
+    in
+    let conversion shape rounded =
+      let count =
+        Array.fold_left
+          (fun total value -> Int64.mul total (Int64.of_int value))
+          1L shape
+      in
+      { Input.shape; bytes = Int64.mul 4L count; temporary_bytes = 0L; rounded }
+    in
+    Ok
+      ( bytes,
+        {
+          batches = !batches;
+          rows = expected_rows;
+          max_batch_rows = !max_batch_rows;
+          resets = !resets;
+          passes = !passes;
+          peak_feature_buffer_bytes = !peak_features;
+          peak_staging_buffer_bytes = !peak_staging;
+          replay_fingerprint_bytes = Int64.mul 32L (Int64.of_int !batches);
+        },
+        conversion [| expected_rows; columns |] !feature_rounded,
+        conversion [| expected_rows |] !target_rounded,
+        if !weighted = Some true then
+          Some (conversion [| expected_rows |] !weight_rounded)
+        else None )
+end
+
 module Regressor_implementation = struct
   type t = Specification.t
   type params = Specification.params
   type target = Target.regression Target.t
   type prediction = target
   type rng = Rng.t
+
+  type batch = Batches.batch = {
+    feature_schema : Feature_schema.t;
+    x : Matrix.t;
+    y : Target.regression Target.t;
+    sample_weight : Vector.t option;
+  }
+
+  type batches_report = Batches.report = {
+    batches : int;
+    rows : int;
+    max_batch_rows : int;
+    resets : int;
+    passes : int;
+    peak_feature_buffer_bytes : int64;
+    peak_staging_buffer_bytes : int64;
+    replay_fingerprint_bytes : int64;
+  }
 
   type report = {
     rounds : int;
@@ -530,6 +950,7 @@ module Regressor_implementation = struct
     booster : Xgboost.Booster.t;
     prediction_mutex : Mutex.t;
     fit_report : report;
+    batches_report : batches_report option;
     origin : model_origin;
   }
 
@@ -538,6 +959,7 @@ module Regressor_implementation = struct
   let fitted_params fitted = Specification.params fitted.specification
   let feature_schema fitted = fitted.schema
   let report fitted = fitted.fit_report
+  let batches_report fitted = fitted.batches_report
   let capabilities = Capability.estimator ~sample_weight:Capability.Supported ()
 
   let fit specification ?sample_weight ~rng ~feature_schema ~x ~y () =
@@ -572,6 +994,7 @@ module Regressor_implementation = struct
         booster;
         prediction_mutex = Mutex.create ();
         origin = fitted_origin specification native_version;
+        batches_report = None;
         fit_report =
           {
             rounds;
@@ -580,6 +1003,41 @@ module Regressor_implementation = struct
             feature_conversion = Input.feature_report features;
             target_conversion = Input.target_report target;
             weight_conversion = Option.map Input.weight_report weights;
+          };
+      }
+
+  let fit_batches specification ~rng ~feature_schema ~expected_rows
+      ~cache_directory ~next ~reset () =
+    let* native_version = Native.version () in
+    let* ( bytes,
+           batches_report,
+           feature_conversion,
+           target_conversion,
+           weight_conversion ) =
+      Batches.train specification ~rng ~feature_schema ~expected_rows
+        ~cache_directory ~next ~reset
+    in
+    let* booster =
+      Native.detached_booster specification
+        ~columns:(Feature_schema.feature_count feature_schema)
+        bytes
+    in
+    Ok
+      {
+        specification = clone specification;
+        schema = feature_schema;
+        booster;
+        prediction_mutex = Mutex.create ();
+        origin = fitted_origin specification native_version;
+        batches_report = Some batches_report;
+        fit_report =
+          {
+            rounds = (Specification.params specification).Specification.rounds;
+            native_version;
+            native_seed = Specification.native_seed rng;
+            feature_conversion;
+            target_conversion;
+            weight_conversion;
           };
       }
 
@@ -1044,6 +1502,7 @@ module Artifact = struct
     feature_conversion : Input.report;
     target_conversion : Input.report;
     weight_conversion : Input.report option;
+    batches_report : Batches.report option;
     model : bytes;
   }
 
@@ -1210,6 +1669,44 @@ module Artifact = struct
       || values > Int64.div Int64.max_int (Int64.mul 4L (Int64.of_int columns))
     then failure "invalid training/effective row counts"
     else
+      let* () =
+        match stored.batches_report with
+        | None -> Ok ()
+        | Some report ->
+            let weighted = Option.is_some stored.weight_conversion in
+            let width =
+              Int64.add (Int64.of_int columns) (if weighted then 2L else 1L)
+            in
+            let batch_rows = Int64.of_int report.Batches.max_batch_rows in
+            let feature_peak =
+              Int64.mul 4L (Int64.mul batch_rows (Int64.of_int columns))
+            in
+            let staging_peak =
+              Int64.add 17L (Int64.mul 12L (Int64.mul batch_rows width))
+            in
+            if
+              stored.task <> 1
+              || report.Batches.rows <> rows
+              || report.Batches.batches < 1
+              || report.Batches.batches > rows
+              || Int64.of_int report.Batches.batches
+                 > Int64.div Int64.max_int 32L
+              || report.Batches.max_batch_rows < 1
+              || report.Batches.max_batch_rows > rows
+              || columns > ((max_int - 17) / 8) - 2
+              || report.Batches.max_batch_rows
+                 > (max_int - 17) / ((columns + 2) * 8)
+              || report.Batches.max_batch_rows
+                 < ((rows - 1) / report.Batches.batches) + 1
+              || report.Batches.resets < 2 || report.Batches.passes < 2
+              || report.Batches.passes > report.Batches.resets
+              || report.Batches.peak_feature_buffer_bytes <> feature_peak
+              || report.Batches.peak_staging_buffer_bytes <> staging_peak
+              || report.Batches.replay_fingerprint_bytes
+                 <> Int64.mul 32L (Int64.of_int report.Batches.batches)
+            then failure "stored batch-training diagnostics are inconsistent"
+            else Ok ()
+      in
       let source_values = Int64.mul values (Int64.of_int columns) in
       let size count = Int64.mul 4L count in
       let filtered = effective <> rows in
@@ -1324,7 +1821,7 @@ module Artifact = struct
     let* () = validate_text values in
     W.string writer "modelkit-xgboost";
     W.string writer (if stored.task = 1 then "Regressor" else "Classifier");
-    W.int writer 1;
+    W.int writer (if Option.is_none stored.batches_report then 1 else 2);
     W.string writer stored.origin.Origin.fitted_adapter_version;
     W.string writer Modelkit_xgboost_version.value;
     W.string writer stored.origin.Origin.binding_version;
@@ -1351,6 +1848,23 @@ module Artifact = struct
     | Some report ->
         W.byte writer 1;
         write_conversion writer report);
+    Option.iter
+      (fun report ->
+        List.iter (W.int writer)
+          [
+            report.Batches.batches;
+            report.Batches.rows;
+            report.Batches.max_batch_rows;
+            report.Batches.resets;
+            report.Batches.passes;
+          ];
+        List.iter (W.i64 writer)
+          [
+            report.Batches.peak_feature_buffer_bytes;
+            report.Batches.peak_staging_buffer_bytes;
+            report.Batches.replay_fingerprint_bytes;
+          ])
+      stored.batches_report;
     W.bytes writer stored.model;
     Io.frame ~limits ~task:stored.task (W.contents writer)
 
@@ -1366,7 +1880,7 @@ module Artifact = struct
     if
       package <> "modelkit-xgboost"
       || (implementation <> if task = 1 then "Regressor" else "Classifier")
-      || codec_version <> 1
+      || (codec_version <> 1 && (codec_version <> 2 || task <> 1))
     then failure "unsupported model codec identity/version"
     else
       let* fitted_adapter_version = R.string reader in
@@ -1421,6 +1935,30 @@ module Artifact = struct
               | 1 -> Result.map Option.some (read_conversion reader)
               | _ -> failure "invalid weight-report tag"
             in
+            let* batches_report =
+              if codec_version = 1 then Ok None
+              else
+                let* batches = R.int reader in
+                let* rows = R.int reader in
+                let* max_batch_rows = R.int reader in
+                let* resets = R.int reader in
+                let* passes = R.int reader in
+                let* peak_feature_buffer_bytes = R.i64 reader in
+                let* peak_staging_buffer_bytes = R.i64 reader in
+                let* replay_fingerprint_bytes = R.i64 reader in
+                Ok
+                  (Some
+                     {
+                       Batches.batches;
+                       rows;
+                       max_batch_rows;
+                       resets;
+                       passes;
+                       peak_feature_buffer_bytes;
+                       peak_staging_buffer_bytes;
+                       replay_fingerprint_bytes;
+                     })
+            in
             let* model = R.bytes reader in
             let* () = R.finish reader in
             let origin =
@@ -1448,6 +1986,7 @@ module Artifact = struct
                 feature_conversion;
                 target_conversion;
                 weight_conversion;
+                batches_report;
                 model;
               }
             in
@@ -1507,6 +2046,7 @@ module Artifact = struct
     restore ~limits stored (fun booster ->
         {
           Regressor_implementation.specification = stored.specification;
+          batches_report = stored.batches_report;
           schema = stored.schema;
           booster;
           prediction_mutex = Mutex.create ();
@@ -1569,6 +2109,7 @@ module Artifact = struct
         feature_conversion = report.Regressor_implementation.feature_conversion;
         target_conversion = report.Regressor_implementation.target_conversion;
         weight_conversion = report.Regressor_implementation.weight_conversion;
+        batches_report = fitted.Regressor_implementation.batches_report;
         model;
       }
 
@@ -1596,6 +2137,7 @@ module Artifact = struct
         feature_conversion = report.Classifier_implementation.feature_conversion;
         target_conversion = report.Classifier_implementation.target_conversion;
         weight_conversion = report.Classifier_implementation.weight_conversion;
+        batches_report = None;
         model;
       }
 

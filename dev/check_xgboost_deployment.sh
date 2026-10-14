@@ -12,6 +12,7 @@ opam exec -- dune install --build-dir "$deployment_build" --prefix "$deployment_
 
 mkdir "$deployment_tmp/consumer"
 cp adapters/xgboost/deployment_worker.ml "$deployment_tmp/consumer/deployment_worker.ml"
+cp dev/xgboost_streaming_consumer.ml "$deployment_tmp/consumer/streaming_consumer.ml"
 cat > "$deployment_tmp/consumer/dune-project" <<'PROJECT'
 (lang dune 3.23)
 (name modelkit_deployment_consumer)
@@ -19,7 +20,12 @@ PROJECT
 cat > "$deployment_tmp/consumer/dune" <<'BUILD'
 (executable
  (name deployment_worker)
+ (modules deployment_worker)
  (libraries modelkit modelkit-xgboost yojson))
+(executable
+ (name streaming_consumer)
+ (modules streaming_consumer)
+ (libraries modelkit modelkit-xgboost))
 BUILD
 
 deployment_path="$deployment_tmp/install/lib${OCAMLPATH:+:$OCAMLPATH}"
@@ -30,7 +36,10 @@ for deployment_package in modelkit modelkit-xgboost; do
     exit 1
   fi
 done
-opam exec -- env OCAMLPATH="$deployment_path" dune build --root "$deployment_tmp/consumer" deployment_worker.exe
+opam exec -- env OCAMLPATH="$deployment_path" dune build --root "$deployment_tmp/consumer" deployment_worker.exe streaming_consumer.exe
+
+mkdir "$deployment_tmp/streaming-cache"
+"$deployment_tmp/consumer/_build/default/streaming_consumer.exe" "$deployment_tmp/streaming-cache"
 
 for deployment_metadata in "$deployment_repo"/test/fixtures/xgboost/artifacts/*/*.metadata.json; do
   "$deployment_tmp/consumer/_build/default/deployment_worker.exe" \

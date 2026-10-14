@@ -55,9 +55,11 @@ module Input : sig
   val source_shape : report -> int array
 
   val payload_bytes : report -> int64
-  (** Retained float32 buffer payload allocated by this conversion, excluding
-      upstream DMatrix/booster storage, OCaml headers, and allocator overhead.
-  *)
+  (** Float32 buffer payload allocated by this conversion, excluding upstream
+      DMatrix/booster storage, OCaml headers, and allocator overhead. Streaming
+      fit reports aggregate the payload over one dataset pass; their
+      simultaneous retention is reported separately by
+      {!val:Regressor.batches_report}. *)
 
   val temporary_payload_bytes : report -> int64
   (** Full-size staging payload discarded after conversion. Classification
@@ -169,6 +171,89 @@ module Regressor : sig
   type t = Specification.t
   type params = Specification.params
   type fitted
+
+  type batch = {
+    feature_schema : Modelkit.Feature_schema.t;
+    x : Modelkit.Matrix.t;
+    y : Modelkit.Target.regression Modelkit.Target.t;
+    sample_weight : Modelkit.Vector.t option;
+  }
+  (** Each nonempty batch supplies the same ordered named schema. Weight vectors
+      admit all-zero individual batches; the complete weighted dataset must
+      contain a positive weight. Weights must be supplied for every batch or
+      omitted for every batch. *)
+
+  type batches_report = {
+    batches : int;
+    rows : int;
+    max_batch_rows : int;
+    resets : int;
+    passes : int;
+    peak_feature_buffer_bytes : int64;
+    peak_staging_buffer_bytes : int64;
+    replay_fingerprint_bytes : int64;
+  }
+  (** Counts describe the initial validation pass, except [resets] and [passes],
+      which include validation and native replay. [passes] counts complete
+      passes. Peak feature storage is [4 * max_batch_rows * feature_count]. Peak
+      staging includes float32 feature/target/weight payloads and the
+      batch-sized float64-bit fingerprint buffer, excluding caller input, OCaml
+      headers, array descriptors, digest strings, uncollected garbage, native
+      allocations, and the model snapshot. These are active owned payloads, not
+      process RSS or a GC heap high-water mark. Fingerprints occupy 32 bytes per
+      batch on disk, not a dataset-sized memory manifest. *)
+
+  val batches_report : fitted -> batches_report option
+  (** [None] for ordinary in-memory fits and legacy artifacts. Streaming
+      diagnostics survive serialization in the version-two regression payload.
+  *)
+
+  val fit_batches :
+    t ->
+    rng:Modelkit.Rng.t ->
+    feature_schema:Modelkit.Feature_schema.t ->
+    expected_rows:int ->
+    cache_directory:string ->
+    next:(unit -> (batch option, Modelkit.Error.t) result) ->
+    reset:(unit -> (unit, Modelkit.Error.t) result) ->
+    unit ->
+    (fitted, Modelkit.Error.t) result
+  (** CPU external-memory squared-error fitting. [expected_rows] is positive;
+      [cache_directory] is an existing writable directory owned by the caller.
+      The adapter creates a unique private child, then removes its fingerprints
+      and native pages after freeing training handles. It never removes the
+      parent or unrelated files. Cleanup failures are typed errors; when fitting
+      also fails, the fitting error takes precedence with cleanup error context.
+      A returned fitted value retains no training callbacks, buffers, handles,
+      or cache files. Process termination can leave a private child behind; the
+      caller owns reclamation of abandoned job caches.
+
+      The adapter calls [reset] before validation and whenever native replay
+      requests it. Resets must reproduce the same batch boundaries, ordered
+      feature values, targets, and weights. BLAKE2b-256 fingerprints check
+      original float64 bits, canonicalizing feature NaNs. This is a consistency
+      check; callers remain responsible for supplying an immutable replay.
+      Callbacks must not mutate active inputs, concurrently share their cursor,
+      or modify the private cache child. [None] ends a pass; it is an error
+      before exactly [expected_rows] rows have been supplied. Typed callback
+      errors retain context; raised callback exceptions become
+      [Error.Callback_failure]. No callback exception escapes into native code,
+      and a recorded failure prevents acceptance of partial training data.
+
+      Checked conversion follows {!Input}: feature NaNs remain missing, targets
+      are finite, weights are finite/nonnegative, float32 overflow is rejected,
+      and positive weights may not round to zero. Conversion diagnostics count
+      the validation pass once. The ordinary fit report's payload bytes describe
+      cumulative converted dataset payload, not simultaneous retention; use
+      {!val:batches_report} for peak adapter staging. No full feature matrix or
+      full float32 feature copy is constructed. XGBoost still concatenates
+      labels and weights and can allocate gradients and histograms proportional
+      to dataset size. Disk caching does not impose a total-memory limit.
+
+      The private bridge uses the native iterator/cache API and the binding's
+      low-level functions because binding 0.2.1's high-level iterator does not
+      safely contain all callback errors or deterministically free its proxy.
+      Prediction and serialization use the existing fitted-model API. *)
 
   type report = {
     rounds : int;

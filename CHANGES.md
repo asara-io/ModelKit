@@ -1,3 +1,12 @@
+# Unreleased
+
+- Add CPU external-memory regression fitting from checked replayable batches,
+  with optional weights, typed callback failures, owned disk caches, and bounded
+  adapter staging. A private iterator bridge manages native training handles
+  without depending on the high-level binding's iterator cleanup behavior.
+- Persist streaming diagnostics in a version-two regression payload while
+  retaining version-one readers and ordinary fit/classification writers.
+
 # 0.6.1 (2026-10-12)
 
 - Collect concurrent XGBoost test results before running Alcotest assertions,

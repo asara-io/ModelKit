@@ -1,9 +1,24 @@
 (library
  (name modelkit_xgboost)
  (public_name modelkit-xgboost)
- (modules modelkit_xgboost modelkit_xgboost_version modelkit_xgboost_io)
- (private_modules modelkit_xgboost_version modelkit_xgboost_io)
- (libraries modelkit xgboost yojson))
+ (modules
+  modelkit_xgboost
+  modelkit_xgboost_version
+  modelkit_xgboost_io
+  modelkit_xgboost_streaming_native)
+ (private_modules
+  modelkit_xgboost_version
+  modelkit_xgboost_io
+  modelkit_xgboost_streaming_native)
+ (libraries
+  modelkit
+  xgboost
+  xgboost.bindings
+  ctypes
+  ctypes-foreign
+  integers
+  yojson
+  unix))
 
 (rule
  (target modelkit_xgboost_version.ml)
@@ -167,6 +182,20 @@
 (documentation
  (package modelkit-xgboost)
  (mld_files index))
+
+(test
+ (name streaming_test)
+ (modules streaming_test)
+ (package modelkit-xgboost)
+ (libraries modelkit modelkit-xgboost alcotest unix)
+ (action
+  (setenv
+   OMP_NUM_THREADS
+   1
+   (setenv
+    OMP_THREAD_LIMIT
+    1
+    (run %{test})))))
 
 (mdx
  (files index.mld)

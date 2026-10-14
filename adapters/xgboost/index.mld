@@ -171,6 +171,109 @@ committed parity fixtures cover dense, weighted, missing/all-missing, sampled,
 regularized, large-scale, constant-feature/target, single-row, and zero-learning
 rate cases at absolute and relative prediction tolerances of [2e-6].
 
+{1 External-memory regression}
+
+{!Modelkit_xgboost.Regressor.fit_batches} trains CPU histogram trees from
+resettable batches without constructing a complete feature matrix. Supply an
+immutable specification and RNG, an ordered named schema, a positive expected
+row count, typed [next]/[reset] callbacks, and an existing writable cache
+directory. Each batch contains a ModelKit matrix, regression targets, its
+schema, and an optional weight vector. Weight vectors allow all-zero batches;
+the whole dataset must contain a positive weight. Supply weights consistently
+for every batch or omit them consistently.
+
+The source is first validated once, using the ordinary numerical policies:
+feature NaNs remain missing, targets are finite, weights are finite/nonnegative,
+float32 overflow is rejected, and a positive weight may not round to zero.
+Subsequent passes must reproduce the same batch boundaries and row order,
+including original feature, target, and weight values. Per-batch BLAKE2b-256
+fingerprints compare float64 bits, canonicalizing NaNs, and occupy 32 bytes per
+batch in an on-disk replay manifest. The caller owns source replay, selection of
+the training scope, and cancellation/job supervision. No automatic streaming
+pipeline preprocessing, cross-validation, or fold selection is performed.
+
+This example constructs only one batch at a time and uses the system temporary
+directory as the caller-provided cache parent:
+
+{[
+let () =
+  let open Modelkit in
+  let module X = Modelkit_xgboost in
+  let names = Feature_names.create ~expected_count:2 [| "signal"; "context" |]
+    |> Result.get_ok in
+  let schema = Feature_schema.named names in
+  let cursor = ref 0 in
+  let reset () = cursor := 0; Ok () in
+  let next () =
+    if !cursor = 4 then Ok None
+    else (
+      let start = !cursor * 8 in
+      incr cursor;
+      let x = Matrix.init ~rows:8 ~columns:2 (fun row column ->
+        if column = 1 && row mod 3 = 0 then Float.nan
+        else float_of_int (start + row + column)) |> Result.get_ok in
+      let y = Vector.init ~length:8 (fun row -> float_of_int (start + row))
+        |> Result.get_ok |> Target.regression |> Result.get_ok in
+      Ok (Some { X.Regressor.feature_schema = schema; x; y;
+                 sample_weight = None }))
+  in
+  let specification = X.Specification.create ~rounds:3 ~max_depth:2 ()
+    |> Result.get_ok in
+  let fitted = X.Regressor.fit_batches specification
+    ~rng:(Rng.create (Seed.of_int 42)) ~feature_schema:schema
+    ~expected_rows:32 ~cache_directory:(Filename.get_temp_dir_name ())
+    ~next ~reset () |> Result.get_ok in
+  let report = X.Regressor.batches_report fitted |> Option.get in
+  assert (report.batches = 4 && report.rows = 32);
+  assert (report.peak_feature_buffer_bytes = 64L);
+  let encoded = X.Artifact.encode_regression fitted |> Result.get_ok in
+  let restored = X.Artifact.decode_regression encoded |> Result.get_ok in
+  assert (X.Regressor.batches_report restored = Some report)
+]}
+
+The adapter owns a unique private child of [cache_directory]. It frees the
+training booster, DMatrix, proxy, and callback trampolines before removing that
+child's replay manifest and native page files. Success returns the ordinary
+{!Modelkit_xgboost.Regressor.fitted} type with an independent inference booster;
+prediction and supported serialization do not need the source or caches.
+If a job terminates the process, its private cache child may remain; reclamation
+of abandoned job caches belongs to the caller.
+Exceptions in [next]/[reset] become typed callback errors. Native proxy-setter
+failures are also contained at the callback boundary. A sticky failure prevents
+partial data from being accepted, even if native construction interprets a
+failed callback as end-of-input. Cleanup errors are reported, with the fitting
+error retained as the primary error if both occur.
+
+Binding 0.2.1's high-level iterator neither contains every proxy-setter exception
+nor frees its proxy on explicit DMatrix cleanup. This API therefore uses a small
+private bridge to the native iterator/cache entry points and the binding's
+low-level training functions. No patched binding or additional upstream release
+is needed for this feature. The separate vendored-archive installation issue
+described above still applies.
+
+The ordinary regression report aggregates rounded-value counts and converted
+payload over the validation pass once. These are dataset totals, not retained
+full-size buffers. [batches_report] separately records batch/row/reset/pass
+counts, peak float32 feature bytes, peak adapter staging bytes, and replay
+fingerprint disk bytes. Peak staging includes float32 features, labels, weights,
+and the batch-sized fingerprint buffer. These are active owned payloads, not
+process RSS or a GC heap high-water mark. It excludes caller input, OCaml
+headers/allocator overhead, array descriptors, digest strings, uncollected
+garbage, native allocations, filesystem caches, and the model
+snapshot used to detach training state. Tests increase row count tenfold while
+holding batch size fixed and check unchanged staging peaks and release of source
+and float32 conversion buffers between callbacks.
+
+External memory does not bound total process memory: native labels and weights
+are concatenated, and gradients and histograms may scale with the dataset.
+Disk I/O and operating-system page caching also affect resource use. See the
+{{:https://xgboost.readthedocs.io/en/release_3.0.0/tutorials/external_memory.html}
+native external-memory guide}. Our small weighted/unweighted CPU parity fixtures
+use full row/column sampling and compare with in-memory fitting at tolerance
+[2e-6 + 2e-6 * abs(expected)]. Batch-dependent quantile sketching, sampling, native
+versions, and C++ builds can produce different models; the tolerance is fixture
+evidence, not a universal equivalence guarantee.
+
 {1 Pipeline integration}
 
 {!Modelkit_xgboost.Regressor.estimator} packages the immutable specification
@@ -337,7 +440,7 @@ let () = Fun.protect ~finally:(fun () -> Sys.remove path) (fun () ->
        |> Result.get_ok) = 2))
 ]}
 
-The version-one model envelope contains package-qualified codec identity,
+The model envelope contains package-qualified codec identity,
 original fit and current writer/binding/native provenance, all immutable
 specification parameters, exact feature schema, original class mapping,
 conversion reports and seed, float32 input/float64 output policy, native-NaN
@@ -345,6 +448,10 @@ missing semantics, CPU histogram scope, and the full prediction range.
 XGBoost-produced JSON stores the trees and objective. Native memory snapshots
 and training-configuration dumps are excluded; configuration is inspected only
 after loading and is never restored as training state.
+
+Ordinary fits retain the version-one payload. External-memory regression adds
+batch diagnostics in payload version two; the current reader accepts both.
+Existing artifacts do not acquire invented streaming diagnostics when loaded.
 
 Inference [~threads] defaults to one and leaves original training parameters
 unchanged. The loaded booster owns no training cache or model-buffer reference.

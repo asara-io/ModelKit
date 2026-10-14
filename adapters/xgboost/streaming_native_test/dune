@@ -1,0 +1,25 @@
+(copy_files ../modelkit_xgboost_streaming_native.ml)
+
+(copy_files ../modelkit_xgboost_streaming_native.mli)
+
+(test
+ (name native_bridge_test)
+ (modules native_bridge_test modelkit_xgboost_streaming_native)
+ (package modelkit-xgboost)
+ (libraries
+  modelkit
+  xgboost.bindings
+  ctypes
+  ctypes-foreign
+  integers
+  yojson
+  alcotest
+  unix)
+ (action
+  (setenv
+   OMP_NUM_THREADS
+   1
+   (setenv
+    OMP_THREAD_LIMIT
+    1
+    (run %{test})))))
