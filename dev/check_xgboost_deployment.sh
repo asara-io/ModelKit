@@ -40,6 +40,7 @@ opam exec -- env OCAMLPATH="$deployment_path" dune build --root "$deployment_tmp
 
 mkdir "$deployment_tmp/streaming-cache"
 "$deployment_tmp/consumer/_build/default/streaming_consumer.exe" "$deployment_tmp/streaming-cache"
+"$deployment_tmp/consumer/_build/default/streaming_consumer.exe" "$deployment_tmp/streaming-cache" --load-pipeline
 
 for deployment_metadata in "$deployment_repo"/test/fixtures/xgboost/artifacts/*/*.metadata.json; do
   "$deployment_tmp/consumer/_build/default/deployment_worker.exe" \

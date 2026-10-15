@@ -304,6 +304,22 @@ module Regressor : sig
   (** Prediction plus its float32 input conversion report. The report excludes
       native prediction storage and the returned float64 prediction vector. *)
 
+  val to_pipeline :
+    ?name:string ->
+    fitted ->
+    ( ( Modelkit.Target.regression Modelkit.Target.t,
+        Modelkit.Target.regression Modelkit.Target.t )
+      Modelkit.Pipeline.fitted,
+      Modelkit.Error.t )
+    result
+  (** Wraps an ordinary, batch-fitted, or loaded regressor without refitting or
+      copying its native model. The fitted pipeline has no preprocessing and
+      expects the regressor's existing feature schema; [name] defaults to
+      [xgboost]. Original fit provenance and streaming diagnostics are retained.
+      Serialize with {!Modelkit.Artifact}; loading requires an explicit decoder
+      from {!Artifact.regression_codec}. This is an inference pipeline, not a
+      trainable specification for cross-validation or parameter search. *)
+
   val estimator :
     ?name:string ->
     t ->

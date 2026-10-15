@@ -1,5 +1,9 @@
 # Unreleased
 
+- Wrap already-fitted regressors in serializable inference pipelines through
+  `Artifact.Codec.regression_pipeline` and the XGBoost `Regressor.to_pipeline`
+  helper, without refitting or copying native state. Preserve original fit
+  provenance, schemas, and streaming diagnostics with existing artifact formats.
 - Add CPU external-memory regression fitting from checked replayable batches,
   with optional weights, typed callback failures, owned disk caches, and bounded
   adapter staging. A private iterator bridge manages native training handles

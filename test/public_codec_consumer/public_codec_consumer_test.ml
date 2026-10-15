@@ -185,6 +185,132 @@ let test_regression () =
       check_mean fitted
         (Artifact.load_regression ~decoders ~path () |> get |> Artifact.model))
 
+let test_fitted_regression () =
+  let fits = ref 0 and predictions = ref 0 and encodes = ref 0 in
+  let module Observed = struct
+    include Fixture.Mean
+
+    let fit specification ?sample_weight ~rng ~feature_schema ~x ~y () =
+      incr fits;
+      Fixture.Mean.fit specification ?sample_weight ~rng ~feature_schema ~x ~y
+        ()
+
+    let predict fitted ~feature_schema ~x =
+      incr predictions;
+      Fixture.Mean.predict fitted ~feature_schema ~x
+  end in
+  let x, schema, _ = input () in
+  let native =
+    Fixture.Mean.fit 0.5 ~rng:(Rng.create seed) ~feature_schema:schema ~x
+      ~y:(regression [| 1.; 3.; 5.; 7.; 9.; 11. |])
+      ()
+    |> get
+  in
+  let provenance = Fixture.provenance "Mean" |> get in
+  let wrap ?name () =
+    Artifact.Codec.regression_pipeline ?name ~provenance
+      ~package:Fixture.package ~codec_name:"Mean" ~version:1
+      (module Observed)
+      ~encode:(fun fitted ->
+        incr encodes;
+        Fixture.encode_mean fitted)
+      native
+    |> get
+  in
+  let fitted = wrap ~name:"existing-mean" () in
+  Alcotest.check Alcotest.int "wrapping never fits" 0 !fits;
+  Alcotest.check Alcotest.int "wrapping never predicts" 0 !predictions;
+  Alcotest.check Alcotest.int "wrapping never encodes" 0 !encodes;
+  Alcotest.check Alcotest.string "custom stage name" "existing-mean"
+    (Pipeline.artifact_report fitted |> Pipeline.artifact_estimator)
+      .Pipeline.component_name;
+  Alcotest.check Alcotest.string "default stage name" "estimator"
+    (Pipeline.artifact_report (wrap ()) |> Pipeline.artifact_estimator)
+      .Pipeline.component_name;
+  Alcotest.check Alcotest.int "no preprocessing" 0
+    (Pipeline.artifact_report fitted
+    |> Pipeline.artifact_transformers |> Array.length);
+  List.iter
+    (fun observed ->
+      Alcotest.check Alcotest.bool "fitted feature schema" true
+        (Feature_schema.equal schema observed))
+    [ Pipeline.input_schema fitted; Pipeline.output_schema fitted ];
+  Alcotest.check Alcotest.bool "transform retains input" true
+    (Pipeline.transform fitted ~feature_schema:schema ~x |> get == x);
+  let expected = Fixture.Mean.predict native ~feature_schema:schema ~x |> get in
+  let observed = Pipeline.predict fitted ~feature_schema:schema ~x |> get in
+  Alcotest.check
+    (Alcotest.array (Alcotest.float 0.))
+    "existing model predictions"
+    (Target.regression_values expected |> Vector.to_array)
+    (Target.regression_values observed |> Vector.to_array);
+  let reordered =
+    Feature_names.create ~expected_count:3 [| "café"; "length"; "constant" |]
+    |> data |> Feature_schema.named
+  in
+  Alcotest.check Alcotest.bool "rejects reordered names" true
+    (Result.is_error (Pipeline.predict fitted ~feature_schema:reordered ~x));
+  let wrong_width = Matrix.create ~rows:6 ~columns:2 0. |> data in
+  Alcotest.check Alcotest.bool "rejects wrong width" true
+    (Result.is_error
+       (Pipeline.predict fitted ~feature_schema:schema ~x:wrong_width));
+  Alcotest.check Alcotest.int "validation before predictor" 1 !predictions;
+  check_provenance fitted "Mean";
+  let encoded = Artifact.encode_regression fitted |> get in
+  Alcotest.check Alcotest.int "encode deferred until save" 1 !encodes;
+  rejects "reader remains explicit" (Artifact.decode_regression encoded);
+  let codec = Fixture.mean_codec () |> get in
+  let decoders = [| Artifact.Codec.decoder codec |] in
+  let restored =
+    Artifact.decode_regression ~decoders encoded |> get |> Artifact.model
+  in
+  check_mean fitted restored;
+  check_provenance restored "Mean";
+  Alcotest.check Alcotest.int "roundtrip never fits" 0 !fits
+
+let test_fitted_regression_validation () =
+  let x, schema, _ = input () in
+  let fitted =
+    Fixture.Mean.fit 0.5 ~rng:(Rng.create seed) ~feature_schema:schema ~x
+      ~y:(regression [| 1.; 3.; 5.; 7.; 9.; 11. |])
+      ()
+    |> get
+  in
+  let provenance = Fixture.provenance "Mean" |> get in
+  let encode _ = Alcotest.fail "validation called encoder" in
+  let wrap ?name ?(package = Fixture.package) ?(codec_name = "Mean")
+      ?(version = 1) () =
+    Artifact.Codec.regression_pipeline ?name ~provenance ~package ~codec_name
+      ~version
+      (module Fixture.Mean)
+      ~encode fitted
+  in
+  List.iter
+    (fun (name, result) ->
+      Alcotest.check Alcotest.bool name true (Result.is_error result))
+    [
+      ("empty stage", wrap ~name:"" ());
+      ("provenance package mismatch", wrap ~package:"other-package" ());
+      ("reserved package", wrap ~package:"modelkit" ());
+      ("empty codec name", wrap ~codec_name:"" ());
+      ("invalid codec identifier", wrap ~codec_name:"invalid/name" ());
+      ("zero format version", wrap ~version:0 ());
+      ("oversized format version", wrap ~version:65536 ());
+    ];
+  let broken =
+    Artifact.Codec.regression_pipeline ~provenance ~package:Fixture.package
+      ~codec_name:"Mean" ~version:1
+      (module Fixture.Mean)
+      ~encode:(fun _ ->
+        Error
+          (Error.make ~remediation:"repair the encoder"
+             (Error.Artifact
+                { operation = "encode"; reason = "encoder failure" })))
+      fitted
+    |> get
+  in
+  rejects "encoder failure propagated" (Artifact.encode_regression broken)
+
 let test_classification count =
   let calls = ref 0 in
   let codec = Fixture.classifier_codec ~calls () |> get in
@@ -613,6 +739,10 @@ let () =
         ( "boundary",
           [
             ("regression", `Quick, test_regression);
+            ("already-fitted regression", `Quick, test_fitted_regression);
+            ( "already-fitted regression validation",
+              `Quick,
+              test_fitted_regression_validation );
             ("binary", `Quick, fun () -> test_classification 2);
             ("multiclass", `Quick, fun () -> test_classification 3);
             ( "single-class general classification",

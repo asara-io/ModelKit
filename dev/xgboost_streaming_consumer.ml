@@ -9,12 +9,34 @@ let data = function
   | Ok value -> value
   | Error error -> failwith (Data_error.to_string error)
 
-let () =
-  let cache_directory = Sys.argv.(1) in
+let schema () =
   let names =
     Feature_names.create ~expected_count:2 [| "signal"; "context" |] |> data
   in
-  let feature_schema = Feature_schema.named names in
+  Feature_schema.named names
+
+let predict model =
+  let x = Matrix.of_arrays [| [| 1.; Float.nan |]; [| 8.; 2. |] |] |> data in
+  X.Regressor.predict model ~feature_schema:(schema ()) ~x
+  |> get |> Target.regression_values |> Vector.to_array
+
+let load_pipeline path =
+  let reader =
+    X.Artifact.regression_codec ~threads:1 () |> get |> Artifact.Codec.decoder
+  in
+  Artifact.load_regression ~decoders:[| reader |] ~path ()
+  |> get |> Artifact.model
+
+let check_pipeline fitted pipeline =
+  let x = Matrix.of_arrays [| [| 1.; Float.nan |]; [| 8.; 2. |] |] |> data in
+  let observed =
+    Pipeline.predict pipeline ~feature_schema:(schema ()) ~x
+    |> get |> Target.regression_values |> Vector.to_array
+  in
+  assert (predict fitted = observed)
+
+let train cache_directory =
+  let feature_schema = schema () in
   let cursor = ref 0 in
   let reset () =
     cursor := 0;
@@ -52,12 +74,26 @@ let () =
   let path = Filename.concat cache_directory "streamed.mkxgb" in
   X.Artifact.save_regression ~path fitted |> get;
   let restored = X.Artifact.load_regression ~path () |> get in
-  let x = Matrix.of_arrays [| [| 1.; Float.nan |]; [| 8.; 2. |] |] |> data in
-  let predict model =
-    X.Regressor.predict model ~feature_schema ~x
-    |> get |> Target.regression_values |> Vector.to_array
-  in
   assert (predict fitted = predict restored);
   assert (X.Regressor.batches_report restored = Some report);
+  let pipeline = X.Regressor.to_pipeline fitted |> get in
+  let path = Filename.concat cache_directory "streamed.modelkit" in
+  Artifact.save_regression ~path pipeline |> get;
+  check_pipeline fitted (load_pipeline path);
   print_endline
-    "Installed streaming fit, cache cleanup, and persisted inference passed"
+    "Installed streaming fit, cache cleanup, and native/pipeline persistence \
+     passed"
+
+let () =
+  let directory = Sys.argv.(1) in
+  if Array.length Sys.argv = 3 && Sys.argv.(2) = "--load-pipeline" then (
+    let fitted =
+      X.Artifact.load_regression
+        ~path:(Filename.concat directory "streamed.mkxgb")
+        ()
+      |> get
+    in
+    check_pipeline fitted
+      (load_pipeline (Filename.concat directory "streamed.modelkit"));
+    print_endline "Installed streamed pipeline loaded in a fresh process")
+  else train directory

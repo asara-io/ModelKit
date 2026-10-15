@@ -207,6 +207,20 @@ module Pipeline : sig
   (** Packages a stage whose fitted state may be restored from an explicitly
       attached pipeline cache. *)
 
+  val fitted_regressor_internal :
+    codec_identity:codec_identity ->
+    encode:('fitted -> (encoded_component, Error.t) result) ->
+    provenance:provenance ->
+    name:string ->
+    (module REGRESSOR
+       with type t = 'specification
+        and type fitted = 'fitted
+        and type rng = Rng.t) ->
+    'fitted ->
+    ( (Target.regression Target.t, Target.regression Target.t) fitted,
+      Error.t )
+    result
+
   val estimator_internal :
     ?codec_identity:codec_identity ->
     ?encode:('fitted -> (encoded_component, Error.t) result) ->

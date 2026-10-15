@@ -350,6 +350,89 @@ let test_golden version task () =
         [ "classes"; "native_classes"; "probabilities"; "native_probabilities" ]
       ))
 
+let check_wrapped_regressor fitted =
+  let pipeline = Xgb.Regressor.to_pipeline fitted |> get in
+  let feature_schema = Xgb.Regressor.feature_schema fitted in
+  let original = probe () in
+  let x =
+    Matrix.init ~rows:(Matrix.rows original)
+      ~columns:(Feature_schema.feature_count feature_schema) (fun row column ->
+        Matrix.get original row column)
+    |> data
+  in
+  let predictions =
+    Xgb.Regressor.predict fitted ~feature_schema ~x
+    |> get |> Target.regression_values |> Vector.to_array
+  in
+  let check pipeline =
+    Alcotest.check
+      (Alcotest.array (Alcotest.float 0.))
+      "wrapped predictions" predictions
+      (Pipeline.predict pipeline ~feature_schema ~x
+      |> get |> Target.regression_values |> Vector.to_array);
+    List.iter
+      (fun schema ->
+        Alcotest.check Alcotest.bool "original fitted schema" true
+          (Feature_schema.equal feature_schema schema))
+      [ Pipeline.input_schema pipeline; Pipeline.output_schema pipeline ];
+    let report = Pipeline.artifact_report pipeline in
+    Alcotest.check Alcotest.bool "serialization supported" true
+      (Pipeline.artifact_supported report);
+    Alcotest.check Alcotest.bool "native artifact remains external" false
+      (Pipeline.portable_artifact_supported report);
+    let terminal = Pipeline.artifact_estimator report in
+    Alcotest.check Alcotest.string "default name" "xgboost"
+      terminal.Pipeline.component_name;
+    let provenance = Option.get terminal.Pipeline.provenance in
+    Alcotest.check Alcotest.string "original producer version"
+      (Xgb.Artifact.regression_provenance fitted)
+        .Xgb.Artifact.fitted_adapter_version
+      (Pipeline.provenance_version provenance)
+  in
+  check pipeline;
+  let reader =
+    Xgb.Artifact.regression_codec () |> get |> Artifact.Codec.decoder
+  in
+  let bytes = Artifact.encode_regression pipeline |> get in
+  let restored =
+    Artifact.decode_regression ~decoders:[| reader |] bytes
+    |> get |> Artifact.model
+  in
+  check restored;
+  Alcotest.check Alcotest.string "native envelope and reports retained"
+    (Bytes.to_string bytes)
+    (Artifact.encode_regression restored |> get |> Bytes.to_string)
+
+let test_wrap_ordinary () =
+  let x, sample_weight = training () in
+  let fitted =
+    Xgb.Regressor.fit (specification 2) ~sample_weight ~rng:(Rng.create seed)
+      ~feature_schema:input_schema ~x ~y:(regression_target ()) ()
+    |> get
+  in
+  check_wrapped_regressor fitted;
+  Alcotest.check Alcotest.bool "blank stage rejected" true
+    (Result.is_error (Xgb.Regressor.to_pipeline ~name:"  " fitted))
+
+let test_wrap_legacy () =
+  let root = Sys.getenv "MODELKIT_XGBOOST_ARTIFACT_FIXTURES" in
+  let path = Filename.concat root "3.0.4/regression_model_v1.hex" in
+  let text = read path |> String.trim in
+  let digit char = String.index "0123456789abcdef" char in
+  let bytes =
+    Bytes.init
+      (String.length text / 2)
+      (fun index ->
+        Char.chr ((digit text.[index * 2] lsl 4) + digit text.[(index * 2) + 1]))
+  in
+  let fitted = Xgb.Artifact.decode_regression bytes |> get in
+  Alcotest.check Alcotest.string "historical fitted version" "0.6.0-dev"
+    (Xgb.Artifact.regression_provenance fitted)
+      .Xgb.Artifact.fitted_adapter_version;
+  Alcotest.check Alcotest.bool "historical fit has no batch diagnostics" true
+    (Option.is_none (Xgb.Regressor.batches_report fitted));
+  check_wrapped_regressor fitted
+
 let test_search_refit () =
   let x, sample_weight = training () in
   let feature_names =
@@ -459,6 +542,8 @@ let () =
             [ "3.0.4"; "3.4.2" ]
           @ [
               ("search refit/save/load/deploy", `Quick, test_search_refit);
+              ("wrap ordinary fitted regressor", `Quick, test_wrap_ordinary);
+              ("wrap historical fitted regressor", `Quick, test_wrap_legacy);
               ("unsupported preprocessing", `Quick, test_unsupported_stage);
             ] );
       ]

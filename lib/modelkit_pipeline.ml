@@ -447,6 +447,27 @@ module Pipeline = struct
         encode_estimator = Option.map (fun encode () -> encode fitted) encode;
       }
 
+  let fitted_regressor_internal (type specification fitted) ~codec_identity
+      ~encode ~provenance ~name
+      (module Estimator : REGRESSOR
+        with type t = specification
+         and type fitted = fitted
+         and type rng = Rng.t) (fitted : fitted) =
+    let* () = validate_name name in
+    let schema = Estimator.feature_schema fitted in
+    let* fitted_estimator =
+      package_fitted_estimator ~codec_identity ~encode ~provenance ~name
+        ~expected_schema:schema ~fitted_schema:schema ~predict:Estimator.predict
+        fitted
+    in
+    Ok
+      {
+        fitted_transformers = [||];
+        fitted_estimator;
+        pipeline_input_schema = schema;
+        pipeline_output_schema = schema;
+      }
+
   let estimator_internal (type specification target prediction fitted)
       ?codec_identity ?encode ?resolve_weights ?provenance ~name
       (module Estimator : ESTIMATOR

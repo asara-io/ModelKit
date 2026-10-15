@@ -2217,6 +2217,18 @@ end
 module Regressor = struct
   include Regressor_implementation
 
+  let to_pipeline ?(name = "xgboost") fitted =
+    let* provenance =
+      Pipeline.provenance ~package:"modelkit-xgboost"
+        ~version:fitted.origin.Origin.fitted_adapter_version
+        ~implementation:"Regressor"
+    in
+    Modelkit.Artifact.Codec.regression_pipeline ~name ~provenance
+      ~package:"modelkit-xgboost" ~codec_name:"Regressor" ~version:1
+      (module Regressor_implementation)
+      ~encode:(Artifact.encode_regression ~limits:Artifact.default_limits)
+      fitted
+
   let estimator ?(name = "xgboost") specification =
     let* provenance =
       Pipeline.provenance ~package:"modelkit-xgboost"

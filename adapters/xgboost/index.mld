@@ -6,7 +6,8 @@ conversion, immutable specifications, and scoped native interoperability.
 Installing [modelkit] does not install this package or its native dependencies.
 Trusted fitted-model persistence is available through {!Modelkit_xgboost.Artifact}.
 Ordinary estimator helpers attach serialization support for complete fitted
-pipelines containing supported preprocessing.
+pipelines containing supported preprocessing. Already-fitted regressors can
+also become serializable inference pipelines without refitting.
 
 {1 Installation and compatibility}
 
@@ -275,6 +276,30 @@ versions, and C++ builds can produce different models; the tolerance is fixture
 evidence, not a universal equivalence guarantee.
 
 {1 Pipeline integration}
+
+Use {!Modelkit_xgboost.Regressor.to_pipeline} for an already-fitted regressor,
+including a streamed or previously loaded model. It retains the fitted native
+model without refitting, prediction, or an intermediate serialization copy.
+The resulting fitted pipeline has no preprocessing: it expects the same ordered
+features as the regressor, including any feature engineering performed by the
+caller. It is an inference value, not a trainable specification for CV or search.
+Original fit provenance and streaming diagnostics survive serialization through
+the ordinary {!Modelkit.Artifact} API. Loading still selects a trusted XGBoost
+decoder explicitly. No artifact-format migration is required.
+
+{@ocaml[
+let wrapped = Modelkit_xgboost.Regressor.to_pipeline ~name:"trees" fitted
+              |> Result.get_ok
+let bytes = Modelkit.Artifact.encode_regression wrapped |> Result.get_ok
+let reader = Modelkit_xgboost.Artifact.regression_codec ~threads:1 ()
+             |> Result.get_ok |> Modelkit.Artifact.Codec.decoder
+let restored = Modelkit.Artifact.decode_regression ~decoders:[| reader |] bytes
+               |> Result.get_ok |> Modelkit.Artifact.model
+let values model =
+  Modelkit.Pipeline.predict model ~feature_schema:schema ~x |> Result.get_ok
+  |> Modelkit.Target.regression_values |> Modelkit.Vector.to_array
+let () = assert (values wrapped = values restored)
+]}
 
 {!Modelkit_xgboost.Regressor.estimator} packages the immutable specification
 using public ModelKit modules and reports package/version provenance. It accepts

@@ -85,6 +85,72 @@ let predict fitted x =
   R.predict fitted ~feature_schema:features ~x
   |> get |> Target.regression_values |> Vector.to_array
 
+let pipeline_predictions fitted x =
+  Pipeline.predict fitted ~feature_schema:features ~x
+  |> get |> Target.regression_values |> Vector.to_array
+
+let fitted_pipeline () =
+  let fitted =
+    with_directory (fun directory ->
+        let next, reset = callbacks ~weighted:true ~rows:24 ~size:8 () in
+        let active = ref true in
+        let guard callback () =
+          if not !active then Alcotest.fail "wrapping replayed training data";
+          callback ()
+        in
+        let fitted =
+          R.fit_batches (specification ()) ~rng:(rng ())
+            ~feature_schema:features ~expected_rows:24
+            ~cache_directory:directory ~next:(guard next) ~reset:(guard reset)
+            ()
+          |> get
+        in
+        active := false;
+        fitted)
+  in
+  let pipeline = R.to_pipeline ~name:"streamed" fitted |> get in
+  let report = Pipeline.artifact_report pipeline in
+  Alcotest.check Alcotest.int "no preprocessing" 0
+    (Pipeline.artifact_transformers report |> Array.length);
+  let terminal = Pipeline.artifact_estimator report in
+  Alcotest.check Alcotest.string "stage name" "streamed"
+    terminal.Pipeline.component_name;
+  Alcotest.check Alcotest.bool "external support" true
+    (terminal.Pipeline.serialization_support = Pipeline.External_artifact);
+  let provenance = terminal.Pipeline.provenance |> Option.get in
+  Alcotest.check Alcotest.string "original fitted version"
+    (X.Artifact.regression_provenance fitted).X.Artifact.fitted_adapter_version
+    (Pipeline.provenance_version provenance);
+  let x = (batch ~start:0 ~rows:24 ()).R.x in
+  let check pipeline =
+    Alcotest.check
+      (Alcotest.array (Alcotest.float 0.))
+      "pipeline predictions" (predict fitted x)
+      (pipeline_predictions pipeline x)
+  in
+  check pipeline;
+  let reader =
+    X.Artifact.regression_codec ~threads:1 () |> get |> Artifact.Codec.decoder
+  in
+  let bytes = Artifact.encode_regression pipeline |> get in
+  Alcotest.check Alcotest.bool "reader must be selected" true
+    (Result.is_error (Artifact.decode_regression bytes));
+  let restored =
+    Artifact.decode_regression ~decoders:[| reader |] bytes
+    |> get |> Artifact.model
+  in
+  check restored;
+  Alcotest.check Alcotest.string "diagnostics survive pipeline roundtrip"
+    (Bytes.to_string bytes)
+    (Artifact.encode_regression restored |> get |> Bytes.to_string);
+  let path = Filename.temp_file "modelkit-streamed-pipeline-" ".bin" in
+  Fun.protect
+    ~finally:(fun () -> Sys.remove path)
+    (fun () ->
+      Artifact.save_regression ~path pipeline |> get;
+      Artifact.load_regression ~decoders:[| reader |] ~path ()
+      |> get |> Artifact.model |> check)
+
 let empty directory =
   Alcotest.check
     (Alcotest.array Alcotest.string)
@@ -540,6 +606,8 @@ let suite () =
     [
       ( "streaming",
         [
+          Alcotest.test_case "already-fitted pipeline without source or caches"
+            `Quick fitted_pipeline;
           Alcotest.test_case "multiple batches, missing values, persistence"
             `Quick (parity false);
           Alcotest.test_case "weights including a zero-weight batch" `Quick
