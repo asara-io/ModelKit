@@ -59,7 +59,7 @@ module Artifact = struct
       max_metadata_entries = 128;
     }
 
-  let current_producer_version = "0.6.0"
+  let current_producer_version = "0.6.2"
 
   let modelkit_provenance ?(version = current_producer_version) implementation =
     Pipeline.provenance ~package:"modelkit" ~version ~implementation
@@ -599,6 +599,16 @@ module Artifact = struct
             }
       in
       Ok { decoder = { identity; version; restore }; package }
+
+    let regression_pipeline ?(name = "estimator") ~provenance ~package
+        ~codec_name ~version estimator ~encode fitted =
+      let* identity = identity ~package ~name:codec_name ~version in
+      let* () = validate_provenance identity provenance in
+      let encode fitted =
+        Result.map (encoded identity version) (encode fitted)
+      in
+      Pipeline.fitted_regressor_internal ~codec_identity:identity ~encode
+        ~provenance ~name estimator fitted
 
     let classification (type specification fitted) ~package ~name ~version
         (module Estimator : CLASSIFIER

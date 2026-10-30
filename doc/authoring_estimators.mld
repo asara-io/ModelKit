@@ -140,6 +140,26 @@ the codec used for decoding. Package identifiers and codec names are nonempty
 ASCII letters, digits, hyphens, underscores, or dots; [modelkit] is reserved.
 The integer codec version is independent of the component's package version.
 
+For a regressor fitted outside [Pipeline.fit], use
+{!Modelkit.Artifact.Codec.regression_pipeline} to create a fitted inference
+pipeline directly. For example, using the same payload contract as above:
+
+{[
+let wrap_fitted ~provenance fitted =
+  Modelkit.Artifact.Codec.regression_pipeline ~name:"forecast" ~provenance
+    ~package:"acme-models" ~codec_name:"Forecast" ~version:1
+    (module Forecast) ~encode:Forecast.encode_model fitted
+]}
+
+This retains the fitted value without invoking fit, predict, encode, or decode.
+The pipeline contains no preprocessing and takes its input/output schemas from
+the fitted regressor. The encoder runs only when saving; loading selects the
+matching codec's decoder explicitly. Preserve the package version that
+originally fitted the model in [provenance], even after upgrading the package.
+The writer's current version is recorded separately in the outer artifact.
+Returning [Pipeline.fitted] rather than a trainable specification keeps this
+inference wrapper out of CV and search fitting paths.
+
 {!Modelkit.Artifact.Codec.classification} similarly binds a classifier and its
 class-label callback, with optional probability and decision dispatch. Its
 decoder additionally receives a bounded, distinct, ordered [~classes] array

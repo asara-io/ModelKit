@@ -65,6 +65,33 @@ module Artifact : sig
         the supplied schema. Callbacks return typed routine failures; unrelated
         programmer exceptions propagate. *)
 
+    val regression_pipeline :
+      ?name:string ->
+      provenance:Pipeline.provenance ->
+      package:string ->
+      codec_name:string ->
+      version:int ->
+      (module REGRESSOR
+         with type t = 'specification
+          and type fitted = 'fitted
+          and type rng = Rng.t) ->
+      encode:('fitted -> (bytes, Error.t) result) ->
+      'fitted ->
+      (regression_model, Error.t) result
+    (** Wraps an already-fitted regressor in an inference pipeline with no
+        preprocessing. Both schemas come from the fitted regressor; [name]
+        defaults to [estimator]. No fitting, prediction, encoding, or decoding
+        occurs during construction, and the pipeline retains the fitted value.
+
+        Codec identifiers, versions, and encoder responsibilities match
+        {!regression}; [codec_name] is its codec [name]. Provenance must
+        describe the original fit and have the same package as the codec.
+        Reporting identifies [External_artifact]. Loading requires an explicit
+        decoder with the same package, codec name, and format version. The
+        caller must pair the encoder with that decoder's payload contract. This
+        produces a fitted pipeline, not a trainable specification for CV or
+        search. *)
+
     val classification :
       package:string ->
       name:string ->

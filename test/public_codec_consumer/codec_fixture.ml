@@ -145,12 +145,14 @@ let decode_floats count payload =
     if Array.for_all Float.is_finite values then Ok values
     else failure "nonfinite payload"
 
+let encode_mean fitted =
+  encode_floats [| fitted.Mean.offset; fitted.Mean.mean |]
+
 let mean_codec ?(calls = ref 0) ?(bad_schema = false) ?(version = 1)
     ?(name = "Mean") () =
   Artifact.Codec.regression ~package ~name ~version
     (module Mean)
-    ~encode:(fun fitted ->
-      encode_floats [| fitted.Mean.offset; fitted.Mean.mean |])
+    ~encode:encode_mean
     ~decode:(fun ~provenance:_ ~feature_schema payload ->
       incr calls;
       let* values = decode_floats 2 payload in

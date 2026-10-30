@@ -20,6 +20,7 @@ end
 val package : string
 val provenance : string -> (Pipeline.provenance, Error.t) result
 val failure : string -> ('a, Error.t) result
+val encode_mean : Mean.fitted -> (bytes, Error.t) result
 
 val mean_codec :
   ?calls:int ref ->
