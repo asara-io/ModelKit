@@ -11,27 +11,28 @@ also become serializable inference pipelines without refitting.
 
 {1 Installation and compatibility}
 
-Install [modelkit-xgboost] separately. The package pins OCaml binding 0.2.1,
+Install [modelkit-xgboost] separately. The package pins OCaml binding 0.2.6,
 requires OCaml 5.2+, and admits native libxgboost major version three. The binding
-uses a system libxgboost 3.0+ discovered through pkg-config; CMake, a C++ toolchain,
-and OpenMP are native build/runtime dependencies. Install that native library
-before installing the OCaml binding, and expose a custom installation's
-[lib/pkgconfig] directory through [PKG_CONFIG_PATH] and its shared-library
-directory through the platform's runtime loader configuration. Binding 0.2.1's
-vendored fallback records static archives in its temporary opam build directory
-without installing them, so downstream applications cannot link after opam
-removes that directory. A persistent shared-library installation avoids this
-packaging defect; rebuilding an already installed binding is necessary when
-switching from the fallback. Linux CI builds and installs native 3.0.4 from the
-binding's bundled sources before resolving dependencies. [Yojson] is an
+uses a system libxgboost 3.0+ discovered through pkg-config, or builds bundled
+native 3.0.4 when a usable system library is absent. CMake, a C++ toolchain,
+and OpenMP are native build/runtime dependencies. Binding 0.2.6 includes the
+installed-archive linking fix, so the vendored fallback remains usable after
+opam removes its build directory. Compatible system packages are installed
+through [conf-libxgboost] on selected distributions, Homebrew, and FreeBSD.
+For a custom shared-library installation, expose [lib/pkgconfig] through
+[PKG_CONFIG_PATH] and its shared-library directory through the platform's
+runtime loader configuration. Linux CI exercises the installed vendored
+archives; macOS CI exercises the Homebrew library. [Yojson] is an
 adapter-only dependency for bounded native JSON
-inspection. Windows is excluded by the binding. Local verification uses
-OCaml 5.3.0, binding 0.2.1, and native libxgboost 3.0.4 and 3.4.2 on macOS arm64.
+inspection. Windows and riscv64 are excluded by the binding. Local verification
+uses OCaml 5.3.0, binding 0.2.6, and native libxgboost 3.0.4 and 3.4.2 on
+macOS arm64.
 Separate pinned Python references use XGBoost 3.0.4 and 3.4.1. These combinations
 are verified; other native releases require their own compatibility evidence.
 
-The tested binding is 0.2.1 throughout. Compatibility evidence is scoped to these
-native/compiler/platform combinations:
+Historical CI evidence used binding 0.2.1. The 0.2.6 upgrade is checked locally
+against the same native versions; its updated Linux/macOS workflow requires a
+new CI run. Compatibility evidence is scoped to these combinations:
 {ul
  {- Linux x86-64, Ubuntu 24.04, OCaml 5.3.0, native 3.0.4 installed from the
  bundled CPU sources: CI passes production linking, prediction parity
@@ -45,6 +46,11 @@ native/compiler/platform combinations:
  {- macOS arm64, OCaml 5.3.0, native 3.0.4: local regression/classification,
  persistence/deployment tests, and conversion/fit/prediction smoke checks pass.}
 }
+With binding 0.2.6 on macOS arm64, the full workspace checks pass against
+Homebrew native 3.4.2. Separate package builds, tests, and documentation checks
+pass against vendored static 3.0.4 after source/build removal and installation
+relocation. Both providers pass installed native and complete-bytecode inference
+consumers, streaming regression, and historical artifact/pipeline loading.
 Native major three is an admission boundary, not evidence for every 3.x release.
 The portable packages have separate Linux/macOS/Windows CI across OCaml 5.2,
 5.3, and 5.5 and require no XGBoost installation. Windows remains outside this
@@ -52,11 +58,13 @@ adapter's supported platforms.
 
 On macOS, Homebrew's [xgboost] and [libomp] provide the shared native dependencies.
 On Linux, a distribution package older than 3.0 does not satisfy the binding.
-The following CPU-only build uses the checksummed binding release's complete
-bundled XGBoost 3.0.4 sources, with no Python runtime dependency:
+The default vendored fallback needs no separate native installation. For callers
+who prefer a shared native library, the following CPU-only build uses the
+checksummed binding release's complete bundled XGBoost 3.0.4 sources, with no
+Python runtime dependency:
 
 {v
-opam source xgboost.0.2.1 --dir=xgboost-binding-source
+opam source xgboost.0.2.6 --dir=xgboost-binding-source
 cmake -S xgboost-binding-source/vendor/xgboost -B xgboost-native-build \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PWD/xgboost-native" \
   -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_STATIC_LIB=OFF \
@@ -69,8 +77,8 @@ opam install modelkit-xgboost
 v}
 
 Keep this native installation available to the deployed application's linker
-and runtime loader. If [xgboost.0.2.1] was already installed using the fallback,
-run [opam reinstall xgboost.0.2.1] after setting the discovery paths.
+and runtime loader. To switch an existing vendored installation to this shared
+library, run [opam reinstall xgboost.0.2.6] after setting the discovery paths.
 
 {1 Immutable specifications}
 
@@ -245,12 +253,12 @@ partial data from being accepted, even if native construction interprets a
 failed callback as end-of-input. Cleanup errors are reported, with the fitting
 error retained as the primary error if both occur.
 
-Binding 0.2.1's high-level iterator neither contains every proxy-setter exception
+Binding 0.2.6's high-level iterator neither contains every proxy-setter exception
 nor frees its proxy on explicit DMatrix cleanup. This API therefore uses a small
 private bridge to the native iterator/cache entry points and the binding's
 low-level training functions. No patched binding or additional upstream release
-is needed for this feature. The separate vendored-archive installation issue
-described above still applies.
+is needed for this feature. Its private iterator bridge remains necessary after
+the dependency's archive-packaging fix.
 
 The ordinary regression report aggregates rounded-value counts and converted
 payload over the validation pass once. These are dataset totals, not retained
@@ -500,8 +508,10 @@ mapping, native model metadata, objective, feature/output dimensions, and tree
 range. After loading it checks native feature/round counts and current
 objective/output/CPU/thread configuration before returning fitted state.
 Acquired native resources are released on every failed validation or exception.
-The reader accepts binding provenance 0.2.1 and native major three. Its runtime
-must be at least as new as the JSON writer: older-model loading into a newer
+The reader accepts binding provenance 0.2.1 and 0.2.6 and native major three.
+New fits record 0.2.6; loading and resaving older models preserves their original
+binding provenance. Its runtime must be at least as new as the JSON writer:
+older-model loading into a newer
 supported runtime follows the stable-model direction, while forward loading is
 rejected. Version combinations still need explicit compatibility evidence.
 
@@ -686,7 +696,7 @@ after the scope ends. Binding failures become {!Modelkit.Error.t}; unrelated
 callback exceptions propagate after cleanup. Returning a typed callback error
 also releases both resources.
 
-Booster thread limits do not constrain DMatrix construction. Binding 0.2.1 has
+Booster thread limits do not constrain DMatrix construction. Binding 0.2.6 has
 no constructor thread-limit argument. For bounded native concurrency, configure
 OpenMP before starting the process with both [OMP_NUM_THREADS=1] and
 [OMP_THREAD_LIMIT=1] when parallel folds each use one native thread. This package

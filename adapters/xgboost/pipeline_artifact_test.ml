@@ -429,6 +429,14 @@ let test_wrap_legacy () =
   Alcotest.check Alcotest.string "historical fitted version" "0.6.0-dev"
     (Xgb.Artifact.regression_provenance fitted)
       .Xgb.Artifact.fitted_adapter_version;
+  Alcotest.check Alcotest.string "historical binding provenance" "0.2.1"
+    (Xgb.Artifact.regression_provenance fitted).Xgb.Artifact.binding_version;
+  let resaved =
+    Xgb.Artifact.encode_regression fitted
+    |> get |> Xgb.Artifact.decode_regression |> get
+  in
+  Alcotest.check Alcotest.string "resaving retains original binding" "0.2.1"
+    (Xgb.Artifact.regression_provenance resaved).Xgb.Artifact.binding_version;
   Alcotest.check Alcotest.bool "historical fit has no batch diagnostics" true
     (Option.is_none (Xgb.Regressor.batches_report fitted));
   check_wrapped_regressor fitted

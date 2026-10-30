@@ -301,6 +301,9 @@ module Input = struct
 end
 
 module Origin = struct
+  (* The exact opam pin supplies the version absent from binding metadata. *)
+  let binding_version = "0.2.6"
+
   type t = {
     fitted_adapter_version : string;
     writer_adapter_version : string;
@@ -318,7 +321,7 @@ let fitted_origin specification native_version =
   {
     Origin.fitted_adapter_version = Modelkit_xgboost_version.value;
     writer_adapter_version = Modelkit_xgboost_version.value;
-    binding_version = "0.2.1";
+    binding_version = Origin.binding_version;
     source_word_size = Sys.word_size;
     model_native_version = native_version;
     runtime_native_version = native_version;
@@ -357,7 +360,7 @@ module Native = struct
         if major = 3 then Ok (major, minor, patch)
         else
           Error
-            (Error.make ~remediation:"Use libxgboost 3.x with binding 0.2.1."
+            (Error.make ~remediation:"Use libxgboost 3.x with binding 0.2.6."
                (Error.Compatibility
                   {
                     component = "libxgboost";
@@ -1445,7 +1448,7 @@ module Artifact = struct
     Error
       (Error.make
          ~remediation:
-           "Use binding 0.2.1 and a tested libxgboost 3.x runtime at least as \
+           "Use binding 0.2.6 and a tested libxgboost 3.x runtime at least as \
             new as the model writer."
          (Error.Compatibility { component; reason }))
 
@@ -1890,7 +1893,9 @@ module Artifact = struct
         String.trim fitted_adapter_version = ""
         || String.trim writer_adapter_version = ""
       then failure "invalid adapter provenance"
-      else if binding_version <> "0.2.1" then
+      else if
+        binding_version <> "0.2.1" && binding_version <> Origin.binding_version
+      then
         compatibility "xgboost OCaml binding"
           "model provenance requires a different binding version"
       else

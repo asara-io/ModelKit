@@ -160,7 +160,7 @@ let test_regression () =
     (Xgb.Regressor.fitted_params restored).Xgb.Specification.threads;
   Alcotest.check Alcotest.int "complete prediction range" 4
     info.A.prediction_end;
-  Alcotest.check Alcotest.string "binding provenance" "0.2.1"
+  Alcotest.check Alcotest.string "binding provenance" "0.2.6"
     info.A.binding_version;
   Alcotest.check Alcotest.string "canonical model round trip"
     (Bytes.to_string bytes)
@@ -516,7 +516,7 @@ let test_native_consistency () =
 let test_codec_attachment () =
   let codec = A.regression_codec ~threads:3 () |> get in
   let provenance =
-    Pipeline.provenance ~package:"modelkit-xgboost" ~version:"0.6.1"
+    Pipeline.provenance ~package:"modelkit-xgboost" ~version:"0.6.2"
       ~implementation:"Regressor"
     |> get
   in
@@ -579,7 +579,7 @@ let test_concurrent_save () =
 let test_classification_codec count =
   let codec = A.classification_codec () |> get in
   let provenance =
-    Pipeline.provenance ~package:"modelkit-xgboost" ~version:"0.6.1"
+    Pipeline.provenance ~package:"modelkit-xgboost" ~version:"0.6.2"
       ~implementation:"Classifier"
     |> get
   in

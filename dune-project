@@ -1,7 +1,7 @@
 (lang dune 3.23)
 (using mdx 0.4)
 (name modelkit)
-(version 0.6.1)
+(version 0.6.2)
 (generate_opam_files true)
 (implicit_transitive_deps false)
 
@@ -62,7 +62,7 @@
  (depends
   (ocaml (>= 5.2))
   (modelkit (= :version))
-  (xgboost (= 0.2.1))
+  (xgboost (= 0.2.6))
   (ctypes (>= 0.20))
   (ctypes-foreign (>= 0.20))
   integers

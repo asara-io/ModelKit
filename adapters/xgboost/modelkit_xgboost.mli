@@ -1,7 +1,7 @@
 (** Optional XGBoost input and CPU histogram-tree specifications.
 
     This package depends on the OCaml [xgboost] binding; the portable [modelkit]
-    package does not. The supported binding is 0.2.1 with native libxgboost 3.x.
+    package does not. The supported binding is 0.2.6 with native libxgboost 3.x.
     Native input conversion copies float64 values to row-major float32 storage.
     {!Native} provides scoped interoperability with upstream handles.
     {!Artifact} persists trusted fitted models without refitting. *)
@@ -251,7 +251,7 @@ module Regressor : sig
       to dataset size. Disk caching does not impose a total-memory limit.
 
       The private bridge uses the native iterator/cache API and the binding's
-      low-level functions because binding 0.2.1's high-level iterator does not
+      low-level functions because binding 0.2.6's high-level iterator does not
       safely contain all callback errors or deterministically free its proxy.
       Prediction and serialization use the existing fitted-model API. *)
 
@@ -503,8 +503,9 @@ module Artifact : sig
       [threads] defaults to one and must be a positive int32 value. It affects
       inference only; restored training parameters/reports retain their original
       values. Native JSON writer versions must be major three and no newer than
-      the linked runtime; binding provenance must be 0.2.1. Other version
-      combinations require their own compatibility evidence. *)
+      the linked runtime; binding provenance may be 0.2.1 or 0.2.6. New fits
+      record the pinned binding; resaving preserves original provenance. Other
+      version combinations require their own compatibility evidence. *)
 
   val decode_classification :
     ?limits:limits ->

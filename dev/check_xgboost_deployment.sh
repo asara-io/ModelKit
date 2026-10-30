@@ -25,6 +25,7 @@ cat > "$deployment_tmp/consumer/dune" <<'BUILD'
 (executable
  (name streaming_consumer)
  (modules streaming_consumer)
+ (modes exe byte_complete)
  (libraries modelkit modelkit-xgboost))
 BUILD
 
@@ -36,11 +37,12 @@ for deployment_package in modelkit modelkit-xgboost; do
     exit 1
   fi
 done
-opam exec -- env OCAMLPATH="$deployment_path" dune build --root "$deployment_tmp/consumer" deployment_worker.exe streaming_consumer.exe
+opam exec -- env OCAMLPATH="$deployment_path" dune build --root "$deployment_tmp/consumer" deployment_worker.exe streaming_consumer.exe streaming_consumer.bc.exe
 
 mkdir "$deployment_tmp/streaming-cache"
 "$deployment_tmp/consumer/_build/default/streaming_consumer.exe" "$deployment_tmp/streaming-cache"
 "$deployment_tmp/consumer/_build/default/streaming_consumer.exe" "$deployment_tmp/streaming-cache" --load-pipeline
+"$deployment_tmp/consumer/_build/default/streaming_consumer.bc.exe" "$deployment_tmp/streaming-cache" --load-pipeline
 
 for deployment_metadata in "$deployment_repo"/test/fixtures/xgboost/artifacts/*/*.metadata.json; do
   "$deployment_tmp/consumer/_build/default/deployment_worker.exe" \

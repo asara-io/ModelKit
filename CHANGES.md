@@ -1,5 +1,9 @@
-# Unreleased
+# 0.6.2 (2026-10-30)
 
+- Require OCaml XGBoost binding 0.2.6, including relocatable vendored archives,
+  bounded native-build parallelism, musl serialization, and native dependency
+  packaging fixes. Record binding 0.2.6 in new fitted-model provenance
+  while retaining readers and provenance for existing 0.2.1 artifacts.
 - Wrap already-fitted regressors in serializable inference pipelines through
   `Artifact.Codec.regression_pipeline` and the XGBoost `Regressor.to_pipeline`
   helper, without refitting or copying native state. Preserve original fit
@@ -10,6 +14,8 @@
   without depending on the high-level binding's iterator cleanup behavior.
 - Persist streaming diagnostics in a version-two regression payload while
   retaining version-one readers and ordinary fit/classification writers.
+- Record producer version 0.6.2 in newly written artifacts while preserving
+  existing formats, readers, and historical fitted-model provenance.
 
 # 0.6.1 (2026-10-12)
 

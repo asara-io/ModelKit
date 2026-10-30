@@ -41,23 +41,29 @@ The odoc guide documents precision, allocation, error,
 lifetime, and OpenMP boundaries. Outward conversion has its own report type
 because native storage is additional to the immutable float64 ModelKit source.
 
-The package pins OCaml binding 0.2.1 and excludes Windows. Local native tests
-cover libxgboost 3.0.4 and 3.4.2 with OCaml 5.3.0 on macOS arm64, using separate
+The package pins OCaml binding 0.2.6 and excludes Windows and riscv64. Local
+native tests cover libxgboost 3.0.4 and 3.4.2 with OCaml 5.3.0 on macOS arm64, using separate
 Python reference fixtures from XGBoost 3.0.4 and 3.4.1. Sampling behavior differs
 between these native versions; reproducibility includes the native version.
 Native major version three is admitted; this is distinct from verifying every
 3.x release. The portable package has no XGBoost dependency.
-Install a persistent system libxgboost 3.0+ discoverable through pkg-config
-before installing the binding. Its 0.2.1 vendored fallback leaves downstream
-link flags pointing to temporary opam archives that are not installed. Linux CI
-uses the bundled 3.0.4 sources to install a shared library outside that temporary
-directory; the odoc guide describes custom-prefix discovery and runtime loading.
+The binding discovers a system libxgboost 3.0+ through pkg-config or builds its
+bundled native 3.0.4. Version 0.2.6 includes the installed vendored-archive fix,
+so consumers can link after opam cleans the build directory. The updated Linux
+workflow checks this vendored path; macOS uses Homebrew. Existing artifacts with
+binding provenance 0.2.1 remain readable and retain their original provenance.
+The odoc guide describes optional custom-prefix shared-library installations.
+
+The table distinguishes historical 0.2.1 evidence from local 0.2.6 validation;
+the updated Linux/macOS CI run remains pending.
 
 | Platform | OCaml | Binding | Native library | Evidence |
 | --- | --- | --- | --- | --- |
 | Linux x86-64, Ubuntu 24.04 | 5.3.0 | 0.2.1 | 3.0.4, installed shared CPU build | CI production/package builds, parity with matched-build sampling checks, CV/search, model/pipeline deployment, isolated inference consumer, and smoke measurements |
 | macOS arm64 | 5.3.0 | 0.2.1 | 3.4.2, Homebrew | CI tests, odoc, package builds, isolated installed consumer, and smoke measurements |
 | macOS arm64 | 5.3.0 | 0.2.1 | 3.0.4 | Local tests, model/pipeline deployment, and smoke measurements |
+| macOS arm64 | 5.3.0 | 0.2.6 | 3.4.2, Homebrew | Full workspace tests/docs/builds, native and complete-bytecode installed consumers, and historical artifact/pipeline loading |
+| macOS arm64 | 5.3.0 | 0.2.6 | 3.0.4, vendored static archives | Tests/docs/package builds and installed consumers after source/build removal and installation relocation; streaming and legacy artifact/pipeline loading |
 
 Evidence comes from the [native integration workflow](../.github/workflows/xgboost.yml)
 and the [development smoke reports](../dev/benchmarks/README.md#xgboost-smoke).
