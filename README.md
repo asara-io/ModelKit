@@ -47,7 +47,9 @@ Anticipating performance benefits from existing work such as using Owl for a num
 
 ## Status
 
-This branch builds ModelKit `0.6.2`. The supported API is the flat `Modelkit.*` namespace documented in the [manual](https://ocaml.org/p/modelkit/latest/doc/index.html); the physical `Modelkit_*` source units are private. Optional integrations ship as separate packages that depend inward on the core: `modelkit-parallel` for bounded Domainslib fold execution, `modelkit-nx` and `modelkit-talon` for checked admission of Raven tensors and dataframe columns, and `modelkit-xgboost` for XGBoost regression, classification, and native interoperability.
+This branch builds ModelKit `0.6.3`. The supported API is the flat `Modelkit.*` namespace documented in the [manual](https://ocaml.org/p/modelkit/latest/doc/index.html); the physical `Modelkit_*` source units are private. Optional integrations ship as separate packages that depend inward on the core: `modelkit-parallel` for bounded Domainslib fold execution, `modelkit-nx` and `modelkit-talon` for checked admission of Raven tensors and dataframe columns, and `modelkit-xgboost` for XGBoost regression, classification, and native interoperability.
+
+Version 0.6.3 improves XGBoost model loading across native 3.x releases by checking model compatibility instead of rejecting version differences, and fixes portability of the integration tests.
 
 Version 0.6.2 adds external-memory XGBoost regression training from replayable batches and serializable inference pipelines around already-fitted regressors. The optional adapter now requires OCaml XGBoost binding 0.2.6, including its installed-archive linking fix, while preserving existing fitted-model and pipeline artifacts.
 

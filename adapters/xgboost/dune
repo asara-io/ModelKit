@@ -43,7 +43,7 @@
      %{test}
      ../../test/fixtures/xgboost/artifacts/3.0.4
      regression.metadata.json
-     --auto-compat)))))
+     --allow-native-rejection)))))
 
 (test
  (name pipeline_artifact_test)

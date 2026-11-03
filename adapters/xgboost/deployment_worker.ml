@@ -67,9 +67,12 @@ let json_matrix matrix =
 let json_strings values =
   `List (Array.to_list (Array.map (fun value -> `String value) values))
 
-let[@warning "-4"] incompatible = function
+let[@warning "-4"] native_rejection = function
   | Error error -> (
-      match Error.kind error with Error.Compatibility _ -> true | _ -> false)
+      match Error.kind error with
+      | Error.Numerical { operation = "XGBoost loaded model"; _ } -> true
+      | Error.Compatibility { component = "XGBoost model intercept"; _ } -> true
+      | _ -> false)
   | Ok _ -> false
 
 let[@warning "-4"] rec verify expected observed =
@@ -87,7 +90,7 @@ let[@warning "-4"] rec verify expected observed =
         <= 2e-6 +. (2e-6 *. abs_float value))
   | _ -> check "deployment response differs" (expected = observed)
 
-let infer directory metadata expect_incompatible =
+let infer directory metadata allow_native_rejection =
   let native_bytes =
     bytes (Filename.concat directory (string "native_artifact" metadata))
   in
@@ -106,10 +109,10 @@ let infer directory metadata expect_incompatible =
     let pipeline =
       Modelkit.Artifact.decode_regression ~decoders:[| reader |] pipeline_bytes
     in
-    if expect_incompatible then (
-      check "forward model load must fail typed" (incompatible native);
-      check "forward pipeline load must fail typed" (incompatible pipeline);
-      `Assoc [ ("status", `String "incompatible") ])
+    if
+      allow_native_rejection && native_rejection native
+      && native_rejection pipeline
+    then `Assoc [ ("status", `String "native-rejected") ]
     else
       let native = get native
       and pipeline = get pipeline |> Modelkit.Artifact.model in
@@ -156,11 +159,10 @@ let infer directory metadata expect_incompatible =
       Modelkit.Artifact.decode_classification ~decoders:[| reader |]
         pipeline_bytes
     in
-    if expect_incompatible then (
-      check "forward class model load must fail typed" (incompatible native);
-      check "forward class pipeline load must fail typed"
-        (incompatible pipeline);
-      `Assoc [ ("status", `String "incompatible") ])
+    if
+      allow_native_rejection && native_rejection native
+      && native_rejection pipeline
+    then `Assoc [ ("status", `String "native-rejected") ]
     else
       let native = get native
       and pipeline = get pipeline |> Modelkit.Artifact.model in
@@ -211,27 +213,28 @@ let infer directory metadata expect_incompatible =
 let () =
   try
     check
-      "usage: deployment_worker DIRECTORY METADATA \
-       [--expect-incompatible|--auto-compat]"
+      "usage: deployment_worker DIRECTORY METADATA [--allow-native-rejection]"
       (Array.length Sys.argv = 3 || Array.length Sys.argv = 4);
     let metadata =
       read (Filename.concat Sys.argv.(1) Sys.argv.(2))
       |> Yojson.Basic.from_string
     in
-    let expect_incompatible =
+    let allow_native_rejection =
       Array.length Sys.argv = 4
       &&
-      if Sys.argv.(3) = "--expect-incompatible" then true
-      else if Sys.argv.(3) = "--auto-compat" then
-        let major, minor, patch = Xgb.Native.version () |> get in
-        [ major; minor; patch ]
-        < (field "writer_native_version" metadata
+      if Sys.argv.(3) = "--allow-native-rejection" then
+        let _, minor, _ = Xgb.Native.version () |> get in
+        let writer =
+          field "writer_native_version" metadata
           |> Yojson.Basic.Util.to_list
-          |> List.map Yojson.Basic.Util.to_int)
+          |> List.map Yojson.Basic.Util.to_int
+          |> Array.of_list
+        in
+        minor < writer.(1)
       else failwith "unknown deployment option"
     in
-    let response = infer Sys.argv.(1) metadata expect_incompatible in
-    if not expect_incompatible then
+    let response = infer Sys.argv.(1) metadata allow_native_rejection in
+    if field "status" response <> `String "native-rejected" then
       List.iter
         (fun name -> verify (field name metadata) (field name response))
         ([

@@ -46,7 +46,7 @@ mkdir "$deployment_tmp/streaming-cache"
 
 for deployment_metadata in "$deployment_repo"/test/fixtures/xgboost/artifacts/*/*.metadata.json; do
   "$deployment_tmp/consumer/_build/default/deployment_worker.exe" \
-    "$(dirname "$deployment_metadata")" "$(basename "$deployment_metadata")" --auto-compat \
+    "$(dirname "$deployment_metadata")" "$(basename "$deployment_metadata")" --allow-native-rejection \
     > "$deployment_tmp/response.json"
   printf 'Verified %s/%s\n' "$(basename "$(dirname "$deployment_metadata")")" "$(basename "$deployment_metadata")"
 done

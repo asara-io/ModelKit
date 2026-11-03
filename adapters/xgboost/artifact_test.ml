@@ -388,8 +388,12 @@ let test_corruption () =
   reject "unknown checksum" (fun bytes -> Bytes.set bytes 19 '\002');
   reject "unknown codec version" (fun bytes ->
       Bytes.set_int64_be bytes fields.codec_version 2L);
-  reject "unknown binding version" (fun bytes ->
-      Bytes.set bytes (fields.binding + 12) '2');
+  reject "blank binding provenance" (fun bytes ->
+      Bytes.fill bytes (fields.binding + 8)
+        (Bytes.get_int64_be bytes fields.binding |> Int64.to_int)
+        ' ');
+  reject "unsupported native model major" (fun bytes ->
+      Bytes.set_int64_be bytes fields.model_version 4L);
   reject "blank fitted producer" (fun bytes ->
       Bytes.fill bytes
         (fields.fitted_version + 8)
@@ -468,6 +472,12 @@ let test_native_consistency () =
       ( "native output mismatch",
         [ "learner"; "learner_model_param"; "num_target" ],
         `String "2" );
+      ( "nonfinite model intercept",
+        [ "learner"; "learner_model_param"; "base_score" ],
+        `String "NaN" );
+      ( "model intercept dimensions",
+        [ "learner"; "learner_model_param"; "base_score" ],
+        `String "[1.0,2.0]" );
       ( "native class mismatch",
         [ "learner"; "learner_model_param"; "num_class" ],
         `String "3" );
@@ -498,25 +508,34 @@ let test_native_consistency () =
   expect_error "native JSON nesting bound"
     (A.decode_regression
        (replace_json encoded (String.make 65 '[' ^ String.make 65 ']')));
-  let future =
+  let different_version =
     set_json [ "version" ] (`List [ `Int 3; `Int 99; `Int 0 ]) model
     |> Yojson.Basic.to_string
   in
-  let future = replace_json encoded future in
-  let point = (offsets future).model_version in
-  let future =
-    mutate future (fun bytes ->
-        Bytes.set_int64_be bytes point 3L;
-        Bytes.set_int64_be bytes (point + 8) 99L;
-        Bytes.set_int64_be bytes (point + 16) 0L)
+  expect_error "native JSON version must match the envelope"
+    (A.decode_regression (replace_json encoded different_version))
+
+let test_binding_provenance () =
+  let fitted = regression () in
+  let encoded = A.encode_regression fitted |> get in
+  let point = (offsets encoded).binding + 8 in
+  let encoded =
+    mutate encoded (fun bytes -> Bytes.blit_string "9.9.9" 0 bytes point 5)
   in
-  expect_error "forward native compatibility rejected before loading"
-    (A.decode_regression future)
+  let restored = A.decode_regression encoded |> get in
+  check_regression fitted restored;
+  Alcotest.check Alcotest.string "binding version is descriptive" "9.9.9"
+    (A.regression_provenance restored).A.binding_version;
+  let rewritten =
+    A.encode_regression restored |> get |> A.decode_regression |> get
+  in
+  Alcotest.check Alcotest.string "original binding provenance retained" "9.9.9"
+    (A.regression_provenance rewritten).A.binding_version
 
 let test_codec_attachment () =
   let codec = A.regression_codec ~threads:3 () |> get in
   let provenance =
-    Pipeline.provenance ~package:"modelkit-xgboost" ~version:"0.6.2"
+    Pipeline.provenance ~package:"modelkit-xgboost" ~version:"0.6.3"
       ~implementation:"Regressor"
     |> get
   in
@@ -579,7 +598,7 @@ let test_concurrent_save () =
 let test_classification_codec count =
   let codec = A.classification_codec () |> get in
   let provenance =
-    Pipeline.provenance ~package:"modelkit-xgboost" ~version:"0.6.2"
+    Pipeline.provenance ~package:"modelkit-xgboost" ~version:"0.6.3"
       ~implementation:"Classifier"
     |> get
   in
@@ -689,6 +708,7 @@ let () =
           ("loaded-model native cleanup", `Quick, test_scoped_cleanup);
           ("bounded envelope/corruption failures", `Quick, test_corruption);
           ("native model consistency", `Quick, test_native_consistency);
+          ("descriptive binding provenance", `Quick, test_binding_provenance);
           ("public codec attachment", `Quick, test_codec_attachment);
           ( "concurrent serialization and prediction",
             `Quick,

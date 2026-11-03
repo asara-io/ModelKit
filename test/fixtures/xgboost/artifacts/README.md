@@ -6,9 +6,14 @@ weighted standard scaling, and variance filtering. Metadata contains new inferen
 probe rows and expected responses, not training observations or targets.
 
 Artifacts are trusted fixtures produced by ModelKit's supported writers. Checksums
-detect corruption, not authenticity. Native 3.0.4 artifacts are checked on 3.0.4
-and 3.4.2; 3.4.2 artifacts are checked on 3.4.2 and rejected by 3.0.4 as forward
-version loads. Prediction/probability tolerances are absolute plus relative 2e-6.
+detect corruption, not authenticity. Every artifact is attempted on the linked
+supported runtime, including older patch versions. A successful load must match
+the stored predictions/probabilities at absolute plus relative tolerance 2e-6.
+For artifacts from a newer minor release, the deployment worker may report a
+typed native-loader rejection or intercept-preservation failure after attempting
+both standalone and pipeline loads. This accommodates actual representation changes without asserting that
+every newer version is incompatible. Same-minor loading failures, envelope or
+schema errors, and disagreement between standalone/pipeline loading fail tests.
 
 Regenerate deliberately with the intended linked runtime:
 

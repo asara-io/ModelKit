@@ -1,3 +1,18 @@
+# 0.6.3 (2026-11-02)
+
+- Use POSIX dynamic symbol lookup in the test-only OpenMP probe, fixing builds
+  where GNU `RTLD_DEFAULT` is unavailable.
+- Treat binding and native writer versions as provenance within the supported
+  native major rather than rejecting version differences before model loading.
+  Preserve original training versions when resaving on an older native runtime.
+- Check that native loading preserves the scalar/vector model intercept,
+  rejecting silent `base_score` replacement with a typed compatibility error.
+  Retain bounded envelope, schema, objective, and inference checks.
+- Exercise native 3.0.0 in CI and distinguish genuine representation failures
+  from compatible version differences in artifact deployment tests.
+- Update all package versions, platform locks, current documentation, and
+  artifact producer versions to 0.6.3 without changing persisted formats.
+
 # 0.6.2 (2026-10-30)
 
 - Require OCaml XGBoost binding 0.2.6, including relocatable vendored archives,

@@ -506,14 +506,23 @@ Before native loading, the reader validates complete framing/checksum, lengths,
 versions, policies, immutable parameters, schema fingerprints, reports, class
 mapping, native model metadata, objective, feature/output dimensions, and tree
 range. After loading it checks native feature/round counts and current
-objective/output/CPU/thread configuration before returning fitted state.
+objective/output/CPU/thread configuration and intercept before returning fitted
+state. Scalar and vector [base_score] representations are compared numerically
+as float32 values, broadcasting a scalar across outputs. This catches older
+loaders that silently replace a newer vector intercept with a default value;
+such a change is a typed compatibility failure, even when native loading succeeds.
 Acquired native resources are released on every failed validation or exception.
-The reader accepts binding provenance 0.2.1 and 0.2.6 and native major three.
-New fits record 0.2.6; loading and resaving older models preserves their original
-binding provenance. Its runtime must be at least as new as the JSON writer:
-older-model loading into a newer
-supported runtime follows the stable-model direction, while forward loading is
-rejected. Version combinations still need explicit compatibility evidence.
+The reader supports native major three. Binding versions describe the original
+fit; they do not select a decoder or require an exact package-version match.
+New fits record the pinned binding, and loading/resaving preserves the original
+binding and training provenance. Within native major three, a writer/runtime
+version difference does not reject a model before native loading. The reader
+validates the envelope and model structure, attempts native loading, then checks
+the loaded model and inference configuration. It also permits resaving with a
+runtime older than the original training runtime. XGBoost guarantees older-model
+loading in newer runtimes; the reverse direction is best effort and genuinely
+unsupported native representations still return typed errors. Version metadata
+remains available for reproducibility and diagnosis.
 
 Default limits are 64 MiB bytes, one million features/classes, one MiB strings,
 and a fixed maximum JSON nesting depth of 64. JSON inspection allocates temporary
@@ -534,9 +543,13 @@ input. Both are preserved and checked during loading.
 Committed native-model and fitted-pipeline goldens cover regression, binary,
 and multiclass tasks with imputation, weighted scaling, and variance filtering.
 Fresh-process inference receives artifacts and new probe rows only, with no
-training data or refitting. Native 3.0.4 artifacts are verified on 3.0.4 and
-3.4.2; 3.4.2 artifacts are verified on 3.4.2 and rejected on 3.0.4 as forward
-loads. Prediction/probability agreement uses absolute plus relative [2e-6].
+training data or refitting. All fixtures are attempted on the linked supported
+runtime. Successful loads must preserve the stored responses, including patch
+version differences. A native loader rejection or failed intercept-preservation
+check for a model from a newer minor release is reported explicitly;
+schema/envelope errors and same-minor loading failures fail tests.
+Prediction/probability agreement uses absolute plus
+relative [2e-6].
 An isolated consumer built from installed runtime packages uses only ModelKit,
 this adapter, and declared runtime dependencies, without test libraries or
 private source modules.

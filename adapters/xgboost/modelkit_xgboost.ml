@@ -1448,8 +1448,8 @@ module Artifact = struct
     Error
       (Error.make
          ~remediation:
-           "Use binding 0.2.6 and a tested libxgboost 3.x runtime at least as \
-            new as the model writer."
+           "Use the supported libxgboost 3.x runtime and a model \
+            representation it can load."
          (Error.Compatibility { component; reason }))
 
   type provenance = {
@@ -1892,12 +1892,8 @@ module Artifact = struct
       if
         String.trim fitted_adapter_version = ""
         || String.trim writer_adapter_version = ""
+        || String.trim binding_version = ""
       then failure "invalid adapter provenance"
-      else if
-        binding_version <> "0.2.1" && binding_version <> Origin.binding_version
-      then
-        compatibility "xgboost OCaml binding"
-          "model provenance requires a different binding version"
       else
         let* training_native_version = read_version reader in
         let* model_native_version = read_version reader in
@@ -1995,11 +1991,8 @@ module Artifact = struct
                 model;
               }
             in
-            if
-              native_seed < 0L || native_seed > 2147483647L
-              || training_native_version > model_native_version
-            then
-              failure "invalid native seed or training/model version ordering"
+            if native_seed < 0L || native_seed > 2147483647L then
+              failure "invalid native seed"
             else
               let* () = validate_reports stored in
               let* () = validate_classes ~limits task classes effective_rows in
@@ -2014,19 +2007,18 @@ module Artifact = struct
                   ~objective:declared_objective ~version:model_native_version
                   json
               in
+              let* base_score =
+                Io.Json.base_score ~classes:(Array.length stored.classes) json
+              in
               let* runtime_native_version = Native.version () in
-              if runtime_native_version < model_native_version then
-                compatibility "libxgboost"
-                  "model JSON requires a native runtime at least as new as its \
-                   writer"
-              else
-                Ok
-                  {
+              Ok
+                ( {
                     stored with
                     origin = { origin with Origin.runtime_native_version };
-                  }
+                  },
+                  base_score )
 
-  let restore ~limits stored construct =
+  let restore ~limits (stored, base_score) construct =
     Native.with_loaded_model ~threads:stored.origin.Origin.inference_threads
       stored.model (fun booster ->
         let* () =
@@ -2045,10 +2037,19 @@ module Artifact = struct
             ~objective:(objective stored.task)
             ~threads:stored.origin.Origin.inference_threads config
         in
+        let* actual_base_score =
+          Io.Json.base_score ~classes:(Array.length stored.classes) config
+        in
+        let* () =
+          if Io.Json.equal_base_scores base_score actual_base_score then Ok ()
+          else
+            compatibility "XGBoost model intercept"
+              "native loading changed the model intercept (base_score)"
+        in
         Ok (construct booster, true))
 
-  let restore_regression ~limits stored =
-    restore ~limits stored (fun booster ->
+  let restore_regression ~limits ((stored, _) as decoded) =
+    restore ~limits decoded (fun booster ->
         {
           Regressor_implementation.specification = stored.specification;
           batches_report = stored.batches_report;
@@ -2068,8 +2069,8 @@ module Artifact = struct
             };
         })
 
-  let restore_classification ~limits stored =
-    restore ~limits stored (fun booster ->
+  let restore_classification ~limits ((stored, _) as decoded) =
+    restore ~limits decoded (fun booster ->
         {
           Classifier_implementation.specification = stored.specification;
           schema = stored.schema;
@@ -2147,12 +2148,12 @@ module Artifact = struct
       }
 
   let decode_regression ?(limits = default_limits) ?(threads = 1) bytes =
-    let* stored = decode_stored ~limits ~tasks:[ 1 ] ~threads bytes in
-    restore_regression ~limits stored
+    let* decoded = decode_stored ~limits ~tasks:[ 1 ] ~threads bytes in
+    restore_regression ~limits decoded
 
   let decode_classification ?(limits = default_limits) ?(threads = 1) bytes =
-    let* stored = decode_stored ~limits ~tasks:[ 2; 3 ] ~threads bytes in
-    restore_classification ~limits stored
+    let* decoded = decode_stored ~limits ~tasks:[ 2; 3 ] ~threads bytes in
+    restore_classification ~limits decoded
 
   let save_regression ?limits ~path fitted =
     let* bytes = encode_regression ?limits fitted in
@@ -2196,11 +2197,13 @@ module Artifact = struct
       (module Regressor_implementation)
       ~encode:(encode_regression ~limits)
       ~decode:(fun ~provenance ~feature_schema bytes ->
-        let* stored = decode_stored ~limits ~tasks:[ 1 ] ~threads bytes in
+        let* ((stored, _) as decoded) =
+          decode_stored ~limits ~tasks:[ 1 ] ~threads bytes
+        in
         let* () =
           check_component ~provenance ~feature_schema ~classes:[||] stored
         in
-        restore_regression ~limits stored)
+        restore_regression ~limits decoded)
 
   let classification_codec ?(limits = default_limits) ?(threads = 1) () =
     let* () =
@@ -2213,9 +2216,11 @@ module Artifact = struct
       ~predict_proba:Classifier_implementation.predict_proba
       ~encode:(encode_classification ~limits)
       ~decode:(fun ~provenance ~feature_schema ~classes bytes ->
-        let* stored = decode_stored ~limits ~tasks:[ 2; 3 ] ~threads bytes in
+        let* ((stored, _) as decoded) =
+          decode_stored ~limits ~tasks:[ 2; 3 ] ~threads bytes
+        in
         let* () = check_component ~provenance ~feature_schema ~classes stored in
-        restore_classification ~limits stored)
+        restore_classification ~limits decoded)
       ()
 end
 
