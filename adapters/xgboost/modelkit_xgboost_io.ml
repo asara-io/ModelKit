@@ -286,6 +286,47 @@ module Json = struct
         Ok (major, minor, patch)
     | _ -> failure "native version must contain three integers"
 
+  let[@warning "-4"] base_score ~classes json =
+    let* learner = field "learner" json in
+    let* params = field "learner_model_param" learner in
+    let* text = get_string "base_score" params in
+    let* value = parse ~max_bytes:(String.length text) text in
+    let values =
+      match value with `List values -> values | value -> [ value ]
+    in
+    let[@warning "-4"] number = function
+      | `Int value -> Ok (float_of_int value)
+      | `Float value -> Ok value
+      | _ -> failure "native base score must be numeric"
+    in
+    let rec convert reversed = function
+      | [] ->
+          if reversed = [] then failure "native base score must not be empty"
+          else Ok (Array.of_list (List.rev reversed))
+      | value :: rest ->
+          let* value = number value in
+          (* Writers can print the same float32 intercept at different precision. *)
+          let value = Int32.float_of_bits (Int32.bits_of_float value) in
+          if not (Float.is_finite value) then
+            failure "native base score must be finite float32"
+          else convert (value :: reversed) rest
+    in
+    let* score = convert [] values in
+    let outputs = if classes > 2 then classes else 1 in
+    if Array.length score = 1 || Array.length score = outputs then Ok score
+    else failure "native base score dimensions differ from the envelope"
+
+  let equal_base_scores left right =
+    let left_count = Array.length left and right_count = Array.length right in
+    let rec equal index =
+      index = max left_count right_count
+      || left.(index mod left_count) = right.(index mod right_count)
+         && equal (index + 1)
+    in
+    left_count > 0 && right_count > 0
+    && (left_count = right_count || left_count = 1 || right_count = 1)
+    && equal 0
+
   let summary json =
     let* learner = field "learner" json in
     let* params = field "learner_model_param" learner in
@@ -328,6 +369,7 @@ module Json = struct
       failure "native JSON version differs from the envelope"
     else
       let* learner, booster = check_summary ~columns ~classes ~objective json in
+      let* _ = base_score ~classes json in
       let* names = get_array "feature_names" learner in
       let* types = get_array "feature_types" learner in
       if names <> [] || types <> [] then

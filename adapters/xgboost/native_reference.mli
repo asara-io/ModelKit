@@ -13,4 +13,4 @@ val predict :
   test:float array array ->
   float array
 
-val frozen_sampling_reference : unit -> bool
+val frozen_reference : sampled:bool -> unit -> bool

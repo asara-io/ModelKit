@@ -1,0 +1,417 @@
+--- a/config/discover.ml
++++ b/config/discover.ml
+@@ -92,11 +92,6 @@
+           | Some major when major >= min_major -> Some conf
+           | _ -> None))
+ 
+-let is_macos c =
+-  match C.ocaml_config_var c "system" with
+-  | Some ("macosx" | "macos") -> true
+-  | _ -> false
+-
+ (* backtrace/backtrace_symbols — used by XGBoost's bundled dmlc logging —
+    are in libc on glibc and in libSystem on macOS, but on the BSDs they
+    live in a separate libexecinfo that must be linked explicitly. *)
+@@ -107,41 +102,116 @@
+        (String.lowercase_ascii (String.trim r.stdout))
+        [ "freebsd"; "openbsd"; "netbsd"; "dragonfly" ]
+ 
+-(* OpenMP and C++ runtime link flags, per platform. On macOS, Homebrew's
+-   libomp is keg-only, so add its lib dir explicitly. *)
+-let cxx_omp_libs c =
+-  if is_macos c then
+-    let brew_libomp =
+-      let r = C.Process.run c "brew" [ "--prefix"; "libomp" ] in
+-      if r.exit_code = 0 then [ "-L" ^ Filename.concat (String.trim r.stdout) "lib" ]
+-      else []
+-    in
+-    brew_libomp @ [ "-lc++"; "-lomp" ]
+-  else [ "-lstdc++"; "-lgomp" ]
+-
+-(* Parallelism for the vendored CMake build. Deliberately NOT `nproc`,
+-   which honours OMP_NUM_THREADS (pinned to 1 in our test/CI env for
+-   deterministic libxgboost results) and would force a single-threaded,
+-   many-minutes build. [getconf _NPROCESSORS_ONLN] reports the online
+-   CPUs and ignores OMP_NUM_THREADS, with [nproc --all] as a fallback
+-   (also OMP-agnostic, unlike bare [nproc]). Kept compiler-agnostic so
+-   this configurator builds on OCaml 4.x, which has no [Domain].
+-   Capped at [max_build_jobs]: CI sandboxes (opam-repo CI) report the
+-   host's CPU count (80+) but not its memory budget, and that many
+-   parallel cc1plus processes get OOM-killed. *)
+-let max_build_jobs = 6
++let cmake_command c =
++  let version command =
++    let r = C.Process.run c command [ "--version" ] in
++    if r.exit_code = 0 then Some r.stdout else None
++  in
++  match
++    Build_policy.select_cmake ~override:(Sys.getenv_opt "CMAKE")
++      ~which:(C.which c) ~version
++  with
++  | Some command -> command
++  | None ->
++      C.die "vendored XGBoost requires CMake >= 3.18 (CMAKE, cmake3, or cmake)"
++
++let read_file path =
++  try
++    let ic = open_in_bin path in
++    Fun.protect
++      ~finally:(fun () -> close_in ic)
++      (fun () ->
++        let buffer = Buffer.create 256 in
++        let chunk = Bytes.create 4096 in
++        let rec loop () =
++          let size = input ic chunk 0 (Bytes.length chunk) in
++          if size > 0 then (
++            Buffer.add_subbytes buffer chunk 0 size;
++            loop ())
++        in
++        loop ();
++        Some (Buffer.contents buffer))
++  with Sys_error _ -> None
++
++let memory_budgets () =
++  let memberships =
++    match read_file "/proc/self/cgroup" with
++    | None -> []
++    | Some contents ->
++        List.filter_map
++          (fun line ->
++            match String.split_on_char ':' line with
++            | [ _; controllers; path ] ->
++                if controllers = "" then
++                  Some ("/sys/fs/cgroup" ^ path ^ "/memory.max")
++                else if List.mem "memory" (String.split_on_char ',' controllers)
++                then
++                  Some
++                    ("/sys/fs/cgroup/memory" ^ path ^ "/memory.limit_in_bytes")
++                else None
++            | _ -> None)
++          (String.split_on_char '\n' contents)
++  in
++  let cgroups =
++    List.filter_map
++      (fun path ->
++        Option.bind (read_file path) (fun s ->
++            Int64.of_string_opt (String.trim s)))
++      (memberships
++      @ [
++          "/sys/fs/cgroup/memory.max";
++          "/sys/fs/cgroup/memory/memory.limit_in_bytes";
++        ])
++  in
++  let available =
++    Option.bind (read_file "/proc/meminfo") (fun contents ->
++        List.find_map
++          (fun line ->
++            match List.filter (( <> ) "") (String.split_on_char ' ' line) with
++            | [ "MemAvailable:"; kib; "kB" ] ->
++                Option.map
++                  (fun n -> Int64.mul n 1024L)
++                  (Int64.of_string_opt kib)
++            | _ -> None)
++          (String.split_on_char '\n' contents))
++  in
++  List.filter (fun n -> n > 0L) (cgroups @ Option.to_list available)
+ 
+ let build_jobs c =
+-  let try_cmd prog args =
+-    let r = C.Process.run c prog args in
+-    if r.exit_code = 0 then int_of_string_opt (String.trim r.stdout) else None
+-  in
+-  let n =
+-    match try_cmd "getconf" [ "_NPROCESSORS_ONLN" ] with
++  let online command arguments =
++    Option.bind (C.which c command) (fun program ->
++        let r = C.Process.run c program arguments in
++        if r.exit_code = 0 then int_of_string_opt (String.trim r.stdout)
++        else None)
++  in
++  let cpus =
++    match online "getconf" [ "_NPROCESSORS_ONLN" ] with
+     | Some n -> n
+-    | None -> ( match try_cmd "nproc" [ "--all" ] with Some n -> n | None -> 1 )
+-  in
+-  max 1 (min max_build_jobs n)
++    | None -> Option.value (online "nproc" [ "--all" ]) ~default:1
++  in
++  try
++    Build_policy.build_jobs ~cpus ~memory_bytes:(memory_budgets ())
++      ~getenv:Sys.getenv_opt
++  with Invalid_argument message -> C.die "%s" message
++
++let runtime_flags build =
++  let read name =
++    match read_file (Filename.concat build name) with
++    | None -> C.die "CMake did not report native runtime requirements: %s" name
++    | Some contents ->
++        List.filter (( <> ) "")
++          (String.split_on_char ';' (String.trim contents))
++  in
++  let directories = read "ocaml-cxx-directories.txt" in
++  let libraries = read "ocaml-cxx-libraries.txt" in
++  let openmp = read "ocaml-openmp-libraries.txt" in
++  if libraries = [] || openmp = [] then
++    C.die "CMake reported incomplete C++/OpenMP runtime requirements";
++  List.map (fun dir -> "-L" ^ dir) directories
++  @ List.map
++      (fun lib -> if Filename.is_relative lib then "-l" ^ lib else lib)
++      libraries
++  @ openmp
+ 
+ let die_on_error label (r : C.Process.result) =
+   if r.exit_code <> 0 then
+@@ -158,7 +228,8 @@
+   let abs p = if Filename.is_relative p then Filename.concat cwd p else p in
+   let src = abs (Filename.concat Filename.parent_dir_name "vendor/xgboost") in
+   let build = abs "vendor-build" in
+-  let cmake = Option.value (C.which c "cmake") ~default:"cmake" in
++  let cmake = cmake_command c in
++  let jobs = build_jobs c in
+   die_on_error "cmake configure"
+     (C.Process.run c cmake
+        [ "-S"; src; "-B"; build;
+@@ -169,7 +240,7 @@
+          "-DBUILD_WITH_SHARED_NCCL=OFF" ]);
+   die_on_error "cmake build"
+     (C.Process.run c cmake
+-       [ "--build"; build; "--config"; "Release"; "-j"; string_of_int (build_jobs c) ]);
++       [ "--build"; build; "--config"; "Release"; "-j"; string_of_int jobs ]);
+   (* Locate the produced static archives; layout varies — XGBoost sets
+      LIBRARY_OUTPUT_DIRECTORY to <src>/lib, while dmlc lands under the
+      build dir — so search both roots. *)
+@@ -195,7 +266,7 @@
+      installed consumers resolve the archives through $CAMLORIGIN. *)
+   let libs =
+     [ "-Lsrc/bindings"; "-lxgboost_vendored"; "-ldmlc_vendored" ]
+-    @ cxx_omp_libs c @ [ "-lm"; "-lpthread"; "-ldl" ]
++    @ runtime_flags build @ [ "-lm"; "-lpthread"; "-ldl" ]
+     @ (if is_bsd c then [ "-lexecinfo" ] else [])
+   in
+   (cflags, libs)
+--- a/config/dune
++++ b/config/dune
+@@ -1,5 +1,6 @@
+ (executable
+  (name discover)
++ (modules discover build_policy)
+  (libraries dune-configurator))
+ 
+ ; Hybrid libxgboost discovery: emits the C compile/link flags consumed by
+@@ -19,6 +20,23 @@
+   install_files.sexp)
+  (deps
+   discover.exe
++  (env_var CMAKE)
++  (env_var PATH)
++  (env_var CC)
++  (env_var CXX)
++  (env_var CFLAGS)
++  (env_var CXXFLAGS)
++  (env_var LDFLAGS)
++  (env_var PKG_CONFIG_PATH)
++  (env_var PKG_CONFIG_LIBDIR)
++  (env_var OPAMJOBS)
++  (env_var CMAKE_BUILD_PARALLEL_LEVEL)
++  (env_var XGBOOST_BUILD_JOBS)
+   (source_tree %{project_root}/vendor/xgboost))
+  (action
+   (run ./discover.exe)))
++
++(test
++ (name build_policy_test)
++ (modules build_policy_test build_policy)
++ (package xgboost))
+--- /dev/null
++++ b/config/build_policy.ml
+@@ -0,0 +1,46 @@
++let cmake_supported output =
++  let first = List.hd (String.split_on_char '\n' output) in
++  match List.filter (( <> ) "") (String.split_on_char ' ' first) with
++  | "cmake" :: "version" :: version :: _ -> (
++      match String.split_on_char '.' version with
++      | major :: minor :: _ -> (
++          match (int_of_string_opt major, int_of_string_opt minor) with
++          | Some major, Some minor -> major > 3 || (major = 3 && minor >= 18)
++          | _ -> false)
++      | _ -> false)
++  | _ -> false
++
++let select_cmake ~override ~which ~version =
++  let candidates =
++    match override with
++    | Some command -> [ command ]
++    | None -> [ "cmake3"; "cmake" ]
++  in
++  List.find_map
++    (fun name ->
++      Option.bind (which name) (fun command ->
++          Option.bind (version command) (fun output ->
++              if cmake_supported output then Some command else None)))
++    candidates
++
++let positive_jobs name value =
++  match int_of_string_opt (String.trim value) with
++  | Some n when n > 0 -> n
++  | _ -> invalid_arg (name ^ " must be a positive integer")
++
++let memory_jobs bytes =
++  let gib = 1_073_741_824L in
++  (* Reserve one GiB for the host and other build steps, then budget one GiB
++     per C++ compiler. This is a scheduling heuristic, not an OOM guarantee. *)
++  Int64.(to_int (max 1L (min 6L (div (sub bytes gib) gib))))
++
++let build_jobs ~cpus ~memory_bytes ~getenv =
++  let budget =
++    List.fold_left min (max 1 (min 6 cpus)) (List.map memory_jobs memory_bytes)
++  in
++  let limits =
++    List.filter_map
++      (fun name -> Option.map (positive_jobs name) (getenv name))
++      [ "XGBOOST_BUILD_JOBS"; "CMAKE_BUILD_PARALLEL_LEVEL"; "OPAMJOBS" ]
++  in
++  List.fold_left min budget limits
+--- /dev/null
++++ b/config/build_policy_test.ml
+@@ -0,0 +1,57 @@
++let check label condition = if not condition then failwith label
++let gib n = Int64.mul (Int64.of_int n) 1_073_741_824L
++
++let jobs ?(memory = []) ?(env = []) cpus =
++  Build_policy.build_jobs ~cpus ~memory_bytes:memory ~getenv:(fun key ->
++      List.assoc_opt key env)
++
++let () =
++  List.iter
++    (fun version -> check version (Build_policy.cmake_supported version))
++    [
++      "cmake version 3.18.0";
++      "cmake version 3.31.6\nextra";
++      "cmake version 4.4.4";
++    ];
++  List.iter
++    (fun version -> check version (not (Build_policy.cmake_supported version)))
++    [ "cmake version 3.17.9"; "cmake version 2.8.12"; "garbage"; "" ];
++  check "host CPU cap" (jobs 255 = 6);
++  check "single CPU" (jobs 1 = 1);
++  check "2GiB cgroup" (jobs ~memory:[ gib 2 ] 255 = 1);
++  check "nested memory budgets" (jobs ~memory:[ gib 8; gib 3 ] 255 = 2);
++  check "explicit limit" (jobs ~env:[ ("XGBOOST_BUILD_JOBS", "2") ] 255 = 2);
++  check "caller and CMake limits"
++    (jobs ~env:[ ("OPAMJOBS", "2"); ("CMAKE_BUILD_PARALLEL_LEVEL", "1") ] 255
++    = 1);
++  check "memory still bounds explicit limits"
++    (jobs ~memory:[ gib 2 ] ~env:[ ("XGBOOST_BUILD_JOBS", "6") ] 255 = 1);
++  List.iter
++    (fun value ->
++      match jobs ~env:[ ("XGBOOST_BUILD_JOBS", value) ] 255 with
++      | _ -> failwith "invalid job limit accepted"
++      | exception Invalid_argument _ -> ())
++    [ ""; "0"; "-2"; "many" ];
++  let select ?override commands =
++    Build_policy.select_cmake ~override
++      ~which:(fun name ->
++        if List.mem_assoc name commands then Some name else None)
++      ~version:(fun name -> List.assoc_opt name commands)
++  in
++  check "cmake3 only"
++    (select [ ("cmake3", "cmake version 3.18.0") ] = Some "cmake3");
++  check "new cmake3 preferred over old cmake"
++    (select
++       [ ("cmake3", "cmake version 3.31.0"); ("cmake", "cmake version 3.17.0") ]
++    = Some "cmake3");
++  check "old cmake3 falls back to compatible cmake"
++    (select
++       [ ("cmake3", "cmake version 3.17.0"); ("cmake", "cmake version 4.0.0") ]
++    = Some "cmake");
++  check "explicit override"
++    (select ~override:"custom" [ ("custom", "cmake version 3.18.0") ]
++    = Some "custom");
++  check "invalid override does not silently fall back"
++    (select ~override:"absent" [ ("cmake", "cmake version 4.0.0") ] = None);
++  check "no compatible command"
++    (select [ ("cmake", "cmake version 3.17.0") ] = None)
+--- a/vendor/xgboost/CMakeLists.txt
++++ b/vendor/xgboost/CMakeLists.txt
+@@ -530,3 +530,8 @@
+     FILES ${xgboost_BINARY_DIR}/xgboost.pc
+     DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+ endif()
++
++# Installed OCaml consumers must link the runtimes selected by this toolchain.
++file(WRITE "${CMAKE_BINARY_DIR}/ocaml-cxx-directories.txt" "${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES}")
++file(WRITE "${CMAKE_BINARY_DIR}/ocaml-cxx-libraries.txt" "${CMAKE_CXX_IMPLICIT_LINK_LIBRARIES}")
++file(WRITE "${CMAKE_BINARY_DIR}/ocaml-openmp-libraries.txt" "${OpenMP_CXX_LIBRARIES}")
+--- a/vendor/README.md
++++ b/vendor/README.md
+@@ -82,3 +82,10 @@
+ Local CMake change: the macOS OpenMP dylib post-processing is skipped
+ when `BUILD_STATIC_LIB` is enabled. Preserve this guard when updating
+ until the bundled upstream version includes it.
++
++The end of the top-level CMakeLists.txt also exports the CMake-selected C++
++implicit runtime libraries/directories and OpenMP libraries to three
++`ocaml-*-libraries.txt` / `ocaml-cxx-directories.txt` files in the binary tree.
++`config/discover.ml` reads them for installed OCaml consumers. Preserve these
++exports on a vendor refresh; hard-coded GNU runtime flags are not equivalent
++for Clang/libc++ toolchains.
+--- a/scripts/check-installed-linking.sh
++++ b/scripts/check-installed-linking.sh
+@@ -48,9 +48,11 @@
+ fi
+ 
+ if [[ "$reuse_build" == 1 ]]; then
+-  # Same flags as CI's build step, so this is a no-op over its _build.
+-  # (-p implies --root ., hence the cd.)
+-  (cd "$root" && opam exec -- dune build -p xgboost -j "${BUILD_JOBS:-2}" @install)
++  # Changing pkg-config or job-limit environment inputs invalidates configuration.
++  # REUSE_BUILD deliberately consumes the already-built installation manifest.
++  test -f "$root/_build/default/xgboost.install" || {
++    echo "REUSE_BUILD=1 needs a completed @install build" >&2; exit 2;
++  }
+ else
+   targets=(@install)
+   if [[ "$run_tests" == 1 ]]; then targets+=(@runtest); fi
+--- a/xgboost.opam
++++ b/xgboost.opam
+@@ -37,8 +37,8 @@
+   # or too old. This filter is deliberately conservative: a platform we
+   # omit merely vendors (harmless), whereas listing one that lacks the
+   # package would hard-fail with no fallback. OpenMP runtime comes with
+-  # each path: gcc's libgomp on the vendored build, the system package
+-  # (Homebrew formula / FreeBSD port) on the fast path.
++  # each path: CMake's selected compiler/OpenMP toolchain on the vendored
++  # build, the system package (Homebrew formula / FreeBSD port) on the fast path.
+   "conf-libxgboost"
+     {(os-distribution = "debian" & os-version >= "13") |
+      (os-distribution = "ubuntu" & os-version >= "25.10") |
+@@ -57,6 +57,7 @@
+ # excluded: the property-test executable crashes at runtime there (a
+ # separate issue from the build), pending diagnosis.
+ available: [ os != "win32" & arch != "riscv64" ]
++build-env: [ [OPAMJOBS = "%{jobs}%"] ]
+ build: [
+   ["dune" "subst"] {dev}
+   [
+--- a/README.md
++++ b/README.md
+@@ -506,3 +506,19 @@
+ dmlc archives alongside the bindings. Bundled dependency license files
+ are retained in the source tree, including
+ [dmlc-core's license](vendor/xgboost/dmlc-core/LICENSE).
++
++### Vendored native build controls
++
++The fallback requires C++17, OpenMP and CMake >= 3.18. Configuration uses
++`CMAKE` when explicitly set, otherwise a sufficiently recent `cmake3` or
++`cmake`. The generated link flags use the C++ and OpenMP runtimes discovered
++by CMake, including Clang/libomp toolchains.
++
++Native compilation is capped by online CPUs (maximum six), `OPAMJOBS`,
++`CMAKE_BUILD_PARALLEL_LEVEL`, `XGBOOST_BUILD_JOBS`, available Linux memory,
++and cgroup v1/v2 memory limits. Set `XGBOOST_BUILD_JOBS=1` for small or
++emulated builders. Memory budgeting reserves one GiB and allows one GiB per
++compiler process, with a minimum of one job. The opam build exports its selected
++job count through `OPAMJOBS`; for direct Dune builds set `XGBOOST_BUILD_JOBS`
++explicitly to bound the nested CMake build. This heuristic cannot guarantee
++that a machine with insufficient RAM will complete a C++ compilation.

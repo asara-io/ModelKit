@@ -78,4 +78,7 @@ module Json : sig
     threads:int ->
     t ->
     (unit, Error.t) result
+
+  val base_score : classes:int -> t -> (float array, Error.t) result
+  val equal_base_scores : float array -> float array -> bool
 end

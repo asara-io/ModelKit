@@ -50,5 +50,13 @@ let predict ~parameters ~rounds ~x ~y ~sample_weight ~test =
           in
           Array.init (Array1.dim predictions) (Array1.get predictions)))
 
-(* Column sampling uses std::shuffle, whose sequence depends on the C++ runtime. *)
-let frozen_sampling_reference () = Native_reference_platform.system = "macosx"
+(* Frozen training outputs require a verified release and, with sampling,
+   the same C++ runtime's shuffle implementation. Other releases still run
+   every fixture against independently configured calls on the linked runtime. *)
+let frozen_reference ~sampled () =
+  let known =
+    match Modelkit_xgboost.Native.version () with
+    | Ok (3, 0, (0 | 4)) | Ok (3, 4, (1 | 2)) -> true
+    | Ok _ | Error _ -> false
+  in
+  known && ((not sampled) || Native_reference_platform.system = "macosx")

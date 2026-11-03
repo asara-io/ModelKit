@@ -14,12 +14,16 @@ concurrency:
 
 jobs:
   native:
-    name: ${{ matrix.runner }} / OCaml 5.3
+    name: ${{ matrix.runner }} / OCaml ${{ matrix.ocaml }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, macos-15]
+        include:
+          - runner: ubuntu-24.04
+            ocaml: "5.3"
+          - runner: macos-15
+            ocaml: "5.3"
     env:
       OMP_NUM_THREADS: "1"
       OMP_THREAD_LIMIT: "1"
@@ -30,7 +34,7 @@ jobs:
       - name: Set up OCaml
         uses: ocaml/setup-ocaml@v3
         with:
-          ocaml-compiler: "5.3"
+          ocaml-compiler: ${{ matrix.ocaml }}
           dune-cache: true
 
       - name: Install runtime dependencies
@@ -39,10 +43,13 @@ jobs:
       - name: Verify Linux vendored dependency installation
         if: runner.os == 'Linux'
         run: |
-          mkdir -p "$RUNNER_TEMP/xgboost-empty-pkgconfig"
-          PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$RUNNER_TEMP/xgboost-empty-pkgconfig" \
-            DUNE_CACHE=disabled opam reinstall xgboost.0.2.6 --yes
           bindings="$(opam var lib)/xgboost/bindings"
+          if ! test -s "$bindings/libxgboost_vendored.a" || \
+             ! test -s "$bindings/libdmlc_vendored.a"; then
+            mkdir -p "$RUNNER_TEMP/xgboost-empty-pkgconfig"
+            PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$RUNNER_TEMP/xgboost-empty-pkgconfig" \
+              DUNE_CACHE=disabled opam reinstall xgboost.0.2.6 --yes
+          fi
           test -s "$bindings/libxgboost_vendored.a"
           test -s "$bindings/libdmlc_vendored.a"
           test ! -d "$(opam var prefix)/.opam-switch/build/xgboost.0.2.6"
@@ -53,6 +60,11 @@ jobs:
       - name: Install test and documentation dependencies
         run: opam install ./modelkit.opam ./modelkit-parallel.opam ./modelkit-xgboost.opam --deps-only --with-test --with-doc
 
+      - name: Check the OpenMP probe with POSIX headers
+        run: |
+          opam exec -- cc -std=c11 -D_POSIX_C_SOURCE=200809L -U_DEFAULT_SOURCE \
+            -I "$(opam var lib)/ocaml" -fsyntax-only adapters/xgboost/workflow_probe.c
+
       - name: Verify native integration and documentation
         run: opam exec -- dune build --only-packages modelkit,modelkit-parallel,modelkit-xgboost @all @runtest @doc @install
 
@@ -61,6 +73,10 @@ jobs:
 
       - name: Verify isolated inference consumer
         run: bash dev/check_xgboost_deployment.sh
+
+      - name: Verify native 3.0.0 and 3.1.0 compatibility on macOS
+        if: runner.os == 'macOS'
+        run: python3 dev/ci/check_xgboost_native_releases.py
 
       - name: Measure and verify conversion, fit, and prediction smoke
         run: |
@@ -73,3 +89,83 @@ jobs:
           name: xgboost-smoke-${{ matrix.runner }}
           path: _build/xgboost-smoke.json
           if-no-files-found: error
+
+  linux-distributions:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Debian / system / OCaml 5.5
+            runner: ubuntu-24.04
+            image: ocaml/opam:debian-13-ocaml-5.5@sha256:5f3c1eddb76096c9bbdf877998ac7255c5d33fb9f7d8d691a288b70ef530ef8b
+            platform: linux/amd64
+            provider: system
+            minimum: "0"
+            companion: "0"
+          - name: Debian / minimum dependencies / OCaml 5.2
+            runner: ubuntu-24.04
+            image: ocaml/opam:debian-13-ocaml-5.2@sha256:54c0c91684d24dd6923e2735e7ddecc4948ababd557f594a08bf68f950a781ad
+            platform: linux/amd64
+            provider: system
+            minimum: "1"
+            companion: "0"
+          - name: Debian arm64 / system / OCaml 5.5
+            runner: ubuntu-24.04-arm
+            image: ocaml/opam:debian-13-ocaml-5.5@sha256:5f3c1eddb76096c9bbdf877998ac7255c5d33fb9f7d8d691a288b70ef530ef8b
+            platform: linux/arm64
+            provider: system
+            minimum: "0"
+            companion: "0"
+          - name: Debian s390x / system / OCaml 5.5
+            runner: ubuntu-24.04
+            image: ocaml/opam:debian-13-ocaml-5.5@sha256:5f3c1eddb76096c9bbdf877998ac7255c5d33fb9f7d8d691a288b70ef530ef8b
+            platform: linux/s390x
+            provider: system
+            minimum: "0"
+            companion: "0"
+          - name: Alpine musl / vendored / OCaml 5.2
+            runner: ubuntu-24.04
+            image: ocaml/opam:alpine-3.22-ocaml-5.2@sha256:986cca184cbb15d41b0fc8a3154296e761cb8e665bb64dd0674ce789e55109c9
+            platform: linux/amd64
+            provider: vendored
+            minimum: "0"
+            companion: "0"
+          - name: CentOS / vendored / OCaml 5.5
+            runner: ubuntu-24.04
+            image: ocaml/opam:centos-9-ocaml-5.5@sha256:5e8a0361ec478ec40d89b751063dbf62bcddf0bb0b681ab854a1f5783cfe4338
+            platform: linux/amd64
+            provider: vendored
+            minimum: "0"
+            companion: "0"
+          - name: Companion patch / Clang libc++ / cmake3 / OCaml 5.5
+            runner: ubuntu-24.04
+            image: ocaml/opam:debian-13-ocaml-5.5@sha256:5f3c1eddb76096c9bbdf877998ac7255c5d33fb9f7d8d691a288b70ef530ef8b
+            platform: linux/amd64
+            provider: vendored
+            minimum: "0"
+            companion: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Enable s390x emulation
+        if: matrix.platform == 'linux/s390x'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: s390x
+
+      - name: Verify Linux provider, tests, documentation, and installed consumers
+        env:
+          CI_IMAGE: ${{ matrix.image }}
+          CI_PLATFORM: ${{ matrix.platform }}
+          CI_PROVIDER: ${{ matrix.provider }}
+          CI_MINIMUM: ${{ matrix.minimum }}
+          CI_COMPANION: ${{ matrix.companion }}
+        run: |
+          docker run --rm --platform "$CI_PLATFORM" \
+            --volume "$GITHUB_WORKSPACE:/source:ro" \
+            --env CI_PROVIDER --env CI_MINIMUM --env CI_COMPANION \
+            --entrypoint /bin/bash "$CI_IMAGE" /source/dev/ci/check_xgboost_linux.sh

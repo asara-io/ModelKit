@@ -496,16 +496,23 @@ module Artifact : sig
       checksum, versions, policies, specification, schema fingerprint, reports,
       JSON metadata, feature/output dimensions, and prediction range are checked
       before native loading. After loading, native feature/round counts,
-      objective/output dimensions, CPU execution, and thread settings are
-      verified before ownership transfers to the fitted value. Failures release
-      acquired native state; unrelated exceptions propagate after cleanup.
+      objective/output dimensions, the model intercept, CPU execution, and
+      thread settings are verified before ownership transfers to the fitted
+      value. Failures release acquired native state; unrelated exceptions
+      propagate after cleanup.
 
       [threads] defaults to one and must be a positive int32 value. It affects
       inference only; restored training parameters/reports retain their original
-      values. Native JSON writer versions must be major three and no newer than
-      the linked runtime; binding provenance may be 0.2.1 or 0.2.6. New fits
-      record the pinned binding; resaving preserves original provenance. Other
-      version combinations require their own compatibility evidence. *)
+      values. Native runtimes and model JSON must be major three. Within this
+      supported major, binding and writer versions are descriptive provenance,
+      not equality or chronological-order requirements. Native loading and the
+      post-load checks determine compatibility. Scalar and vector intercepts are
+      compared as float32 values with scalar broadcasting; silently replacing a
+      model's [base_score] fails with a typed compatibility error. XGBoost
+      guarantees older-model loading in newer runtimes; the reverse direction is
+      attempted without a guarantee and incompatible representations return
+      typed errors. New fits record the pinned binding; resaving preserves
+      original fit provenance. *)
 
   val decode_classification :
     ?limits:limits ->

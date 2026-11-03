@@ -1,7 +1,7 @@
 (lang dune 3.23)
 (using mdx 0.4)
 (name modelkit)
-(version 0.6.2)
+(version 0.6.3)
 (generate_opam_files true)
 (implicit_transitive_deps false)
 
@@ -63,8 +63,8 @@
   (ocaml (>= 5.2))
   (modelkit (= :version))
   (xgboost (= 0.2.6))
-  (ctypes (>= 0.20))
-  (ctypes-foreign (>= 0.20))
+  (ctypes (>= 0.22))
+  (ctypes-foreign (>= 0.22))
   integers
   (yojson (and (>= 2.2.2) (< 4.0.0)))
   (modelkit-parallel (and :with-test (= :version)))

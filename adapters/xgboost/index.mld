@@ -14,19 +14,28 @@ also become serializable inference pipelines without refitting.
 Install [modelkit-xgboost] separately. The package pins OCaml binding 0.2.6,
 requires OCaml 5.2+, and admits native libxgboost major version three. The binding
 uses a system libxgboost 3.0+ discovered through pkg-config, or builds bundled
-native 3.0.4 when a usable system library is absent. CMake, a C++ toolchain,
-and OpenMP are native build/runtime dependencies. Binding 0.2.6 includes the
+native 3.0.4 when a usable system library is absent. The fallback requires
+CMake 3.18+, C++17, and OpenMP; compiler availability alone does not establish
+those capabilities. Binding 0.2.6's fallback invokes [cmake] and links GNU C++/
+OpenMP runtimes on Linux, so that release requires a [cmake] executable and a
+compatible GCC/libstdc++/libgomp toolchain there. A compatible system libxgboost
+avoids the fallback compilation. Binding 0.2.6 includes the
 installed-archive linking fix, so the vendored fallback remains usable after
 opam removes its build directory. Compatible system packages are installed
 through [conf-libxgboost] on selected distributions, Homebrew, and FreeBSD.
 For a custom shared-library installation, expose [lib/pkgconfig] through
 [PKG_CONFIG_PATH] and its shared-library directory through the platform's
-runtime loader configuration. Linux CI exercises the installed vendored
-archives; macOS CI exercises the Homebrew library. [Yojson] is an
+runtime loader configuration. The Linux CI matrix exercises system and vendored
+providers, glibc and musl, x86-64, arm64 and emulated s390x, OCaml 5.2/5.5,
+and compatible minimum dependencies; these added jobs require successful CI
+results before extending the compatibility evidence below. macOS CI exercises
+the Homebrew library. [Yojson] is an
 adapter-only dependency for bounded native JSON
 inspection. Windows and riscv64 are excluded by the binding. Local verification
-uses OCaml 5.3.0, binding 0.2.6, and native libxgboost 3.0.4 and 3.4.2 on
-macOS arm64.
+includes OCaml 5.2.1/5.4.1, binding 0.2.6, and native libxgboost 3.0.0,
+3.0.4, 3.1.0, and 3.4.2 on macOS arm64. The OCaml 5.2.1 checks also use
+Dune 3.23.0, ctypes/ctypes-foreign 0.22.0, Yojson 2.2.2, MDX 2.4.0,
+and Alcotest 1.9.0.
 Separate pinned Python references use XGBoost 3.0.4 and 3.4.1. These combinations
 are verified; other native releases require their own compatibility evidence.
 
@@ -173,9 +182,12 @@ native build/platform, and thread configuration. Native sampling changes between
 3.0.4 and 3.4.2, so the same seed alone does not reproduce a sampled model across
 these versions. Column sampling also uses the C++ runtime's [std::shuffle], whose
 sequence can differ between toolchains. Pin the native build and platform when
-reproducing sampled fits. Frozen Python sampling references cover macOS arm64;
-sampled fits additionally compare to direct upstream calls on the linked native
-build, preserving strict prediction/probability tolerances on Linux. The
+reproducing sampled fits. Every fixture compares to independently configured
+direct upstream calls on the linked native build. Frozen Python outputs add
+checks for the explicitly verified 3.0.0/3.0.4 and 3.4.1/3.4.2 release pairs;
+row- or column-sampled frozen comparisons additionally run only on macOS.
+Other admitted releases retain the matched-native checks and the same strict
+prediction/probability tolerances. The
 committed parity fixtures cover dense, weighted, missing/all-missing, sampled,
 regularized, large-scale, constant-feature/target, single-row, and zero-learning
 rate cases at absolute and relative prediction tolerances of [2e-6].
@@ -506,14 +518,23 @@ Before native loading, the reader validates complete framing/checksum, lengths,
 versions, policies, immutable parameters, schema fingerprints, reports, class
 mapping, native model metadata, objective, feature/output dimensions, and tree
 range. After loading it checks native feature/round counts and current
-objective/output/CPU/thread configuration before returning fitted state.
+objective/output/CPU/thread configuration and intercept before returning fitted
+state. Scalar and vector [base_score] representations are compared numerically
+as float32 values, broadcasting a scalar across outputs. This catches older
+loaders that silently replace a newer vector intercept with a default value;
+such a change is a typed compatibility failure, even when native loading succeeds.
 Acquired native resources are released on every failed validation or exception.
-The reader accepts binding provenance 0.2.1 and 0.2.6 and native major three.
-New fits record 0.2.6; loading and resaving older models preserves their original
-binding provenance. Its runtime must be at least as new as the JSON writer:
-older-model loading into a newer
-supported runtime follows the stable-model direction, while forward loading is
-rejected. Version combinations still need explicit compatibility evidence.
+The reader supports native major three. Binding versions describe the original
+fit; they do not select a decoder or require an exact package-version match.
+New fits record the pinned binding, and loading/resaving preserves the original
+binding and training provenance. Within native major three, a writer/runtime
+version difference does not reject a model before native loading. The reader
+validates the envelope and model structure, attempts native loading, then checks
+the loaded model and inference configuration. It also permits resaving with a
+runtime older than the original training runtime. XGBoost guarantees older-model
+loading in newer runtimes; the reverse direction is best effort and genuinely
+unsupported native representations still return typed errors. Version metadata
+remains available for reproducibility and diagnosis.
 
 Default limits are 64 MiB bytes, one million features/classes, one MiB strings,
 and a fixed maximum JSON nesting depth of 64. JSON inspection allocates temporary
@@ -534,9 +555,13 @@ input. Both are preserved and checked during loading.
 Committed native-model and fitted-pipeline goldens cover regression, binary,
 and multiclass tasks with imputation, weighted scaling, and variance filtering.
 Fresh-process inference receives artifacts and new probe rows only, with no
-training data or refitting. Native 3.0.4 artifacts are verified on 3.0.4 and
-3.4.2; 3.4.2 artifacts are verified on 3.4.2 and rejected on 3.0.4 as forward
-loads. Prediction/probability agreement uses absolute plus relative [2e-6].
+training data or refitting. All fixtures are attempted on the linked supported
+runtime. Successful loads must preserve the stored responses, including patch
+version differences. A native loader rejection or failed intercept-preservation
+check for a model from a newer minor release is reported explicitly;
+schema/envelope errors and same-minor loading failures fail tests.
+Prediction/probability agreement uses absolute plus
+relative [2e-6].
 An isolated consumer built from installed runtime packages uses only ModelKit,
 this adapter, and declared runtime dependencies, without test libraries or
 private source modules.

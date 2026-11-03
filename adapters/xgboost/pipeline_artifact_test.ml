@@ -281,8 +281,12 @@ let[@warning "-4"] rec check_json name expected observed =
         (Yojson.Basic.Util.to_number observed)
   | _ -> Alcotest.check Alcotest.bool name true (expected = observed)
 
-let deploy directory metadata_filename expect_incompatible =
+let deploy directory metadata_filename =
   let worker = Sys.getenv "MODELKIT_XGBOOST_DEPLOYMENT_WORKER" in
+  let worker =
+    if Filename.is_relative worker then Filename.concat (Sys.getcwd ()) worker
+    else worker
+  in
   let output = Filename.temp_file "modelkit-deployment-result-" ".json" in
   Fun.protect
     ~finally:(fun () -> Sys.remove output)
@@ -291,9 +295,7 @@ let deploy directory metadata_filename expect_incompatible =
         Unix.openfile output [ Unix.O_WRONLY; Unix.O_TRUNC ] 0o600
       in
       let arguments =
-        Array.of_list
-          ([ worker; directory; metadata_filename ]
-          @ if expect_incompatible then [ "--expect-incompatible" ] else [])
+        [| worker; directory; metadata_filename; "--allow-native-rejection" |]
       in
       let status =
         Fun.protect
@@ -317,20 +319,18 @@ let test_golden version task () =
     read (Filename.concat directory metadata_filename)
     |> Yojson.Basic.from_string
   in
-  let writer =
-    field "writer_native_version" expected
-    |> Yojson.Basic.Util.to_list
-    |> List.map Yojson.Basic.Util.to_int
-  in
-  let current =
-    let a, b, c = native_version () in
-    [ a; b; c ]
-  in
-  let incompatible = current < writer in
-  let observed = deploy directory metadata_filename incompatible in
-  if incompatible then
-    check_json "typed forward-version rejection" (`String "incompatible")
-      (field "status" observed)
+  let observed = deploy directory metadata_filename in
+  if field "status" observed = `String "native-rejected" then
+    let _, runtime_minor, _ = native_version () in
+    let writer_minor =
+      field "writer_native_version" expected
+      |> Yojson.Basic.Util.to_list
+      |> List.map Yojson.Basic.Util.to_int
+      |> fun version -> List.nth version 1
+    in
+    Alcotest.check Alcotest.bool "only newer-minor representations may fail"
+      true
+      (writer_minor > runtime_minor)
   else (
     check_json "fresh process loaded" (`String "loaded")
       (field "status" observed);
@@ -437,6 +437,13 @@ let test_wrap_legacy () =
   in
   Alcotest.check Alcotest.string "resaving retains original binding" "0.2.1"
     (Xgb.Artifact.regression_provenance resaved).Xgb.Artifact.binding_version;
+  let origin = Xgb.Artifact.regression_provenance resaved in
+  Alcotest.check Alcotest.bool "original native training version retained" true
+    (origin.Xgb.Artifact.training_native_version = (3, 0, 4));
+  Alcotest.check Alcotest.bool "resaved model uses current native writer" true
+    (origin.Xgb.Artifact.model_native_version = native_version ());
+  Alcotest.check Alcotest.bool "current native runtime reported" true
+    (origin.Xgb.Artifact.runtime_native_version = native_version ());
   Alcotest.check Alcotest.bool "historical fit has no batch diagnostics" true
     (Option.is_none (Xgb.Regressor.batches_report fitted));
   check_wrapped_regressor fitted
@@ -499,7 +506,7 @@ let test_search_refit () =
       Unix.rmdir directory)
     (fun () ->
       write_regression directory pipeline (regression_target ());
-      let observed = deploy directory "regression.metadata.json" false in
+      let observed = deploy directory "regression.metadata.json" in
       let expected =
         read (Filename.concat directory "regression.metadata.json")
         |> Yojson.Basic.from_string

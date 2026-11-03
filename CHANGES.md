@@ -1,3 +1,30 @@
+# 0.6.3 (2026-11-02)
+
+- Compare every XGBoost training fixture with independently configured native
+  calls. Restrict additional frozen Python comparisons to verified releases,
+  covering native 3.1 training changes without loosening numerical tolerances.
+- Apply OpenMP limits to all adapter test processes, including executable odoc
+  examples, and verify the documentation process environment at startup.
+- Exercise Linux system/vendored providers, musl, arm64, s390x, compiler bounds,
+  and compatible minimum dependencies in CI; avoid duplicate vendored builds.
+- Resolve deployment-test worker paths explicitly, including Dune 3.23's bare
+  executable paths, without depending on the current directory being in PATH.
+- Require ctypes/ctypes-foreign 0.22, the first release pair supporting the
+  package's OCaml 5.2 compiler floor.
+
+- Use POSIX dynamic symbol lookup in the test-only OpenMP probe, fixing builds
+  where GNU `RTLD_DEFAULT` is unavailable.
+- Treat binding and native writer versions as provenance within the supported
+  native major rather than rejecting version differences before model loading.
+  Preserve original training versions when resaving on an older native runtime.
+- Check that native loading preserves the scalar/vector model intercept,
+  rejecting silent `base_score` replacement with a typed compatibility error.
+  Retain bounded envelope, schema, objective, and inference checks.
+- Exercise native 3.0.0 in CI and distinguish genuine representation failures
+  from compatible version differences in artifact deployment tests.
+- Update all package versions, platform locks, current documentation, and
+  artifact producer versions to 0.6.3 without changing persisted formats.
+
 # 0.6.2 (2026-10-30)
 
 - Require OCaml XGBoost binding 0.2.6, including relocatable vendored archives,
