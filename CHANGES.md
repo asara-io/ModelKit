@@ -1,5 +1,17 @@
 # 0.6.3 (2026-11-02)
 
+- Compare every XGBoost training fixture with independently configured native
+  calls. Restrict additional frozen Python comparisons to verified releases,
+  covering native 3.1 training changes without loosening numerical tolerances.
+- Apply OpenMP limits to all adapter test processes, including executable odoc
+  examples, and verify the documentation process environment at startup.
+- Exercise Linux system/vendored providers, musl, arm64, s390x, compiler bounds,
+  and compatible minimum dependencies in CI; avoid duplicate vendored builds.
+- Resolve deployment-test worker paths explicitly, including Dune 3.23's bare
+  executable paths, without depending on the current directory being in PATH.
+- Require ctypes/ctypes-foreign 0.22, the first release pair supporting the
+  package's OCaml 5.2 compiler floor.
+
 - Use POSIX dynamic symbol lookup in the test-only OpenMP probe, fixing builds
   where GNU `RTLD_DEFAULT` is unavailable.
 - Treat binding and native writer versions as provenance within the supported

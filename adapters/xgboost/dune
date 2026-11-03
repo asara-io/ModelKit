@@ -1,3 +1,9 @@
+(env
+ (_
+  (env-vars
+   (OMP_NUM_THREADS 1)
+   (OMP_THREAD_LIMIT 1))))
+
 (library
  (name modelkit_xgboost)
  (public_name modelkit-xgboost)
@@ -199,5 +205,6 @@
 
 (mdx
  (files index.mld)
+ (preludes mdx_prelude.ml)
  (libraries modelkit modelkit-xgboost)
  (package modelkit-xgboost))

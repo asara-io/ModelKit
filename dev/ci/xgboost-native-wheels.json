@@ -1,0 +1,42 @@
+{
+  "Darwin/arm64": {
+    "3.0.0": {
+      "url": "https://files.pythonhosted.org/packages/5a/0b/f9f815f240a9610d42367172b9f7ef7e8c9113a09b1bb35d4d85f96b910a/xgboost-3.0.0-py3-none-macosx_12_0_arm64.whl",
+      "sha256": "314104bd3a1426a40f0c9662eef40e9ab22eb7a8068a42a8d198ce40412db75c"
+    },
+    "3.1.0": {
+      "url": "https://files.pythonhosted.org/packages/c8/49/2d7591207b1f326a7ab16d972cf6dbd53c780bc82df517ad97cd7aefbaf8/xgboost-3.1.0-py3-none-macosx_12_0_arm64.whl",
+      "sha256": "4638c9060466ea5342c995cf4ddf31e9c9dc2e602dd9cc7dd2554db929dbd6c9"
+    }
+  },
+  "Darwin/x86_64": {
+    "3.0.0": {
+      "url": "https://files.pythonhosted.org/packages/95/6c/d2a1636591e204667f320481b036acc9c526608bcc2319be71cce148102d/xgboost-3.0.0-py3-none-macosx_10_15_x86_64.whl",
+      "sha256": "ed8cffd7998bd9431c3b0287a70bec8e45c09b43c9474d9dfd261627713bd890"
+    },
+    "3.1.0": {
+      "url": "https://files.pythonhosted.org/packages/09/98/3fc2db2db675afc93618ba0857c6dd43b61e129a552b7acd4c37d56cb07d/xgboost-3.1.0-py3-none-macosx_10_15_x86_64.whl",
+      "sha256": "fac53621a8cf381b3d19c1016a297f3ae9c6a2a59392e550064972e2fc21571d"
+    }
+  },
+  "Linux/aarch64": {
+    "3.0.0": {
+      "url": "https://files.pythonhosted.org/packages/4a/5b/0ec9e50b56f604bdac1c686224a32978a90ec34a599b202db8b5d10de3a4/xgboost_cpu-3.0.0-py3-none-manylinux_2_28_aarch64.whl",
+      "sha256": "708af2e7d644e122a93994a583a79802c7e092121091de8d674ba670c551fc68"
+    },
+    "3.1.0": {
+      "url": "https://files.pythonhosted.org/packages/28/87/d6aeacd7244a01b61fb7cbbaf7352f1a8abb8bf4b649425971f319d997d0/xgboost_cpu-3.1.0-py3-none-manylinux_2_28_aarch64.whl",
+      "sha256": "d9240c018437d96c7eb59c12fb2303740e6774b0baab0587c1a94fadb23b516f"
+    }
+  },
+  "Linux/x86_64": {
+    "3.0.0": {
+      "url": "https://files.pythonhosted.org/packages/71/14/0a87b712ef72c42a4f1a7cb52d93e5aedc4899a150a5bcb9df081a1fb6e9/xgboost_cpu-3.0.0-py3-none-manylinux_2_28_x86_64.whl",
+      "sha256": "54f80f521ad73f5b861d840ab8ddd8ea4855d582081646dbf8d7ed7fa89bc132"
+    },
+    "3.1.0": {
+      "url": "https://files.pythonhosted.org/packages/2c/04/227269a680638eeeab057261e4cd361893c1513cc53c32e5263f4263ac0a/xgboost_cpu-3.1.0-py3-none-manylinux_2_28_x86_64.whl",
+      "sha256": "7fcf048a8077f97815550da52397d0a5355bc781ba027ee38258c23fc9f3d1fb"
+    }
+  }
+}

@@ -525,56 +525,70 @@ let test_parity fixture () =
       prediction
       (Classifier.predict fitted ~feature_schema ~x:test |> get |> labels)
   in
-  let sampled = scalar fixture "colsample_bytree" < 1. in
-  if (not sampled) || Native_reference.frozen_sampling_reference () then
+  let sampled =
+    scalar fixture "colsample_bytree" < 1. || scalar fixture "subsample" < 1.
+  in
+  if Native_reference.frozen_reference ~sampled () then
     check_predictions "Python"
       (fixture_matrix fixture "probabilities")
       (integers fixture "prediction");
-  if sampled then
-    let classes = integers fixture "classes" in
-    let count = Array.length classes in
-    let parameters =
-      Native_reference.parameters
-        ~value:(fun key -> (vector fixture key).(0))
-        ~objective:(if count = 2 then "binary:logistic" else "multi:softprob")
-        ~classes:count
-    in
-    let encoded =
-      Array.map
-        (fun label ->
-          Array.find_index (( = ) label) classes |> Option.get |> float_of_int)
-        y
-    in
-    let raw =
-      Native_reference.predict ~parameters ~rounds:(integer fixture "rounds")
-        ~x:(Matrix.to_arrays x) ~y:encoded
-        ~sample_weight:
-          (Option.map
-             (Array.map float_of_string)
-             (Hashtbl.find_opt fixture.vectors "weight"))
-        ~test:(Matrix.to_arrays test)
-    in
-    let expected =
-      Matrix.init ~rows:(Matrix.rows test) ~columns:count (fun row column ->
-          if count = 2 then if column = 0 then 1. -. raw.(row) else raw.(row)
-          else
-            let sum = ref 0. in
-            for index = 0 to count - 1 do
-              sum := !sum +. raw.((row * count) + index)
-            done;
-            raw.((row * count) + column) /. !sum)
-      |> data
-    in
-    let prediction =
-      Array.init (Matrix.rows test) (fun row ->
-          let best = ref 0 in
-          for column = 1 to count - 1 do
-            if Matrix.get expected row column > Matrix.get expected row !best
-            then best := column
+  let classes = integers fixture "classes" in
+  let count = Array.length classes in
+  let parameters =
+    Native_reference.parameters
+      ~value:(fun key -> (vector fixture key).(0))
+      ~objective:(if count = 2 then "binary:logistic" else "multi:softprob")
+      ~classes:count
+  in
+  let weights =
+    Option.map
+      (Array.map float_of_string)
+      (Hashtbl.find_opt fixture.vectors "weight")
+  in
+  let rows =
+    Array.init (Array.length y) Fun.id
+    |> Array.to_list
+    |> List.filter (fun row ->
+        match weights with None -> true | Some values -> values.(row) > 0.)
+    |> Array.of_list
+  in
+  let all_rows = Matrix.to_arrays x in
+  let training = Array.map (Array.get all_rows) rows in
+  let encoded =
+    Array.map
+      (fun row ->
+        Array.find_index (( = ) y.(row)) classes |> Option.get |> float_of_int)
+      rows
+  in
+  let weights =
+    Option.map (fun values -> Array.map (Array.get values) rows) weights
+  in
+  let raw =
+    Native_reference.predict ~parameters ~rounds:(integer fixture "rounds")
+      ~x:training ~y:encoded ~sample_weight:weights
+      ~test:(Matrix.to_arrays test)
+  in
+  let expected =
+    Matrix.init ~rows:(Matrix.rows test) ~columns:count (fun row column ->
+        if count = 2 then if column = 0 then 1. -. raw.(row) else raw.(row)
+        else
+          let sum = ref 0. in
+          for index = 0 to count - 1 do
+            sum := !sum +. raw.((row * count) + index)
           done;
-          classes.(!best))
-    in
-    check_predictions "matched native" expected prediction
+          raw.((row * count) + column) /. !sum)
+    |> data
+  in
+  let prediction =
+    Array.init (Matrix.rows test) (fun row ->
+        let best = ref 0 in
+        for column = 1 to count - 1 do
+          if Matrix.get expected row column > Matrix.get expected row !best then
+            best := column
+        done;
+        classes.(!best))
+  in
+  check_predictions "matched native" expected prediction
 
 let () =
   let major, minor, patch = Native.version () |> get in

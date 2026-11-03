@@ -283,6 +283,10 @@ let[@warning "-4"] rec check_json name expected observed =
 
 let deploy directory metadata_filename =
   let worker = Sys.getenv "MODELKIT_XGBOOST_DEPLOYMENT_WORKER" in
+  let worker =
+    if Filename.is_relative worker then Filename.concat (Sys.getcwd ()) worker
+    else worker
+  in
   let output = Filename.temp_file "modelkit-deployment-result-" ".json" in
   Fun.protect
     ~finally:(fun () -> Sys.remove output)
