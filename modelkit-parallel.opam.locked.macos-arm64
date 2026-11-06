@@ -26,14 +26,14 @@ depends: [
   "crunch" {= "4.1.0" & with-doc}
   "domain-local-await" {= "1.0.1"}
   "domainslib" {= "0.5.2"}
-  "dune" {= "3.24.2"}
+  "dune" {= "3.23.1"}
   "fmt" {= "0.11.0" & with-test}
   "fpath" {= "0.7.3" & with-doc}
   "modelkit" {= "0.6.3"}
   "multicore-magic" {= "2.3.2"}
-  "ocaml" {= "5.3.0"}
-  "ocaml-base-compiler" {= "5.3.0"}
-  "ocaml-compiler" {= "5.3.0"}
+  "ocaml" {= "5.4.1"}
+  "ocaml-base-compiler" {= "5.4.1"}
+  "ocaml-compiler" {= "5.4.1"}
   "ocaml-config" {= "3"}
   "ocaml-options-vanilla" {= "1"}
   "ocaml-syntax-shims" {= "1.0.0" & with-test}
@@ -48,7 +48,7 @@ depends: [
   "stdlib-shims" {= "0.3.0" & with-test}
   "thread-table" {= "1.0.0"}
   "topkg" {= "1.1.1" & with-test}
-  "tyxml" {= "4.6.0" & with-doc}
+  "tyxml" {= "5.0.0" & with-doc}
   "uutf" {= "1.0.4" & with-test}
 ]
 build: [

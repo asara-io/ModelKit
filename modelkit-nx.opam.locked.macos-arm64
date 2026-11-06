@@ -14,6 +14,7 @@ depends: [
   "alcotest" {= "1.9.1" & with-test}
   "astring" {= "0.8.5" & with-test}
   "base-bigarray" {= "base"}
+  "base-bytes" {= "base"}
   "base-domains" {= "base"}
   "base-effects" {= "base"}
   "base-nnp" {= "base"}
@@ -21,26 +22,28 @@ depends: [
   "base-unix" {= "base"}
   "camlp-streams" {= "5.0.1" & with-doc}
   "cmdliner" {= "2.1.1"}
-  "conf-pkg-config" {= "5"}
+  "conf-pkg-config" {= "4"}
   "conf-zlib" {= "1"}
-  "cppo" {= "1.8.0" & with-doc}
+  "cppo" {= "1.8.0"}
   "crunch" {= "4.1.0" & with-doc}
   "csexp" {= "1.5.2"}
-  "dune" {= "3.24.2"}
-  "dune-configurator" {= "3.24.2"}
+  "dune" {= "3.23.1"}
+  "dune-configurator" {= "3.23.1"}
   "fmt" {= "0.11.0"}
   "fpath" {= "0.7.3" & with-doc}
   "logs" {= "0.10.0"}
+  "lwt" {= "6.1.2"}
   "modelkit" {= "0.6.3"}
   "nx" {= "1.0.0~alpha3"}
-  "ocaml" {= "5.3.0"}
-  "ocaml-base-compiler" {= "5.3.0"}
-  "ocaml-compiler" {= "5.3.0"}
+  "ocaml" {= "5.4.1"}
+  "ocaml-base-compiler" {= "5.4.1"}
+  "ocaml-compiler" {= "5.4.1"}
   "ocaml-config" {= "3"}
   "ocaml-options-vanilla" {= "1"}
   "ocaml-syntax-shims" {= "1.0.0" & with-test}
   "ocamlbuild" {= "0.16.1"}
   "ocamlfind" {= "1.9.8"}
+  "ocplib-endian" {= "1.2"}
   "odoc" {= "3.2.1" & with-doc}
   "odoc-parser" {= "3.2.1" & with-doc}
   "ptime" {= "1.2.0" & with-doc}
@@ -48,7 +51,7 @@ depends: [
   "seq" {= "base" & with-doc}
   "stdlib-shims" {= "0.3.0" & with-test}
   "topkg" {= "1.1.1"}
-  "tyxml" {= "4.6.0" & with-doc}
+  "tyxml" {= "5.0.0" & with-doc}
   "uutf" {= "1.0.4" & with-test}
 ]
 build: [
@@ -67,3 +70,4 @@ build: [
 ]
 dev-repo: "git+https://github.com/asara-io/ModelKit.git"
 x-maintenance-intent: ["(latest)"]
+available: os != "win32"

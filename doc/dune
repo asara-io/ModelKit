@@ -4,5 +4,5 @@
 
 (mdx
  (files index.mld)
- (libraries modelkit)
+ (libraries modelkit unix)
  (package modelkit))

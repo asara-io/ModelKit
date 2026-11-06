@@ -1,5 +1,11 @@
 # 0.6.3 (2026-11-02)
 
+- Refresh all five macOS package locks together, including XGBoost, document
+  matching the lock-refresh scope to the packages being installed, and add a
+  complete-workspace CI job using those locks.
+- Declare Unix explicitly in both executable-documentation stanzas, fixing MDX
+  2.7 generated-code compilation with Dune 3.23 and strict dependency visibility.
+
 - Compare every XGBoost training fixture with independently configured native
   calls. Restrict additional frozen Python comparisons to verified releases,
   covering native 3.1 training changes without loosening numerical tolerances.

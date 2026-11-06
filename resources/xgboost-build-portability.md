@@ -216,8 +216,10 @@ runtime paths are allowed, since those runtimes remain external dependencies.
     `adapters/xgboost/modelkit_xgboost.ml`. Find every current occurrence with
     `rg -n '0\\.2\\.6' dune-project modelkit-xgboost.opam adapters dev .github`.
     Preserve historical artifact/fixture provenance rather than rewriting it.
-    No XGBoost platform lockfile currently exists; refresh any newly added
-    relevant lockfile if applicable.
+    Refresh the macOS platform locks together after installing the updated
+    dependencies: `opam lock . --lock-suffix=locked.macos-arm64`. This includes
+    `modelkit-xgboost.opam.locked.macos-arm64`; partial refreshes can create
+    incompatible shared-dependency pins.
 
 12. Run the complete relevant build/test/doc/install checks, every native release
     check, and `dev/check_xgboost_deployment.sh` against the corrected **published,

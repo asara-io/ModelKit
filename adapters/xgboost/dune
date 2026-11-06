@@ -206,5 +206,5 @@
 (mdx
  (files index.mld)
  (preludes mdx_prelude.ml)
- (libraries modelkit modelkit-xgboost)
+ (libraries modelkit modelkit-xgboost unix)
  (package modelkit-xgboost))
