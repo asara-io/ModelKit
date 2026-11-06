@@ -204,9 +204,9 @@ Planned for later versions: sparse feature input to estimators, additional artif
 
 ## Development
 
-ModelKit requires OCaml 5.2 or newer. The platform locks currently use OCaml 5.3.0. The following set of commands will assume that you have installed and configured `git` and `opam`. The generated documentation will be available at `_build/default/_doc/_html/index.html`.
+ModelKit requires OCaml 5.2 or newer. The macOS arm64 locks currently use OCaml 5.4.1; the Windows x86-64 locks use OCaml 5.3.0. The following set of commands will assume that you have installed and configured `git` and `opam`. The generated documentation will be available at `_build/default/_doc/_html/index.html`.
 
-The repository holds five packages. `modelkit` and `modelkit-parallel` are portable. `modelkit-nx` and `modelkit-talon` depend on Raven's `nx` and `talon`, which need OpenBLAS headers, zlib, and pkg-config on Linux and are not buildable on Windows; opam installs those system packages through its depext prompt when the adapter dependencies are resolved. `modelkit-xgboost` requires a persistent libxgboost 3.0+ installation discoverable through pkg-config before installing its OCaml binding; see the [adapter installation notes](adapters/README.md#xgboost). A workspace-wide `dune build @all` includes all adapter libraries and tests, so it needs their dependencies in the switch. Use `--only-packages modelkit,modelkit-parallel` to build and test the portable packages on a switch without them.
+The repository holds five packages. `modelkit` and `modelkit-parallel` are portable. `modelkit-nx` and `modelkit-talon` depend on Raven's `nx` and `talon`, which need OpenBLAS headers, zlib, and pkg-config on Linux and are not buildable on Windows; opam installs those system packages through its depext prompt when the adapter dependencies are resolved. `modelkit-xgboost` uses a system libxgboost 3.0+ discovered through pkg-config or the binding's vendored native build; see the [adapter installation notes](adapters/README.md#xgboost). A workspace-wide `dune build @all` includes all adapter libraries and tests, so it needs their dependencies in the switch. Use `--only-packages modelkit,modelkit-parallel` to build and test the portable packages on a switch without them.
 
 ### Initial Setup (Linux and macOS)
 
@@ -249,17 +249,18 @@ The Raven adapter packages declare themselves unavailable on Windows in their op
 ### macOS (arm64)
 
 ```sh
-opam lock ./modelkit.opam ./modelkit-parallel.opam ./modelkit-nx.opam ./modelkit-talon.opam --lock-suffix=locked.macos-arm64
+opam install . --deps-only --with-test --with-doc
+opam lock . --lock-suffix=locked.macos-arm64
 opam install . --deps-only --with-test --with-doc --locked --lock-suffix=locked.macos-arm64
 ```
 
-The four opam files must be locked together so that the in-tree `modelkit` dependency of the optional packages resolves.
+Refresh all five package lockfiles together with `opam lock .` when installing the whole workspace. The locks capture the current switch's installed versions, so refreshing only some of them can produce conflicting Dune, compiler, or shared-library package pins. Portable-only workflows must use the same explicit package list for dependency installation and lock generation.
 
 The ordinary Dune workspace uses the repository-local opam switch automatically. Reproducible locks are platform-specific because compiler and system dependency packages differ by host.
 
 The full test suite combines named unit tests, deterministic generated properties, metamorphic invariants, executable documentation, runnable end-to-end and nested-CV examples, artifact golden-reader and adversarial-input tests, a compile-time public API consumer, public estimator/transformer/scorer conformance reports with deliberately invalid external examples, a reusable numerical-backend conformance suite, and a source-neutral adapter conformance suite shared by every adapter package. Run the current supervised workflow from a source checkout with `opam exec -- dune exec examples/evaluation.exe`, or run the complete model-selection recipe with `opam exec -- dune exec examples/nested_cv.exe`.
 
-GitHub Actions is configured to run the build, complete test suite, package build, and documentation generation on Linux x86-64, macOS arm64, and Windows x86-64 with OCaml 5.2, 5.3, and 5.5. The Linux and macOS jobs build and test all four packages; the Windows jobs build and test only the portable `modelkit` and `modelkit-parallel` packages because the Raven adapters cannot be built there at the current pin. These jobs use committed reference data and do not install or execute Python.
+GitHub Actions is configured to run the build, complete test suite, package build, and documentation generation on Linux x86-64, macOS arm64, and Windows x86-64 with OCaml 5.2, 5.3, and 5.5. The main Linux and macOS jobs build and test the core, parallel, Nx, and Talon packages, and a separate integration workflow builds and tests XGBoost. An additional macOS job validates all five packages using the committed macOS locks; the Windows jobs build and test only the portable `modelkit` and `modelkit-parallel` packages because the Raven adapters cannot be built there at the current pin. The OCaml tests use committed reference data; Python appears only in the XGBoost workflow's native-library and benchmark tooling.
 
 ### Reference Fixtures and Benchmarks
 

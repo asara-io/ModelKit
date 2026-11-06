@@ -94,3 +94,36 @@ jobs:
 
       - name: Verify package build
         run: opam exec -- dune build -p ${{ matrix.packages }} @install @runtest @doc
+
+  workspace-locks:
+    name: macOS arm64 / complete workspace locks
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Read the locked compiler
+        id: lock
+        run: |
+          compiler=$(sed -nE 's/^[[:space:]]*"ocaml" \{= "([^"]+)"\}$/\1/p' modelkit.opam.locked.macos-arm64)
+          test -n "$compiler"
+          echo "compiler=$compiler" >> "$GITHUB_OUTPUT"
+
+      - name: Set up the locked compiler
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ${{ steps.lock.outputs.compiler }}
+          dune-cache: true
+
+      - name: Install the development formatter
+        run: opam install ocamlformat.0.29.0
+
+      - name: Install all five packages' locked dependencies
+        run: opam install . --deps-only --with-test --with-doc --locked --lock-suffix=locked.macos-arm64
+
+      - name: Verify the complete locked workspace
+        run: opam exec -- dune build @all @runtest @doc @fmt @opam @install
+
+      - name: Verify the package build
+        run: opam exec -- dune build -p modelkit,modelkit-parallel,modelkit-nx,modelkit-talon,modelkit-xgboost @install @runtest @doc
