@@ -18,7 +18,8 @@ export OPAMJOBS=2
 export OPAMERRLOGLEN=0
 export CI=true
 export DUNE_CACHE=disabled
-opam update --yes
+# Pinned images contain a local repository snapshot, not a live upstream checkout.
+opam repository set-url default https://opam.ocaml.org --yes
 
 if [[ "$companion" == 1 ]]; then
   sudo apt-get update

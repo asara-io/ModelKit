@@ -7,6 +7,37 @@ used temporary copies. The subsequent implementation addresses the ModelKit
 findings and supplies a companion dependency patch; the original findings are
 retained below as evidence.
 
+## Alpine CI follow-up (2026-11-07)
+
+The supplied `_build/logs/logs_114298155496.zip` records successful ModelKit
+checks for Debian system/minimum/arm64/s390x, CentOS vendored, the companion
+Clang/libc++ build, Ubuntu, and macOS. Alpine fails during package lookup,
+before any XGBoost build begins:
+
+```text
+2026-11-06T07:50:43 default (at git+file:///home/opam/opam-repository)
+2026-11-06T07:50:48 [ERROR] No package named xgboost found.
+```
+
+`opam update` refreshes the configured image-local repository snapshot; it does
+not fetch upstream commits into that checkout. The Linux driver now changes
+`default` to `https://opam.ocaml.org` with `opam repository set-url`, which also
+refreshes the index. This applies to every pinned distribution image, preventing
+its bundled repository's age from controlling package discovery.
+
+Alpine remains in the matrix. The published binding 0.2.6 excludes Windows and
+riscv64, admits Linux x86-64, and inherits the musl serialization fix from
+0.2.3. A missing distribution-native libxgboost is handled by its vendored
+fallback. See the [published package definition](https://github.com/ocaml/opam-repository/blob/master/packages/xgboost/xgboost.0.2.6/opam)
+and [binding release notes](https://github.com/tarides/xgboost-ocaml/blob/v0.2.6/CHANGES.md).
+
+Validation reproduced a missing XGBoost package in an isolated opam root with a
+stale repository, then used the same `set-url` command to find binding 0.2.6
+and ModelKit 0.6.3 in the public index. Shell syntax, workflow validation, and
+whitespace checks pass. The Docker daemon remains unavailable locally, so the
+complete Alpine native build still needs a CI rerun. This correction needs no
+upstream source patch or consumer dependency change.
+
 ## Implementation status
 
 - **Corrected in ModelKit:** every regression/classification fixture now runs
